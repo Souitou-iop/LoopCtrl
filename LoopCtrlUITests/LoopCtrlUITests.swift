@@ -458,6 +458,18 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             ) { [weak self] _ in
                 DispatchQueue.main.async { self?.handlePendingCallbackIfAny() }
             }
+            // The Remote Access switch on the LoopCtrl screen, same process.
+            NotificationCenter.default.addObserver(
+                forName: InProcessRunnerControl.setRemoteAccess, object: nil, queue: nil
+            ) { [weak self] note in
+                let on = note.userInfo?["on"] as? Bool ?? false
+                DispatchQueue.main.async {
+                    guard let self, self.server != nil else { return }
+                    Self.logBuffer.append(on ? "🌐 Remote access on (LoopCtrl screen)" : "🔒 Remote access off (LoopCtrl screen)")
+                    if on { self.enableRemoteAccess() } else { self.disableRemoteAccess() }
+                }
+            }
+            returnToLoopCtrlIfBackgrounded()
         }
 
         // If launched via loopctrl://start?callback=..., jump back to the caller now.
@@ -533,6 +545,27 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     /// relaunch. Parking keeps the app on screen and lets `loopctrl://start`
     /// (the app's Start button) bring the listener back on the same test.
     private var parksWhenStopped: Bool { EarlyURLHook.isInProcess() }
+
+    /// All-in-one build: XCTest's bootstrap takes LoopCtrl out of the
+    /// foreground (it was seen backgrounded by the time the test began, every
+    /// time), and nothing brought it back, so Start looked like it dropped the
+    /// user on the Home Screen. Ask the XCTest daemon to activate it again,
+    /// once now and once more shortly after, in case the hand-off lands late.
+    private func returnToLoopCtrlIfBackgrounded(retry: Bool = true) {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return }
+        if UIApplication.shared.applicationState != .active {
+            Self.logBuffer.append("🏠 LoopCtrl is in the background after bootstrap — bringing it back")
+            DispatchQueue.global(qos: .userInitiated).async {
+                let ok = ForegroundApp.safeActivateBundleID(bundleID)
+                Self.logBuffer.append(ok ? "🏠 LoopCtrl activated" : "🏠 couldn't activate LoopCtrl")
+            }
+        }
+        if retry {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.returnToLoopCtrlIfBackgrounded(retry: false)
+            }
+        }
+    }
 
     /// Create, wire and start a listener from the persisted settings.
     ///

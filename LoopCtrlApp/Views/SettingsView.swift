@@ -199,22 +199,39 @@ struct SettingsView: View {
         // so keep it current while shown. Pairing is only ever started by the
         // switch itself.
         .task(id: runnerAdmin.isPaired) {
+            #if LOOPCTRL_ALL_IN_ONE
+            while !Task.isCancelled {
+                runnerAdmin.refreshInProcessVisibility()
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+            #else
             while !Task.isCancelled && runnerAdmin.isPaired {
                 await runnerAdmin.loadClients()
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
             }
+            #endif
         }
     }
 
     private var remoteFooter: String {
+        #if LOOPCTRL_ALL_IN_ONE
+        // The runner is in this process: nothing to pair, nothing to approve.
+        return remoteOn ? L10n.ui(.remoteAccessOnFooter) : L10n.ui(.remoteAccessOffFooter)
+        #else
         if let notice = runnerAdmin.notice { return notice }
         if !runnerAdmin.isPaired || runnerAdmin.pairing { return L10n.ui(.remoteAccessApproveFooter) }
         return remoteOn ? L10n.ui(.remoteAccessOnFooter) : L10n.ui(.remoteAccessOffFooter)
+        #endif
     }
 
     /// Changing who can reach the runner is a `config` call, which needs this
     /// app paired with it: the first time, that asks for the user's approval.
+    /// The all-in-one runner shares this process and is told directly.
     private func setRemoteAccess(_ on: Bool) async {
+        #if LOOPCTRL_ALL_IN_ONE
+        await runnerAdmin.setRemoteAccessInProcess(on)
+        return
+        #endif
         if !runnerAdmin.isPaired {
             await runnerAdmin.connect()
             guard runnerAdmin.isPaired else { return }

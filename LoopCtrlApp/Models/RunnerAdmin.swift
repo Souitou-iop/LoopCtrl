@@ -185,6 +185,33 @@ final class RunnerAdmin: ObservableObject {
         await loadClients()
     }
 
+    #if LOOPCTRL_ALL_IN_ONE
+    /// The runner shares this process and its UserDefaults: read its
+    /// remote-access choice directly instead of over /rpc, which needs pairing.
+    func refreshInProcessVisibility() {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: InProcessRunnerControl.remoteAccessKey) else {
+            visibility = .local
+            return
+        }
+        visibility = defaults.bool(forKey: InProcessRunnerControl.nearbyKey) ? .lanAndNearby : .lan
+    }
+
+    /// Turn remote access on or off without pairing: a notification only this
+    /// process can post. The runner restarts its listener, so the new state is
+    /// read back a moment later.
+    func setRemoteAccessInProcess(_ on: Bool) async {
+        guard !changingVisibility else { return }
+        changingVisibility = true
+        defer { changingVisibility = false }
+        NotificationCenter.default.post(name: InProcessRunnerControl.setRemoteAccess,
+                                        object: nil, userInfo: ["on": on])
+        loopctrlLog("Runner admin: remote access \(on ? "on" : "off") (in-process)")
+        try? await Task.sleep(nanoseconds: 800_000_000)
+        refreshInProcessVisibility()
+    }
+    #endif
+
     // MARK: - Logs
 
     func loadLogs() async {

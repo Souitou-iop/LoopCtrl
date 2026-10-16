@@ -25,3 +25,15 @@ enum ServerPort {
         set { UserDefaults.standard.set(Int(newValue), forKey: defaultsKey) }
     }
 }
+
+/// The all-in-one build's direct line from the LoopCtrl screen to the runner
+/// in the same process. Notifications on `NotificationCenter.default` can't be
+/// posted from another app, unlike `loopctrl://` URLs, so this is safe for
+/// settings that widen access; it also needs no pairing, which /rpc does.
+enum InProcessRunnerControl {
+    /// userInfo["on"]: Bool. Turns remote access on or off.
+    static let setRemoteAccess = Notification.Name("LoopCtrlInProcessSetRemoteAccess")
+    /// The runner's own UserDefaults keys, which this process shares with it.
+    static let remoteAccessKey = "allowRemoteAccess"
+    static let nearbyKey = "nearbyDiscovery"
+}
