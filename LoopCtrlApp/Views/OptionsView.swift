@@ -1,9 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// Everything that isn't the one thing the home screen does, in one sheet:
-/// pairing and the disk image (with the tunnel choice inside that flow), the
-/// running server's details and clients, this device, and the logs.
+/// Everything that isn't the one thing the home screen does, by task: a summary
+/// of this device and the service, how clients connect, setting up the disk
+/// image, who holds a key, diagnostics, and about.
 struct OptionsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var appState: AppState
@@ -11,18 +11,19 @@ struct OptionsView: View {
     @ObservedObject var runner: RunnerStatus
 
     @State private var ddi = DeveloperDiskImage.status()
-    @State private var hasPairingFile = PairingFileStore.exists
+    @State private var setupDone = 0
+    @State private var tunnelUp = false
     @State private var showMountSheet = false
     @State private var logCount = AppLog.allFiles().count
     @State private var portText = String(ServerPort.stored)
 
-    /// Provides the local loopback tunnel the mount needs to reach lockdownd.
-    /// An App Store link: LocalDevVPN registers no URL scheme of its own.
-    private static let localDevVPNURL = URL(string: "https://apps.apple.com/app/localdevvpn/id6755608044")!
-    /// StikDebug mounts the DDI on-device; bare scheme just opens the app.
-    private static let stikDebugURL = URL(string: "stikdebug://")!
-    /// Sideload-only, so the fallback is its distribution site.
-    private static let stikDebugSiteURL = URL(string: "https://stikdebug.xyz")!
+    @State private var pendingRevoke: RunnerAdmin.Client?
+    @State private var confirmRevokeOthers = false
+    @State private var confirmDisconnect = false
+
+    /// Clients listed inline before the rest move behind "Show All".
+    private static let inlineClientLimit = 4
+    static let repositoryURL = URL(string: "https://github.com/Souitou-iop/LoopCtrl")!
 
     private static var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
@@ -31,20 +32,16 @@ struct OptionsView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    summaryCard
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+
+                connectionSection
                 setupSection
-                portSection
-
-                if case .running(let info) = runner.state {
-                    serverSection(info)
-                }
-
-                // Fallback only: the in-app mount does the same job without
-                // leaving LoopCtrl.
-                if !ddi.isMounted {
-                    alternativeSection
-                }
-
-                deviceSection
+                clientsSection
+                diagnosticsSection
                 aboutSection
             }
             .listStyle(.insetGrouped)
@@ -56,280 +53,460 @@ struct OptionsView: View {
                         .fontWeight(.semibold)
                 }
             }
+            .animation(.default, value: runner.state)
+            .animation(.default, value: runnerAdmin.visibility)
+            .animation(.default, value: runnerAdmin.clients)
             .onAppear(perform: refresh)
             .onReceive(NotificationCenter.default.publisher(for: PairingFileStore.didImport)) { _ in refresh() }
             .sheet(isPresented: $showMountSheet, onDismiss: refresh) {
                 DDIMountView()
+            }
+            .clientConfirmations(admin: runnerAdmin,
+                                 pendingRevoke: $pendingRevoke,
+                                 confirmRevokeOthers: $confirmRevokeOthers,
+                                 confirmDisconnect: $confirmDisconnect)
+            // Visibility and clients kept current while shown: remote access
+            // and nearby can be switched from the runner's notification at any
+            // time, and a new client can pair. Pairing is never started here.
+            .task(id: runnerAdmin.isPaired) {
+                while !Task.isCancelled {
+                    #if LOOPCTRL_ALL_IN_ONE
+                    runnerAdmin.refreshInProcessVisibility()
+                    #endif
+                    if runner.isRunning && runnerAdmin.isPaired {
+                        await runnerAdmin.loadClients()
+                    }
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                }
             }
         }
     }
 
     private func refresh() {
         ddi = DeveloperDiskImage.status()
-        hasPairingFile = PairingFileStore.exists
         logCount = AppLog.allFiles().count
+        let hasPairing = PairingFileStore.exists
+        let images = DeveloperDiskImageStore.isComplete
+        let wifi = NetworkTypeMonitor.shared.current == .wifi
+        setupDone = [hasPairing, images, wifi, tunnelUp].filter { $0 }.count
+        // The tunnel is only worth probing once the user is into the flow:
+        // a probe of a private address is what can raise the Local Network
+        // prompt, which shouldn't come from just opening Settings.
+        if !ddi.isMounted, hasPairing, images {
+            Task { @MainActor in
+                tunnelUp = await LocalDevVPN.probeTunnel() == .reachable
+                setupDone = [hasPairing, images, wifi, tunnelUp].filter { $0 }.count
+            }
+        }
     }
 
-    // MARK: - Sections
+    // MARK: - Summary
+
+    /// This device and the service at a glance. Read locally, not from the
+    /// server: most useful precisely when the runner won't start.
+    private var summaryCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 14) {
+                Image(systemName: "iphone")
+                    .font(.title2.weight(.medium))
+                    .foregroundColor(.accentColor)
+                    .frame(width: 50, height: 50)
+                    .background(Color.accentColor.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: UIDevice.current.name)
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(1)
+                    Text(verbatim: "\(DeviceInfo.modelIdentifier) · \(UIDevice.current.systemName) \(UIDevice.current.systemVersion)")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            serviceChip
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    @ViewBuilder private var serviceChip: some View {
+        switch runner.state {
+        case .unknown, .checking:
+            StateChip(text: L10n.t(.checking), tone: .busy)
+        case .running:
+            StateChip(text: "\(L10n.t(.running)) · 127.0.0.1:\(appState.serverPort)", tone: .good)
+        case .stopped:
+            StateChip(text: L10n.t(.stopped), tone: .idle)
+        }
+    }
+
+    // MARK: - Connection
 
     private var portIsValid: Bool {
         Int(portText).map(ServerPort.allowed.contains) ?? false
     }
 
-    /// The server's port. Saved as soon as it is valid; the runner picks it up
-    /// on the next start, so it can't change while the service is running.
-    private var portSection: some View {
+    private var remoteOn: Bool {
+        runnerAdmin.visibility.map { $0 != .local } ?? false
+    }
+
+    private var busy: Bool { runnerAdmin.pairing || runnerAdmin.changingVisibility }
+
+    private var connectionSection: some View {
         Section {
-            HStack {
-                Text(L10n.ui(.portLabel))
-                Spacer()
-                TextField(String(ServerPort.defaultPort), text: $portText)
-                    .keyboardType(.numberPad)
-                    .multilineTextAlignment(.trailing)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundColor(portIsValid ? .primary : .orange)
-                    .frame(maxWidth: 120)
-                    .disabled(runner.isRunning)
-                    .onChange(of: portText) { text in
-                        let digits = String(text.filter(\.isNumber).prefix(5))
-                        if digits != text { portText = digits; return }
-                        if let value = Int(digits), ServerPort.allowed.contains(value) {
-                            appState.serverPort = value
-                        }
-                    }
-            }
+            portRow
             if portText != String(ServerPort.defaultPort) && !runner.isRunning {
-                Button(L10n.ui(.portReset)) {
+                Button {
                     portText = String(ServerPort.defaultPort)
+                } label: {
+                    Label(L10n.ui(.portReset), systemImage: "arrow.uturn.backward")
                 }
             }
-        } footer: {
+
+            visibilityRow
+
             if runner.isRunning {
-                Text(L10n.ui(.portRunningFooter))
-            } else if !portIsValid {
+                CopyRow(title: L10n.ui(.localAddress), systemImage: "iphone",
+                        value: "127.0.0.1:\(appState.serverPort)")
+                if remoteOn {
+                    CopyRow(title: L10n.ui(.lanAddress), systemImage: "wifi",
+                            value: AppState.wifiAddress().map { "\($0):\(appState.serverPort)" },
+                            placeholder: L10n.ui(.noWiFi))
+                }
+            }
+        } header: {
+            Text(L10n.ui(.connectionSection))
+        } footer: {
+            connectionFooter
+        }
+    }
+
+    /// The server's port. Saved as soon as it is valid; the runner picks it up
+    /// on the next start, so it can't change while the service is running.
+    private var portRow: some View {
+        HStack(spacing: 12) {
+            Label(L10n.ui(.portLabel), systemImage: "number")
+            Spacer(minLength: 8)
+            if runner.isRunning {
+                Image(systemName: "lock.fill")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            TextField(String(ServerPort.defaultPort), text: $portText)
+                .keyboardType(.numberPad)
+                .multilineTextAlignment(.trailing)
+                .font(.system(.body, design: .monospaced))
+                .foregroundColor(portIsValid ? (runner.isRunning ? .secondary : .primary) : .orange)
+                .frame(maxWidth: 110)
+                .disabled(runner.isRunning)
+                .onChange(of: portText) { text in
+                    let digits = String(text.filter(\.isNumber).prefix(5))
+                    if digits != text { portText = digits; return }
+                    if let value = Int(digits), ServerPort.allowed.contains(value) {
+                        appState.serverPort = value
+                    }
+                }
+        }
+    }
+
+    private static let visibilityChoices: [RunnerAdmin.Visibility] = [.local, .lan, .lanAndNearby]
+
+    private static func shortName(_ visibility: RunnerAdmin.Visibility) -> String {
+        switch visibility {
+        case .local: return L10n.ui(.visibilityThisDevice)
+        case .lan: return L10n.ui(.visibilityLAN)
+        case .lanAndNearby: return L10n.ui(.visibilityNearby)
+        }
+    }
+
+    /// Who can reach the server. Changing it needs the service running: the
+    /// runner applies it to its live listener.
+    private var visibilityRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label(L10n.t(.visibilityLabel), systemImage: "eye")
+                Spacer()
+                if busy { ProgressView() }
+            }
+            Picker(L10n.t(.visibilityLabel), selection: Binding(
+                get: { runnerAdmin.visibility ?? .local },
+                set: { target in Task { await setVisibility(target) } })) {
+                ForEach(Self.visibilityChoices, id: \.self) { choice in
+                    Text(Self.shortName(choice)).tag(choice)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(!runner.isRunning || busy)
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// Changing who can reach the runner is a `config` call, which needs this
+    /// app paired with it: the first time, that asks for the user's approval.
+    /// The all-in-one runner shares this process and is told directly.
+    private func setVisibility(_ target: RunnerAdmin.Visibility) async {
+        #if LOOPCTRL_ALL_IN_ONE
+        await runnerAdmin.setVisibilityInProcess(target)
+        #else
+        if !runnerAdmin.isPaired {
+            await runnerAdmin.connect()
+            guard runnerAdmin.isPaired else { return }
+        }
+        await runnerAdmin.setVisibility(target)
+        #endif
+    }
+
+    @ViewBuilder private var connectionFooter: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !portIsValid {
                 Text(String(format: L10n.ui(.portInvalid),
                             ServerPort.allowed.lowerBound, ServerPort.allowed.upperBound))
                     .foregroundColor(.orange)
+            } else if runner.isRunning {
+                Text(L10n.ui(.portRunningFooter))
             } else {
                 Text(String(format: L10n.ui(.portFooter), Int(ServerPort.defaultPort)))
+            }
+
+            if !runner.isRunning {
+                Text(L10n.ui(.visibilityStoppedFooter))
+            } else {
+                #if !LOOPCTRL_ALL_IN_ONE
+                if let notice = runnerAdmin.notice {
+                    Text(notice).foregroundColor(.orange)
+                } else if !runnerAdmin.isPaired || runnerAdmin.pairing {
+                    Text(L10n.ui(.remoteAccessApproveFooter))
+                }
+                #endif
+                switch runnerAdmin.visibility ?? .local {
+                case .local: Text(L10n.ui(.remoteAccessOffFooter))
+                case .lan: Text(L10n.ui(.remoteAccessOnFooter))
+                case .lanAndNearby:
+                    Text(runnerAdmin.nearbyPending ? L10n.ui(.visibilityNearbyPendingFooter)
+                         : L10n.ui(.visibilityNearbyFooter))
+                }
+                if runnerAdmin.localNetworkDenied {
+                    // Remote clients connecting in still work without it, so
+                    // this is the only sign of why nearby discovery cannot.
+                    Text(L10n.t(.runnerLocalNetworkDenied)).foregroundColor(.orange)
+                }
             }
         }
     }
 
+    // MARK: - Setup
+
     /// Pairing, image download, Wi-Fi, tunnel app and the mount all live in
-    /// DDIMountView; here it is one row that says where things stand.
+    /// DDIMountView; here it is one row that says how far along they are.
     private var setupSection: some View {
-        Section {
+        let total = SetupStep.allCases.count
+        let done = ddi.isMounted ? total : setupDone
+        return Section {
             Button {
                 showMountSheet = true
             } label: {
-                HStack {
-                    Text(L10n.ui(.setupRow)).foregroundColor(.primary)
-                    Spacer()
-                    Text(ddi.isMounted ? L10n.ui(.mounted)
-                         : hasPairingFile ? L10n.ui(.paired) : ddi.localizedSummary)
-                        .foregroundColor(.secondary)
+                HStack(spacing: 14) {
+                    ZStack {
+                        ProgressRing(fraction: Double(done) / Double(total), lineWidth: 3.5,
+                                     tint: ddi.isMounted ? .green : .accentColor)
+                        if ddi.isMounted {
+                            Image(systemName: "checkmark")
+                                .font(.caption.weight(.bold))
+                                .foregroundColor(.green)
+                        } else {
+                            Text(verbatim: "\(done)")
+                                .font(.caption.weight(.semibold).monospacedDigit())
+                                .foregroundColor(.accentColor)
+                        }
+                    }
+                    .frame(width: 32, height: 32)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.ui(.setupRow)).foregroundColor(.primary)
+                        Text(ddi.isMounted ? L10n.ui(.diskImageMounted)
+                             : String(format: L10n.ui(.stepsDone), done, total))
+                            .font(.subheadline)
+                            .foregroundColor(ddi.isMounted ? .green : .secondary)
+                    }
+                    Spacer(minLength: 8)
                     Image(systemName: "chevron.right")
                         .font(.footnote.weight(.semibold))
                         .foregroundColor(Color(.tertiaryLabel))
                 }
+                .padding(.vertical, 2)
             }
-            if let layout = ddi.layout {
-                LabeledRow(L10n.t(.mountPoint), layout.rawValue)
-            }
+        } header: {
+            Text(L10n.ui(.setupSection))
         } footer: {
-            if ddi.isMounted {
-                Text(L10n.t(.ddiReadyFooter))
-            } else if let advice = ddi.advice {
+            if !ddi.isMounted, let advice = ddi.advice {
                 Text(advice)
             }
         }
     }
 
-    private func serverSection(_ info: RunnerStatus.Info) -> some View {
+    // MARK: - Clients
+
+    @ViewBuilder private var clientsSection: some View {
         Section {
-            LabeledRow(L10n.t(.addressLabel), "127.0.0.1:\(appState.serverPort)")
-            if let version = info.serverVersion {
-                LabeledRow(L10n.t(.serverLabel), version)
-            }
-            if let proto = info.protocolVersion {
-                LabeledRow(L10n.t(.protocolLabel), "v\(proto)")
-            }
-            if let methods = info.methodCount {
-                LabeledRow(L10n.t(.methodsLabel), "\(methods)", monospaced: false)
-            }
-            if !info.capabilities.isEmpty {
-                NavigationLink {
-                    CapabilityListView(capabilities: info.capabilities)
-                } label: {
-                    LabeledRow(L10n.t(.capabilitiesLabel), "\(info.capabilities.count)", monospaced: false)
+            if !runner.isRunning {
+                Label(L10n.ui(.clientsNeedService), systemImage: "person.2")
+                    .foregroundColor(.secondary)
+            } else if !runnerAdmin.isPaired {
+                // Two processes in both builds as far as /rpc is concerned:
+                // listing and revoking keys needs this app's own key.
+                RunnerConnectRows()
+            } else {
+                if !runnerAdmin.clientsLoaded && runnerAdmin.notice == nil {
+                    HStack { Spacer(); ProgressView(); Spacer() }
+                } else if runnerAdmin.clients.isEmpty {
+                    Text(L10n.t(.noClients)).foregroundColor(.secondary)
                 }
-            }
-            if let visibility = runnerAdmin.visibility {
-                RunnerVisibilityRow(visibility: visibility)
-            }
-            if runnerAdmin.localNetworkDenied {
-                // Remote clients connecting in still work without it, so this
-                // is the only sign of why nearby discovery cannot.
-                Text(L10n.t(.runnerLocalNetworkDenied))
-                    .font(.footnote)
-                    .foregroundColor(.orange)
-            }
-            NavigationLink {
-                RunnerClientsView()
-            } label: {
-                HStack {
-                    Text(L10n.t(.authorizedClients))
-                    Spacer()
-                    if runnerAdmin.clientsLoaded {
-                        Text(verbatim: "\(runnerAdmin.clients.count)")
-                            .foregroundColor(.secondary)
+                ClientRows(clients: Array(runnerAdmin.clients.prefix(Self.inlineClientLimit)),
+                           pendingRevoke: $pendingRevoke,
+                           confirmDisconnect: $confirmDisconnect)
+                if runnerAdmin.clients.count > Self.inlineClientLimit {
+                    NavigationLink {
+                        RunnerClientsView()
+                    } label: {
+                        Label(String(format: L10n.ui(.showAllClients), runnerAdmin.clients.count),
+                              systemImage: "person.2")
                     }
                 }
-            }
-            // Count and visibility kept current while shown (remote access and
-            // nearby can be switched from the runner's notification at any
-            // time). Only once paired: pairing is never started from here.
-            .task(id: runnerAdmin.isPaired) {
-                while !Task.isCancelled && runnerAdmin.isPaired {
-                    await runnerAdmin.loadClients()
-                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                if !runnerAdmin.otherClients.isEmpty {
+                    Button(role: .destructive) { confirmRevokeOthers = true } label: {
+                        Label(L10n.t(.revokeOthers), systemImage: "person.crop.circle.badge.xmark")
+                    }
+                }
+                if let notice = runnerAdmin.notice {
+                    NoticeLabel(text: notice)
                 }
             }
+        } header: {
+            Text(L10n.ui(.clientsSection))
+        } footer: {
+            if runner.isRunning && runnerAdmin.isPaired && !runnerAdmin.clients.isEmpty {
+                Text(L10n.ui(.clientsSwipeFooter))
+            }
+        }
+    }
+
+    // MARK: - Diagnostics
+
+    private var diagnosticsSection: some View {
+        Section {
             NavigationLink {
                 RunnerLogsView()
             } label: {
-                Text(L10n.t(.runnerLogs))
+                Label(L10n.t(.runnerLogs), systemImage: "terminal")
             }
-        } header: {
-            Text(L10n.t(.serverSectionTitle))
-        } footer: {
-            Text(L10n.t(.serverRunningFooter))
-        }
-    }
-
-    private var alternativeSection: some View {
-        Section {
-            LinkRow(title: "LocalDevVPN",
-                    detail: "Required either way — it makes this device's debug service reachable.",
-                    actionTitle: "App Store",
-                    url: Self.localDevVPNURL)
-            LinkRow(title: "StikDebug",
-                    detail: "An alternative mounter, if the in-app one fails. Sideload from stikdebug.xyz — it isn't on the App Store.",
-                    actionTitle: "Open",
-                    url: Self.stikDebugURL,
-                    fallbackURL: Self.stikDebugSiteURL)
-        } header: {
-            Text(L10n.t(.alternativeSection))
-        } footer: {
-            Text(L10n.t(.alternativeFooter))
-        }
-    }
-
-    /// Read locally, not from the server: most useful precisely when the
-    /// runner won't start.
-    private var deviceSection: some View {
-        Section {
-            LabeledRow(L10n.t(.modelLabel), DeviceInfo.modelIdentifier)
-            LabeledRow(L10n.t(.systemLabel), "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)")
-            LabeledRow(L10n.t(.screenLabel), DeviceInfo.screenDescription)
-            LabeledRow(L10n.t(.nameLabel), UIDevice.current.name, monospaced: false)
-        } header: {
-            Text(L10n.t(.deviceSection))
-        }
-    }
-
-    private var aboutSection: some View {
-        Section {
-            LabeledRow(L10n.t(.versionLabel), Self.appVersion, monospaced: false)
-            LabeledRow(L10n.t(.protocolLabel), "JSON-RPC 2.0", monospaced: false)
             NavigationLink {
                 LogListView()
             } label: {
-                LabeledRow(L10n.t(.logsLabel), "\(logCount)", monospaced: false)
-            }
-        } header: {
-            Text(L10n.t(.aboutSection))
-        } footer: {
-            // The mount runs through a Rust FFI that aborts rather than throws,
-            // so the log is often the only artifact besides a crash report.
-            Text(L10n.t(.logsFooter))
-        }
-    }
-}
-
-/// Another app worth having: name, why, and a button that opens it.
-private struct LinkRow: View {
-    let title: String
-    let detail: String
-    let actionTitle: String
-    let url: URL
-    /// Opened when `url` uses a custom scheme and the app isn't installed.
-    var fallbackURL: URL? = nil
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                Text(detail)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            Button(actionTitle) {
-                UIApplication.shared.open(url) { ok in
-                    // A custom-scheme open fails when that app isn't installed;
-                    // its download page turns a dead tap into a way forward.
-                    guard !ok, let fallbackURL else { return }
-                    UIApplication.shared.open(fallbackURL)
+                HStack {
+                    Label(L10n.ui(.appLogs), systemImage: "doc.text")
+                    Spacer()
+                    Text(verbatim: "\(logCount)").foregroundColor(.secondary)
                 }
             }
-            .font(.subheadline.weight(.semibold))
-            // .borderless keeps the tap on the button, not the whole row.
-            .buttonStyle(.borderless)
+            NavigationLink {
+                ServiceInfoView(runner: runner)
+            } label: {
+                Label(L10n.ui(.serviceInfo), systemImage: "info.circle")
+            }
+        } header: {
+            Text(L10n.ui(.diagnosticsSection))
         }
-        .padding(.vertical, 2)
+    }
+
+    // MARK: - About
+
+    private var aboutSection: some View {
+        Section {
+            ValueRow(title: L10n.t(.versionLabel), systemImage: "app.badge", value: Self.appVersion)
+            Link(destination: Self.repositoryURL) {
+                HStack {
+                    Label {
+                        Text(verbatim: "GitHub").foregroundColor(.primary)
+                    } icon: {
+                        Image(systemName: "chevron.left.forwardslash.chevron.right")
+                    }
+                    Spacer()
+                    Text(verbatim: "Souitou-iop/LoopCtrl")
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                    Image(systemName: "arrow.up.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundColor(Color(.tertiaryLabel))
+                }
+            }
+            ValueRow(title: L10n.ui(.license), systemImage: "checkmark.seal", value: "Apache-2.0")
+        } header: {
+            Text(L10n.t(.aboutSection))
+        }
     }
 }
 
-/// The capability tags the running server advertises, as a flat list: clients
-/// feature-detect against them, so "is X there" is the useful question.
-private struct CapabilityListView: View {
-    let capabilities: [String]
+/// What the running server reports about itself, and the device facts the
+/// automation API depends on.
+private struct ServiceInfoView: View {
+    @ObservedObject var runner: RunnerStatus
 
     var body: some View {
-        List(capabilities.sorted(), id: \.self) { tag in
-            Text(verbatim: tag)
-                .font(.system(.body, design: .monospaced))
+        List {
+            Section {
+                switch runner.state {
+                case .running(let info):
+                    if let version = info.serverVersion {
+                        ValueRow(title: L10n.t(.serverLabel), systemImage: "server.rack", value: version, monospaced: true)
+                    }
+                    if let proto = info.protocolVersion {
+                        ValueRow(title: L10n.t(.protocolLabel), systemImage: "arrow.left.arrow.right", value: "v\(proto) · JSON-RPC 2.0")
+                    }
+                    if let methods = info.methodCount {
+                        ValueRow(title: L10n.t(.methodsLabel), systemImage: "list.bullet", value: "\(methods)")
+                    }
+                    ValueRow(title: L10n.t(.capabilitiesLabel), systemImage: "puzzlepiece.extension",
+                             value: "\(info.capabilities.count)")
+                case .unknown, .checking:
+                    HStack { Spacer(); ProgressView(); Spacer() }
+                case .stopped:
+                    Label(L10n.ui(.serviceStoppedInfo), systemImage: "pause.circle")
+                        .foregroundColor(.secondary)
+                }
+            } header: {
+                Text(L10n.ui(.serviceLabel))
+            }
+
+            if case .running(let info) = runner.state, !info.capabilities.isEmpty {
+                // Clients feature-detect against these, so "is X there" is the
+                // useful question: a flat, sorted list.
+                Section {
+                    ForEach(info.capabilities.sorted(), id: \.self) { tag in
+                        Text(verbatim: tag)
+                            .font(.system(.subheadline, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                } header: {
+                    Text(L10n.t(.capabilitiesLabel))
+                }
+            }
+
+            Section {
+                ValueRow(title: L10n.t(.modelLabel), systemImage: "iphone", value: DeviceInfo.modelIdentifier, monospaced: true)
+                ValueRow(title: L10n.t(.systemLabel), systemImage: "gearshape",
+                         value: "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)")
+                // Points and pixels — the two coordinate spaces the API mixes.
+                ValueRow(title: L10n.t(.screenLabel), systemImage: "rectangle.dashed",
+                         value: DeviceInfo.screenDescription, monospaced: true)
+            } header: {
+                Text(L10n.t(.deviceSection))
+            }
         }
-        .navigationTitle(L10n.t(.capabilitiesLabel))
+        .listStyle(.insetGrouped)
+        .navigationTitle(L10n.ui(.serviceInfo))
         .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-/// A label with its value right-aligned.
-private struct LabeledRow: View {
-    let label: String
-    let value: String
-    var monospaced = true
-
-    init(_ label: String, _ value: String, monospaced: Bool = true) {
-        self.label = label
-        self.value = value
-        self.monospaced = monospaced
-    }
-
-    var body: some View {
-        HStack {
-            Text(label)
-            Spacer()
-            Text(verbatim: value)
-                .font(monospaced ? .system(.body, design: .monospaced) : .body)
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
     }
 }
 

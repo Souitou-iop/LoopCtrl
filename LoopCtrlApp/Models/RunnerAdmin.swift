@@ -210,6 +210,31 @@ final class RunnerAdmin: ObservableObject {
         try? await Task.sleep(nanoseconds: 800_000_000)
         refreshInProcessVisibility()
     }
+
+    /// `setVisibility` for the in-process runner: remote access and nearby
+    /// discovery are switched by notifications only this process can post.
+    func setVisibilityInProcess(_ target: Visibility) async {
+        guard target != visibility, !changingVisibility else { return }
+        changingVisibility = true
+        defer { changingVisibility = false }
+        let center = NotificationCenter.default
+        switch target {
+        case .local:
+            center.post(name: InProcessRunnerControl.setRemoteAccess, object: nil, userInfo: ["on": false])
+        case .lan:
+            if visibility == .lanAndNearby {
+                center.post(name: InProcessRunnerControl.setNearby, object: nil, userInfo: ["on": false])
+            } else {
+                center.post(name: InProcessRunnerControl.setRemoteAccess, object: nil, userInfo: ["on": true])
+            }
+        case .lanAndNearby:
+            // The runner turns remote access on first if it is off.
+            center.post(name: InProcessRunnerControl.setNearby, object: nil, userInfo: ["on": true])
+        }
+        loopctrlLog("Runner admin: visibility -> \(target) (in-process)")
+        try? await Task.sleep(nanoseconds: 800_000_000)
+        refreshInProcessVisibility()
+    }
     #endif
 
     // MARK: - Logs

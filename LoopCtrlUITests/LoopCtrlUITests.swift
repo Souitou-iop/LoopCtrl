@@ -469,6 +469,18 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                     if on { self.enableRemoteAccess() } else { self.disableRemoteAccess() }
                 }
             }
+            // The visibility choice in LoopCtrl's Settings sheet, same process.
+            NotificationCenter.default.addObserver(
+                forName: InProcessRunnerControl.setNearby, object: nil, queue: nil
+            ) { [weak self] note in
+                let on = note.userInfo?["on"] as? Bool ?? false
+                DispatchQueue.main.async {
+                    guard let self, self.server != nil else { return }
+                    Self.logBuffer.append(on ? "📡 Nearby discovery on (LoopCtrl screen)" : "📴 Nearby discovery off (LoopCtrl screen)")
+                    if on && !self.remoteAccessEnabled { self.enableRemoteAccess() }
+                    self.setNearby(on)
+                }
+            }
             returnToLoopCtrlIfBackgrounded()
         }
 

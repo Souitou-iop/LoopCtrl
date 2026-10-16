@@ -33,6 +33,9 @@ enum ServerPort {
 enum InProcessRunnerControl {
     /// userInfo["on"]: Bool. Turns remote access on or off.
     static let setRemoteAccess = Notification.Name("LoopCtrlInProcessSetRemoteAccess")
+    /// userInfo["on"]: Bool. Turns nearby discovery on or off; on also turns
+    /// remote access on, which nearby needs.
+    static let setNearby = Notification.Name("LoopCtrlInProcessSetNearby")
     /// The runner's own UserDefaults keys, which this process shares with it.
     static let remoteAccessKey = "allowRemoteAccess"
     static let nearbyKey = "nearbyDiscovery"
