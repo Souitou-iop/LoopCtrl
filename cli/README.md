@@ -18,7 +18,14 @@ target — so "it compiles" and "it runs there" are the same check.
 make build   # → ./loopctrl  (static, ~130KB)
 make test    # runs the crypto known-answer tests in the target environment
 make shell   # poke around in the build image
+make macos   # → ./loopctrl-macos (arm64 + x86_64, with nearby discovery)
 ```
+
+Without Docker, `make build` cross-compiles the same static binary with
+`zig cc -target aarch64-linux-musl` (`brew install zig`), and `make test` runs
+the self-test natively, since the binary can't run on the Mac. `./loopctrl` is
+committed because the runner bundles it (`GET /skill/clients/cli`); rebuild and
+commit it whenever `main.c` or the protocol changes.
 
 ## Why the crypto is hand-rolled
 

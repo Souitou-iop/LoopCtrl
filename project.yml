@@ -117,11 +117,9 @@ targets:
       # Static aarch64-musl CLI, served at GET /skill/examples/cli. Built for
       # the Minis sandbox (Alpine arm64), whose minirootfs has no python3 — the
       # reference client there would cost an `apk add` before the first call.
-      # Optional: rebuilt with `make -C cli build` (Docker). Without it the
-      # endpoint answers 404 and points at the Python client.
+      # Rebuild with `make -C cli build` (Docker or zig) and commit it.
       - path: cli/loopctrl
         buildPhase: resources
-        optional: true
       - path: cli/loopctrl.sh
         buildPhase: resources
     dependencies:

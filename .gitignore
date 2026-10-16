@@ -23,3 +23,7 @@ Config/Local.xcconfig
 
 # Python bytecode
 __pycache__/
+
+# Local CLI builds (the Linux cli/loopctrl is committed: the runner bundles it)
+cli/loopctrl-macos
+cli/selftest
