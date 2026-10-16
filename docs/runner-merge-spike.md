@@ -143,6 +143,21 @@ delegate，所以不冲突；但以后如果 App 要处理通知，需要统一�
 之后 `InProcessRunner.start()` 投递 `loopctrl://start`，由同一个测试实例重新建监听器。
 监听器意外失败也一样只停不退。两个 App 的模式保持原样（测试结束、Runner 退出）。
 
+**“Automation Running” 遮罩**：parked 的测试还活着，遮罩原本会一直在。遮罩其实就是 testmanagerd 的
+Automation Mode，按测试会话做引用计数（反汇编 iOS 27 DDI 的 testmanagerd）：
+`-[XCTestSession _XCT_enableAutomationModeWithReply:]` → `enableAutomationModeForClient:error:` 把会话加入 client 集合；
+`-[XCTestSession invalidate]`（会话的 XPC 连接断开时）→ `disableAutomationModeForClient:` 把会话移出，最后一个移出时关闭
+Automation Mode。没有别的路径会走到 disable，所以遮罩跟的是测试进程到 testmanagerd 的**连接**，不是测试本身。
+测试这一侧，这条连接属于唯一的 `XCTRunnerDaemonSession`（XCTestCore 里的 dispatch_once 单例，所有 XCTest 调用都经过
+`+sharedSession → -daemonProxy → -connection`）。所以（`LoopCtrlUITests/AutomationSession.m`）：
+- Stop：停监听之后 `[session.connection invalidate]` → testmanagerd 拆掉会话 → 遮罩消失，测试和 App 都还在。
+- Start：`+connectionForInitiatingSharedSession` 新建连接，`+capabilitiesForDaemonConnection:completion:` 握手，再对**同一个**单例
+  对象重跑 `-initWithConnection:remoteInterfaceCapabilities:`（它只重设队列、连接、能力、XPC 接口、exportedObject 并 resume，
+  和 `+sessionWithConnection:` 给新对象做的一样），最后照 `_XCUIInitializeForUITesting` 调 `-[XCUIDevice enableAutomationMode:]`
+  和 `loadAccessibility:`（临时放宽 QuiescenceDisabler 设的 2 秒 application-state 超时）。
+- 上机 ✅（iPhone 17，iOS 27.2）：Stop 后遮罩消失；Start 约 1.2 秒重新拿到 automation，没有再弹密码，监听恢复，可以反复 Stop/Start。
+  ⚠️ 重连之后还没逐个验证每种 RPC（点击、截图、视频流）。私有 API 不在时 `releaseAutomation` 会拒绝执行，退回到原来的行为（遮罩保留）。
+
 **重启之后**：DDI 消失。主程序不链接 XCTest，rpath 指向不存在的目录也没关系（启动时不会经过它们），
 所以 App 能正常启动 ✅（这是链接层面的推断，⚠️ 要上机确认）。`DeveloperDiskImage.status()`
 会显示「未挂载」→ 用户在 App 内重新挂载 → 点「启动」。`.xctest` 不是 appex，系统不会自动加载它。

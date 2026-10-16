@@ -39,6 +39,8 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
 
     private var remoteAccessEnabled = false
     private var keepRunning = true
+    /// All-in-one: Start is re-enabling Automation Mode (restartParkedService).
+    private var reacquiringAutomation = false
 
     /// Reads the persisted remote-access preference. Absent key → false (local only).
     private static var persistedRemoteAccess: Bool {
@@ -626,6 +628,44 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         }
         server = nil
         Self.logBuffer.append("⏸ service stopped — test parked; loopctrl://start (LoopCtrl's Start) restarts it")
+        releaseAutomation()
+    }
+
+    /// All-in-one, parked: give UI automation back so iOS drops its
+    /// "Automation Running" overlay (see AutomationSession.h). Start takes it
+    /// again in `restartParkedService`.
+    private func releaseAutomation() {
+        var why: NSString?
+        if AutomationSession.releaseAutomation(&why) {
+            Self.logBuffer.append("🤖 automation released — the Automation Running overlay should go")
+        } else {
+            Self.logBuffer.append("🤖 automation kept (overlay stays): \(why ?? "?")")
+        }
+    }
+
+    /// All-in-one, parked: take automation back if Stop released it, then
+    /// listen again. Re-enabling Automation Mode waits on testmanagerd and may
+    /// put up the passcode prompt, so it runs off the main thread; the server
+    /// starts on the main thread afterwards.
+    private func restartParkedService() {
+        guard AutomationSession.isReleased else {
+            startService()
+            return
+        }
+        guard !reacquiringAutomation else { return }
+        reacquiringAutomation = true
+        Self.logBuffer.append("🤖 taking automation back…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var why: NSString?
+            let ok = AutomationSession.reacquire(&why)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.reacquiringAutomation = false
+                Self.logBuffer.append(ok ? "🤖 automation back\(why.map { " (\($0))" } ?? "")"
+                                         : "🤖 couldn't take automation back: \(why ?? "?")")
+                if self.server == nil { self.startService() }
+            }
+        }
     }
 
     /// Withdraw the "running" notification (its 🛑 action has nothing left to
@@ -810,7 +850,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         // same test (a second XCTest bootstrap in one process would abort).
         if parksWhenStopped && server == nil {
             Self.logBuffer.append("▶️ loopctrl://start while parked — restarting the service")
-            startService()
+            restartParkedService()
         }
 
         guard let callbackRaw = items.first(where: { $0.name == "callback" })?.value,
