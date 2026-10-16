@@ -16,6 +16,7 @@ struct OptionsView: View {
     @State private var showMountSheet = false
     @State private var logCount = AppLog.allFiles().count
     @State private var portText = String(ServerPort.stored)
+    @State private var movingPort = false
 
     @State private var pendingRevoke: RunnerAdmin.Client?
     @State private var confirmRevokeOthers = false
@@ -156,6 +157,17 @@ struct OptionsView: View {
     private var connectionSection: some View {
         Section {
             portRow
+            if runner.isRunning && portIsValid && Int(portText) != appState.serverPort {
+                Button {
+                    Task { await movePort() }
+                } label: {
+                    HStack {
+                        Label(String(format: L10n.ui(.portApply), portText), systemImage: "arrow.triangle.2.circlepath")
+                        if movingPort { Spacer(); ProgressView() }
+                    }
+                }
+                .disabled(movingPort)
+            }
             if portText != String(ServerPort.defaultPort) && !runner.isRunning {
                 Button {
                     portText = String(ServerPort.defaultPort)
@@ -182,32 +194,48 @@ struct OptionsView: View {
         }
     }
 
-    /// The server's port. Saved as soon as it is valid; the runner picks it up
-    /// on the next start, so it can't change while the service is running.
+    /// The server's port. While stopped it is saved as soon as it is valid and
+    /// used on the next start. While running it is only saved once the runner
+    /// has moved to it (`movePort`): saved early, the status probe would look
+    /// at a port nothing listens on yet and report the service stopped.
     private var portRow: some View {
         HStack(spacing: 12) {
             Label(L10n.ui(.portLabel), systemImage: "number")
             Spacer(minLength: 8)
-            if runner.isRunning {
-                Image(systemName: "lock.fill")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-            }
             TextField(String(ServerPort.defaultPort), text: $portText)
                 .keyboardType(.numberPad)
                 .multilineTextAlignment(.trailing)
                 .font(.system(.body, design: .monospaced))
-                .foregroundColor(portIsValid ? (runner.isRunning ? .secondary : .primary) : .orange)
+                .foregroundColor(portIsValid ? .primary : .orange)
                 .frame(maxWidth: 110)
-                .disabled(runner.isRunning)
+                .disabled(movingPort)
                 .onChange(of: portText) { text in
                     let digits = String(text.filter(\.isNumber).prefix(5))
                     if digits != text { portText = digits; return }
-                    if let value = Int(digits), ServerPort.allowed.contains(value) {
+                    if !runner.isRunning, let value = Int(digits), ServerPort.allowed.contains(value) {
                         appState.serverPort = value
                     }
                 }
         }
+    }
+
+    /// Move the running service to the typed port (`config{listen_port}`),
+    /// then save it here and re-probe there.
+    private func movePort() async {
+        guard let value = Int(portText), ServerPort.allowed.contains(value) else { return }
+        movingPort = true
+        defer { movingPort = false }
+        #if !LOOPCTRL_ALL_IN_ONE
+        if !runnerAdmin.isPaired {
+            await runnerAdmin.connect()
+            guard runnerAdmin.isPaired else { return }
+        }
+        #endif
+        guard await runnerAdmin.setListenPort(value) else { return }
+        appState.serverPort = value
+        // The runner restarts its listener just after replying.
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        await runner.check()
     }
 
     private static let visibilityChoices: [RunnerAdmin.Visibility] = [.local, .lan, .lanAndNearby]
@@ -264,7 +292,7 @@ struct OptionsView: View {
                 Text(String(format: L10n.ui(.portInvalid),
                             ServerPort.allowed.lowerBound, ServerPort.allowed.upperBound))
                     .foregroundColor(.orange)
-            } else if runner.isRunning {
+            } else if runner.isRunning && Int(portText) != appState.serverPort {
                 Text(L10n.ui(.portRunningFooter))
             } else {
                 Text(String(format: L10n.ui(.portFooter), Int(ServerPort.defaultPort)))

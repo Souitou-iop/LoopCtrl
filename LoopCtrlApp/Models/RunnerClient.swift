@@ -59,9 +59,15 @@ final class RunnerClient {
         }
     }
 
+    #if LOOPCTRL_ALL_IN_ONE
+    /// The runner shares this process and answers without a key.
+    var isPaired: Bool { true }
+    var sessionID: String? { nil }
+    #else
     var isPaired: Bool { record != nil }
     /// This app's own session id on the runner, so the client list can mark it.
     var sessionID: String? { record?.tok }
+    #endif
 
     func forget() {
         record = nil
@@ -73,6 +79,9 @@ final class RunnerClient {
     /// Ask the runner for a key. Blocks until the user answers the runner's
     /// notification or it times out (60 s on the runner side).
     func pair() async throws {
+        #if LOOPCTRL_ALL_IN_ONE
+        return   // nothing to pair with: see isPaired
+        #endif
         let priv = Curve25519.KeyAgreement.PrivateKey()
         let pub = priv.publicKey.rawRepresentation
         let (status, body) = try await post("/pair", json: [
@@ -114,6 +123,9 @@ final class RunnerClient {
 
     /// One enveloped JSON-RPC call; returns its `result` object.
     func call(_ method: String, _ params: [String: Any] = [:], timeout: TimeInterval = 15) async throws -> [String: Any] {
+        #if LOOPCTRL_ALL_IN_ONE
+        return try await callInProcess(method, params, timeout: timeout)
+        #endif
         guard let record, let key = Data(hexString: record.key), let tok4 = Data(hexString: record.tok),
               let nonce = SecureEnvelope.randomBytes(16) else { throw Failure.notPaired }
 
@@ -153,6 +165,36 @@ final class RunnerClient {
         }
         return reply["result"] as? [String: Any] ?? [:]
     }
+
+    #if LOOPCTRL_ALL_IN_ONE
+    /// The all-in-one runner, in this process (InProcessRunnerControl.rpc).
+    private func callInProcess(_ method: String, _ params: [String: Any],
+                               timeout: TimeInterval) async throws -> [String: Any] {
+        let body = try JSONSerialization.data(withJSONObject: params)
+        let data: Data = try await withCheckedThrowingContinuation { continuation in
+            let once = NSLock()
+            var finished = false
+            func finish(_ result: Result<Data, Error>) {
+                once.lock(); defer { once.unlock() }
+                guard !finished else { return }
+                finished = true
+                continuation.resume(with: result)
+            }
+            let reply: (Data?, String?) -> Void = { data, error in
+                if let data { finish(.success(data)); return }
+                finish(.failure(error == InProcessRunnerControl.notRunningError
+                                ? Failure.notRunning : Failure.server(error ?? "RPC error")))
+            }
+            // Nobody observes it until the test has started: no runner yet.
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
+                finish(.failure(Failure.notRunning))
+            }
+            NotificationCenter.default.post(name: InProcessRunnerControl.rpc, object: nil,
+                                            userInfo: ["method": method, "params": body, "reply": reply])
+        }
+        return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+    }
+    #endif
 
     // MARK: - HTTP
 

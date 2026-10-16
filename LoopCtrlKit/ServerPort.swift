@@ -36,6 +36,15 @@ enum InProcessRunnerControl {
     /// userInfo["on"]: Bool. Turns nearby discovery on or off; on also turns
     /// remote access on, which nearby needs.
     static let setNearby = Notification.Name("LoopCtrlInProcessSetNearby")
+    /// An admin call (`rpcMethods` only) answered by the runner without a key:
+    /// the app and the runner are one process, so pairing the app with its own
+    /// runner proved nothing and only stalled on an approval nobody saw.
+    /// userInfo: "method": String, "params": Data (JSON object), and
+    /// "reply": (Data?, String?) -> Void — the JSON result, or an error message
+    /// (`notRunningError` when no server is up).
+    static let rpc = Notification.Name("LoopCtrlInProcessRPC")
+    static let rpcMethods: Set<String> = ["config", "logs"]
+    static let notRunningError = "not-running"
     /// The runner's own UserDefaults keys, which this process shares with it.
     static let remoteAccessKey = "allowRemoteAccess"
     static let nearbyKey = "nearbyDiscovery"

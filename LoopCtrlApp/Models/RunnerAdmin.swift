@@ -155,6 +155,21 @@ final class RunnerAdmin: ObservableObject {
         }
     }
 
+    // MARK: - Port
+
+    /// Move the running server to another port (`config{listen_port}`; the
+    /// runner saves it and restarts its listener after replying).
+    func setListenPort(_ port: Int) async -> Bool {
+        do {
+            _ = try await client.call("config", ["listen_port": port], timeout: 5)
+            loopctrlLog("Runner admin: listen_port -> \(port)")
+            return true
+        } catch {
+            handle(error)
+            return false
+        }
+    }
+
     // MARK: - Visibility
 
     @Published private(set) var changingVisibility = false

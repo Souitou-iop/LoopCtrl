@@ -460,6 +460,35 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             ) { [weak self] _ in
                 DispatchQueue.main.async { self?.handlePendingCallbackIfAny() }
             }
+            // The LoopCtrl screen's client list, log viewer and settings, same
+            // process: answered like /rpc, without the key /rpc requires.
+            NotificationCenter.default.addObserver(
+                forName: InProcessRunnerControl.rpc, object: nil, queue: nil
+            ) { [weak self] note in
+                guard let info = note.userInfo, let method = info["method"] as? String,
+                      let reply = info["reply"] as? (Data?, String?) -> Void else { return }
+                guard InProcessRunnerControl.rpcMethods.contains(method) else {
+                    reply(nil, "\(method) is not available in-process")
+                    return
+                }
+                guard let handler = self?.server?.onRPCRequest else {
+                    reply(nil, InProcessRunnerControl.notRunningError)
+                    return
+                }
+                var params = (info["params"] as? Data)
+                    .flatMap { try? JSONDecoder().decode([String: JSONValue].self, from: $0) } ?? [:]
+                // Same as a loopback /rpc caller; set here so it can't be claimed.
+                if method == "config" {
+                    params[JSONRPCServer.peerSourceParam] = .string(PeerSource.local.rawValue)
+                }
+                handler(method, params) { result, error in
+                    if let error {
+                        reply(nil, error.message)
+                    } else {
+                        reply(try? JSONEncoder().encode(result ?? [:]), nil)
+                    }
+                }
+            }
             // The Remote Access switch on the LoopCtrl screen, same process.
             NotificationCenter.default.addObserver(
                 forName: InProcessRunnerControl.setRemoteAccess, object: nil, queue: nil
