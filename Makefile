@@ -1,4 +1,4 @@
-.PHONY: build ipa clean help
+.PHONY: build ipa ipa-allinone clean help
 
 PROJECT       = iCTRL.xcodeproj
 SCHEME        = iCTRL
@@ -214,9 +214,52 @@ ipa: build
 	@echo "════════════════════════════════════════"
 
 # ──────────────────────────────────────────────
+# SPIKE: iCTRL + runner as one app (docs/runner-merge-spike.md)
+#
+#   iCTRL-AllInOne.ipa — iCTRL's own executable (no XCTest link, launches
+#   without a DDI) with PlugIns/iCTRLUITests.xctest; XCTest is loaded in-process
+#   after the mount. Same bundle id as iCTRL.ipa, so it replaces that install.
+# ──────────────────────────────────────────────
+ALLINONE_APP  = iCTRLAllInOne.app
+ALLINONE_IPA  = iCTRL-AllInOne.ipa
+
+ipa-allinone: Frameworks/IDevice.xcframework $(PROJECT)/project.pbxproj
+	@./Scripts/stamp-build.sh
+	xcodebuild build \
+		-project $(PROJECT) \
+		-derivedDataPath $(DERIVED_DATA) \
+		-scheme iCTRLAllInOne \
+		-destination "generic/platform=iOS" \
+		-allowProvisioningUpdates \
+		ARCHS=arm64
+	@# Same two steps the runner gets in `ipa`, for the same reasons: the
+	@# plug-in carries the host's bundle id, and is re-signed before the host.
+	@set -e; \
+	APP="$(BUILD_DIR)/$(ALLINONE_APP)"; \
+	find "$$APP" -name "*.dSYM" -exec rm -rf {} + 2>/dev/null || true; \
+	rm -f "$$APP/__preview.dylib"; \
+	APP_ID="$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$$APP/Info.plist")"; \
+	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $$APP_ID" "$$APP/PlugIns/$(XCTEST_BUNDLE)/Info.plist"; \
+	AUTH="$$(codesign -dvv "$$APP" 2>&1 | sed -n 's/^Authority=//p' | head -1)"; \
+	if [ -z "$$AUTH" ]; then echo "🔴 could not read signing identity from $$APP"; exit 1; fi; \
+	SHA="$$(security find-identity -v -p codesigning 2>/dev/null | grep -F "$$AUTH" | head -1 | awk '{print $$2}')"; \
+	IDENT="$${SHA:-$$AUTH}"; \
+	for dylib in "$$APP/"*.dylib; do [ -f "$$dylib" ] && codesign --force --sign "$$IDENT" "$$dylib"; done; \
+	codesign --force --sign "$$IDENT" "$$APP/PlugIns/$(XCTEST_BUNDLE)"; \
+	codesign --force --sign "$$IDENT" --preserve-metadata=entitlements "$$APP"; \
+	codesign --verify --deep --strict "$$APP"
+	rm -rf "$(BUILD_DIR)/Payload"
+	mkdir -p "$(BUILD_DIR)/Payload"
+	cp -R "$(BUILD_DIR)/$(ALLINONE_APP)" "$(BUILD_DIR)/Payload/"
+	cd "$(BUILD_DIR)" && zip -qr "$(ALLINONE_IPA)" Payload/
+	mv "$(BUILD_DIR)/$(ALLINONE_IPA)" ./
+	rm -rf "$(BUILD_DIR)/Payload"
+	@echo "✅ $(ALLINONE_IPA)"
+
+# ──────────────────────────────────────────────
 clean:
 	rm -rf $(DERIVED_DATA)
-	rm -f $(MAIN_IPA) $(RUNNER_IPA)
+	rm -f $(MAIN_IPA) $(RUNNER_IPA) iCTRL-AllInOne.ipa
 	@echo "✅ Cleaned"
 
 help:

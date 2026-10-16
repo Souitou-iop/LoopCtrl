@@ -14,6 +14,7 @@
 + (NSArray<NSString *> *)drainLogs;
 + (void)markTestStarted;
 + (void)markSetUpEntered;
++ (BOOL)isInProcess;
 @end
 
 NS_ASSUME_NONNULL_BEGIN

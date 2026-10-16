@@ -495,7 +495,10 @@ final class iCTRLUITests: XCTestCase, UNUserNotificationCenterDelegate {
         // curtail the startup work still to be done. A foreground runner gets
         // killed after a while and its UI is an empty XCTest shell, so there is
         // nothing lost by stepping aside once there is something to serve.
-        backgroundSelfNow()
+        // In the all-in-one build the "runner" is the iCTRL screen itself.
+        if !EarlyURLHook.isInProcess() {
+            backgroundSelfNow()
+        }
 
         Self.logBuffer.append("🔁 entering run loop (keepRunning=\(keepRunning))")
         // WDA-style run loop: block on distantFuture instead of a 0.2s poll. The

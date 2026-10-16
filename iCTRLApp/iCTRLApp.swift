@@ -37,6 +37,13 @@ struct iCTRLApp: App {
             // A pairing file shared to iCTRL from another app (Files, Mail,
             // AirDrop, a chat): validate, store, and say so either way.
             .onOpenURL { url in
+                #if ICTRL_ALL_IN_ONE
+                // ictrl:// belongs to this app now that it is also the runner.
+                if url.scheme?.lowercased() == "ictrl" {
+                    InProcessRunner.handle(url)
+                    return
+                }
+                #endif
                 guard url.isFileURL else { return }
                 let name = url.lastPathComponent
                 do {
