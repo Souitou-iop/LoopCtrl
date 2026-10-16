@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import UIKit
 
 /// Starts the XCUITest server inside THIS process — the all-in-one build, where
 /// LoopCtrl.app carries `PlugIns/LoopCtrlUITests.xctest` and there is no separate
@@ -48,8 +49,9 @@ enum InProcessRunner {
 
     /// XCTest can be bootstrapped once per process: a second _XCTestMain aborts
     /// on "shared symbolication service already set" (the crash EarlyURLHook.m
-    /// documents). Once started, the only way back to "not started" is a new
-    /// process.
+    /// documents). So the test is never allowed to end in this build: Stop
+    /// parks it with its listener closed (`stop()`), and a later `start()`
+    /// reopens the listener on the same test.
     private(set) static var bootstrapped = false
 
     static var testBundleURL: URL? {
@@ -63,9 +65,16 @@ enum InProcessRunner {
     /// Returns once the hand-off is scheduled. The test itself starts on a
     /// later main-run-loop turn and from then on owns the bottom of the main
     /// thread (its distantFuture run loop); the UI keeps running inside it.
+    ///
+    /// Once bootstrapped, starting again (after `stop()`) does not touch XCTest
+    /// at all: the test is still there, parked, and is asked to bring its
+    /// listener back up.
     static func start() throws {
         precondition(Thread.isMainThread)
-        if bootstrapped { return }
+        if bootstrapped {
+            enqueue(startURL)
+            return
+        }
 
         let ddi = DeveloperDiskImage.status()
         guard ddi.isMounted else { throw Failure.notMounted }
@@ -82,6 +91,7 @@ enum InProcessRunner {
         let configuration = try makeConfiguration(testBundleURL: bundleURL)
 
         bootstrapped = true
+        holdBackgroundTaskUntilTestStarts()
         // Same hand-off as -[_XCTRunnerAppDelegate runTestsInBackground:]: a run
         // loop block rather than a dispatch block. The test never returns, and
         // the main queue does not drain re-entrantly — started from inside a
@@ -173,7 +183,28 @@ extension InProcessRunner {
             do { try start() } catch { loopctrlLog("In-process start failed: \(error.localizedDescription)") }
         }
         // Queued even for the start URL: it carries the callback the caller
-        // waits for, and the test answers it once the server is up.
+        // waits for, and the test answers it once the server is up. After a
+        // stop it is also what restarts the parked test's listener.
+        enqueue(url)
+    }
+
+    /// Stop serving without leaving the app.
+    ///
+    /// The test that hosts the server lives in this process, and XCTest calls
+    /// exit() when a test returns, so ending it would close LoopCtrl (and a
+    /// second bootstrap in the same process aborts). In this build the test
+    /// therefore only shuts its listener down on `loopctrl://stop` and stays
+    /// parked; `start()` brings it back. No callback: there is no other app
+    /// to return to.
+    static func stop() {
+        guard bootstrapped else { return }
+        enqueue(stopURL)
+    }
+
+    private static let startURL = URL(string: "loopctrl://start")!
+    private static let stopURL = URL(string: "loopctrl://stop")!
+
+    private static func enqueue(_ url: URL) {
         undelivered.append(url)
         deliverPending()
     }
@@ -193,5 +224,44 @@ extension InProcessRunner {
         let urls = undelivered
         undelivered.removeAll()
         for url in urls { hook.perform(NSSelectorFromString("deliverURL:"), with: url) }
+    }
+}
+
+// MARK: - Staying alive through the bootstrap
+
+extension InProcessRunner {
+    /// Posted by the test bundle's EarlyURLHook once testStartServer begins
+    /// (name shared as a string: this app does not link the bundle).
+    private static let testStartedNotification = Notification.Name("LoopCtrlInProcessTestStarted")
+    private static var bootstrapTask: UIBackgroundTaskIdentifier = .invalid
+    private static var testStartedObserver: NSObjectProtocol?
+
+    /// The runner stub holds a "XCTRunner Initialization" process assertion
+    /// from launch until XCTest's testBundleWillStart; after that testmanagerd
+    /// keeps the test process alive. This app has no such assertion, so
+    /// leaving it during the bootstrap (the passcode prompt, XCTest's slow
+    /// start) could get it suspended half-way. A background task covers that
+    /// window: ended as soon as the test runs, or when iOS says time is up.
+    static func holdBackgroundTaskUntilTestStarts() {
+        guard bootstrapTask == .invalid else { return }
+        bootstrapTask = UIApplication.shared.beginBackgroundTask(withName: "LoopCtrl XCTest bootstrap") {
+            loopctrlLog("XCTest bootstrap: background time ran out before the test started")
+            endBootstrapTask()
+        }
+        testStartedObserver = NotificationCenter.default.addObserver(
+            forName: testStartedNotification, object: nil, queue: .main
+        ) { _ in
+            endBootstrapTask()
+        }
+    }
+
+    private static func endBootstrapTask() {
+        if let observer = testStartedObserver {
+            NotificationCenter.default.removeObserver(observer)
+            testStartedObserver = nil
+        }
+        guard bootstrapTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(bootstrapTask)
+        bootstrapTask = .invalid
     }
 }

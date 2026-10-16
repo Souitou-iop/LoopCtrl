@@ -372,24 +372,32 @@ struct SettingsView: View {
 
     private func stopRunner() {
         #if LOOPCTRL_ALL_IN_ONE
-        // Same URL, same handler — but the test it ends lives in this process,
-        // and XCTest exit()s when its test returns: Stop closes LoopCtrl. Starting
-        // again is a fresh launch (XCTest bootstraps once per process).
-        InProcessRunner.handle(Self.runnerStopURL)
+        // The server's test lives in this process: it drops its listener and
+        // stays parked, so LoopCtrl stays open and Start works again.
+        InProcessRunner.stop()
+        Task { await recheckAfterStop() }
         return
         #endif
-        // Opening the runner's scheme brings it to the front, where it stops its
-        // server and ends the test. It bounces back here afterwards, but the
-        // probe is what settles the displayed state.
-        UIApplication.shared.open(Self.runnerStopURL) { _ in
-            Task {
-                // Give the runner a moment to actually tear the listener down;
-                // probing instantly would still see it up and flip back to
-                // "Running" for one cycle.
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                await runner.check()
+        Task {
+            // Paired: stop over /rpc, without leaving this screen.
+            if await runnerAdmin.stopServer() {
+                await recheckAfterStop()
+                return
+            }
+            // Otherwise opening the runner's scheme brings it to the front,
+            // where it stops its server and ends the test. It bounces back here
+            // afterwards, but the probe is what settles the displayed state.
+            UIApplication.shared.open(Self.runnerStopURL) { _ in
+                Task { await recheckAfterStop() }
             }
         }
+    }
+
+    /// Give the server a moment to actually tear the listener down; probing
+    /// instantly would still see it up and flip back to "Running" for a cycle.
+    private func recheckAfterStop() async {
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        await runner.check()
     }
 
     private func startRunner() {

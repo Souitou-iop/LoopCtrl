@@ -398,11 +398,6 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
 
         actionHandler = ActionHandler(app: app)
 
-        // Restore persisted preferences (fresh install → local only, port 8200)
-        remoteAccessEnabled = Self.persistedRemoteAccess
-        let port = Self.persistedPort
-        server = JSONRPCServer(port: port, localOnly: !remoteAccessEnabled)
-
         // Pairing is approved from a notification on the device.
         AuthManager.shared.delegate = self
 
@@ -431,30 +426,8 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                 + "Set it to \"1\" in the Xcode scheme's environment to auto-approve the first pairing.")
         }
 
-        if let s = server { configureServerCallbacks(s) }
-
-        do {
-            try server?.start()
-            if remoteAccessEnabled {
-                nearbyEnabled = Self.persistedNearby
-                if nearbyEnabled { server?.startNearby() }
-                let address = getDeviceAddress()
-                announceRemoteReady(address: address)
-            } else {
-                Self.persistedNearby = false
-                Self.logBuffer.append("🔒 Server started on 127.0.0.1:8200 (local only)")
-                postStatusNotification(detail: L10n.t(.localOnlyBody))
-            }
-        } catch {
-            Self.logBuffer.append("🔴 Failed to start server: \(error)")
-            sendNotification(
-                title: L10n.t(.serverFailedTitle),
-                body: error.localizedDescription
-            )
-        }
-
         keepRunning = true
-        wireServerStateChange()
+        startService()
         observeNetworkChanges()
         requestLocalNetworkAtLaunch()
 
@@ -468,7 +441,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             // likely just went to grant the permission). verify() reads the
             // reportedRemoteFailure flag to decide whether to announce success and
             // whether to re-post the failure, so we DON'T clear it here.
-            guard let self = self, self.remoteAccessEnabled, self.reportedRemoteFailure else { return }
+            guard let self = self, self.server != nil, self.remoteAccessEnabled, self.reportedRemoteFailure else { return }
             Self.logBuffer.append("🔄 app active after remote failure — re-verifying reachability")
             self.verifyRemoteReachableThenNotify(address: self.getDeviceAddress(), announceSuccess: false)
         }
@@ -478,6 +451,16 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         // back, which reads as "the callback didn't work".
         URLSchemeHandler.shared.onURLReceived = { [weak self] in
             DispatchQueue.main.async { self?.handlePendingCallbackIfAny() }
+        }
+        // All-in-one build: the LoopCtrl screen hands its Start/Stop over as
+        // URLs (+[EarlyURLHook deliverURL:]), which says so here, so a tap acts
+        // at once rather than on the next safety-timer tick.
+        if EarlyURLHook.isInProcess() {
+            NotificationCenter.default.addObserver(
+                forName: Notification.Name(EarlyURLHook.urlDeliveredNotification), object: nil, queue: nil
+            ) { [weak self] _ in
+                DispatchQueue.main.async { self?.handlePendingCallbackIfAny() }
+            }
         }
 
         // If launched via loopctrl://start?callback=..., jump back to the caller now.
@@ -496,7 +479,14 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         // killed after a while and its UI is an empty XCTest shell, so there is
         // nothing lost by stepping aside once there is something to serve.
         // In the all-in-one build the "runner" is the LoopCtrl screen itself.
-        if !EarlyURLHook.isInProcess() {
+        //
+        // Not when a start callback is on its way either: opening it already
+        // takes the runner out of the foreground, into the app that asked (the
+        // LoopCtrl app's Start button). Suspending as well raced that open and
+        // could land the user on the Home Screen instead, which reads as
+        // "LoopCtrl quit when I pressed Start". openCallback() falls back to
+        // suspending if the callback cannot be opened.
+        if !EarlyURLHook.isInProcess() && !startCallbackDispatched {
             backgroundSelfNow()
         }
 
@@ -524,7 +514,97 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         safetyTimer.invalidate()
         // Only reached when keepRunning was set false (stop_server / notification /
         // config restart). If we ever get here unexpectedly, the log shows it.
+        // Never in the all-in-one build: there, returning means XCTest exit()s
+        // LoopCtrl itself, so stopping parks the test instead (stopService).
         Self.logBuffer.append("🔁 run loop exited (keepRunning=false)")
+    }
+
+    // MARK: - Service start / stop
+
+    /// Whether stopping the service leaves this test running, parked in its
+    /// run loop with no listener, instead of ending it.
+    ///
+    /// In the two-app setup the test owns a process of its own (the
+    /// LoopCtrlUITests-Runner), so ending it — after which XCTest calls exit()
+    /// — is the cleanest stop there is, and a later `loopctrl://start` simply
+    /// launches the runner afresh.
+    ///
+    /// In the all-in-one build the test runs inside the LoopCtrl app
+    /// (InProcessRunner), and XCTest's exit() takes the app with it: Stop
+    /// looked like a crash. XCTest can also be bootstrapped only once per
+    /// process, so an ended test could not be started again without a
+    /// relaunch. Parking keeps the app on screen and lets `loopctrl://start`
+    /// (the app's Start button) bring the listener back on the same test.
+    private var parksWhenStopped: Bool { EarlyURLHook.isInProcess() }
+
+    /// Create, wire and start a listener from the persisted settings.
+    ///
+    /// Called once when the test begins and, in the all-in-one build, again for
+    /// each start after a stop.
+    @discardableResult
+    private func startService() -> Bool {
+        // Restore persisted preferences (fresh install → local only, port 8200)
+        remoteAccessEnabled = Self.persistedRemoteAccess
+        let port = Self.persistedPort
+        let newServer = JSONRPCServer(port: port, localOnly: !remoteAccessEnabled)
+        server = newServer
+        configureServerCallbacks(newServer)
+        Self.serverStartedAt = ProcessInfo.processInfo.systemUptime
+
+        defer { wireServerStateChange() }
+        do {
+            try newServer.start()
+            if remoteAccessEnabled {
+                nearbyEnabled = Self.persistedNearby
+                if nearbyEnabled { newServer.startNearby() }
+                let address = getDeviceAddress()
+                announceRemoteReady(address: address)
+            } else {
+                Self.persistedNearby = false
+                Self.logBuffer.append("🔒 Server started on 127.0.0.1:\(port) (local only)")
+                postStatusNotification(detail: L10n.t(.localOnlyBody))
+            }
+            return true
+        } catch {
+            Self.logBuffer.append("🔴 Failed to start server: \(error)")
+            sendNotification(
+                title: L10n.t(.serverFailedTitle),
+                body: error.localizedDescription
+            )
+            return false
+        }
+    }
+
+    /// Stop serving. Every deliberate stop comes here: the loopctrl://stop
+    /// URL, the 🛑 action on the status notification, `config{stop_server}`.
+    /// Two-app setup: end the test, as before. All-in-one: drop the listener
+    /// and park (see parksWhenStopped). Main thread.
+    private func stopService(_ reason: String) {
+        Self.logBuffer.append("🛑 \(reason)")
+        // Detached first: the listener's own "cancelled" report would otherwise
+        // also run the unexpected-stop path in wireServerStateChange.
+        server?.onStateChange = nil
+        server?.stop()
+        announceStopped()
+        guard parksWhenStopped else {
+            keepRunning = false   // break the run loop → test ends → XCTest exit()s the runner
+            return
+        }
+        server = nil
+        Self.logBuffer.append("⏸ service stopped — test parked; loopctrl://start (LoopCtrl's Start) restarts it")
+    }
+
+    /// Withdraw the "running" notification (its 🛑 action has nothing left to
+    /// stop) and post the usual "stopped" one.
+    private func announceStopped() {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [Self.serverReadyNotifID])
+        center.removeDeliveredNotifications(withIdentifiers: [Self.serverReadyNotifID])
+        sendNotification(
+            title: L10n.t(.serverStoppedTitle),
+            body: L10n.t(.serverStoppedBody) + "\n" + L10n.t(.longPressCopyLogs),
+            category: Self.serverStoppedCategoryID
+        )
     }
 
     /// Step out of the foreground via -[UIApplication suspend].
@@ -654,11 +734,9 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         // The URL scheme is the same trust boundary as loopctrl://start: only
         // something already on this device can open it.
         if host == "stop" {
-            Self.logBuffer.append("🔗 loopctrl://stop — shutting down")
             let callback = items.first(where: { $0.name == "callback" })?.value
                 .flatMap { Self.normalizeCallback($0) }
-            server?.stop()
-            keepRunning = false
+            stopService("loopctrl://stop — shutting down")
             if let callback {
                 var cb = URLComponents(url: callback, resolvingAgainstBaseURL: false)
                 var q = cb?.queryItems ?? []
@@ -673,6 +751,13 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         guard host == "start" || host == nil else {
             Self.logBuffer.append("🔗 Ignored loopctrl:// host: \(host ?? "")")
             return
+        }
+
+        // All-in-one build, service stopped earlier: start it again on this
+        // same test (a second XCTest bootstrap in one process would abort).
+        if parksWhenStopped && server == nil {
+            Self.logBuffer.append("▶️ loopctrl://start while parked — restarting the service")
+            startService()
         }
 
         guard let callbackRaw = items.first(where: { $0.name == "callback" })?.value,
@@ -709,13 +794,18 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         }
 
         Self.logBuffer.append("🔙 Callback → \(callbackURL.scheme ?? "")://…?status=\(status)")
+        startCallbackDispatched = true
         // Off the main thread: ForegroundApp.open blocks on a semaphore for up
         // to 5s waiting for the XCTest daemon, and doing that on main stalls the
         // very run loop the server needs to keep answering.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.openCallback(finalURL, attempt: 1)
+            self?.openCallback(finalURL, attempt: 1, backgroundIfUnopened: true)
         }
     }
+
+    /// A start callback has been sent on its way; opening it moves the runner
+    /// out of the foreground, so testStartServer doesn't suspend on top of it.
+    private var startCallbackDispatched = false
 
     /// Accept a callback either as a full URL ("minis://home") or as a bare scheme
     /// ("minis" → "minis://"), so callers don't have to URL-encode a scheme.
@@ -735,7 +825,11 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     /// unreliable (it returns false), so we open via LSApplicationWorkspace
     /// (ForegroundApp.openURL) — the same private path that reliably launches
     /// apps from the runner. UIApplication.open is kept as a last-resort fallback.
-    private func openCallback(_ url: URL, attempt: Int) {
+    ///
+    /// `backgroundIfUnopened`: step out of the foreground the usual way
+    /// (backgroundSelfNow) if the callback cannot be opened at all, since the
+    /// start path skipped that in favour of the callback.
+    private func openCallback(_ url: URL, attempt: Int, backgroundIfUnopened: Bool = false) {
         if ForegroundApp.open(url) {
             Self.logBuffer.append("🔙 Callback opened via XCTest daemon")
             return
@@ -747,10 +841,13 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                 } else if attempt < 3 {
                     Self.logBuffer.append("🔙 Callback open failed, retrying (\(attempt))")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                        self.openCallback(url, attempt: attempt + 1)
+                        self.openCallback(url, attempt: attempt + 1, backgroundIfUnopened: backgroundIfUnopened)
                     }
                 } else {
                     Self.logBuffer.append("🔙 Callback gave up after \(attempt) attempts")
+                    if backgroundIfUnopened && !EarlyURLHook.isInProcess() {
+                        self.backgroundSelfNow()
+                    }
                 }
             }
         }
@@ -880,6 +977,17 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             return
         }
 
+        // A status notification left over from before a stop (all-in-one build,
+        // parked): its toggles would bring a listener back behind the user's
+        // back. Starting again is LoopCtrl's Start button.
+        let serviceActions = [Self.enableRemoteActionID, Self.disableRemoteActionID,
+                              Self.enableNearbyActionID, Self.disableNearbyActionID, Self.stopServerActionID]
+        if parksWhenStopped && server == nil && serviceActions.contains(actionID) {
+            Self.logBuffer.append("⏸ \(actionID) ignored — the service is stopped")
+            completionHandler()
+            return
+        }
+
         // Handle "Disable Remote Access"
         if actionID == Self.disableRemoteActionID {
             Self.logBuffer.append("🔒 Remote access disabled via notification")
@@ -890,8 +998,11 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
 
         // Handle "Stop Server"
         if actionID == Self.stopServerActionID {
-            Self.logBuffer.append("🛑 Server stopped via notification")
-            server?.stop()
+            // The delegate may be called off the main thread; the server and
+            // the run-loop flag belong to it.
+            DispatchQueue.main.async { [weak self] in
+                self?.stopService("Server stopped via notification")
+            }
             completionHandler()
             return
         }
@@ -961,11 +1072,25 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     // MARK: - Helpers
 
     private func wireServerStateChange() {
-        server?.onStateChange = { [weak self] running in
+        server?.onStateChange = { [weak self, weak srv = server] running in
             if !running {
                 Self.logBuffer.append("Server stopped")
-                self?.keepRunning = false
-                self?.sendNotification(
+                guard let self = self else { return }
+                if self.parksWhenStopped {
+                    // All-in-one: the listener failing must not end the test
+                    // (and with it the LoopCtrl app). Park; Start retries.
+                    DispatchQueue.main.async {
+                        guard let srv, self.server === srv else { return }
+                        srv.onStateChange = nil
+                        srv.stop()
+                        self.server = nil
+                        self.announceStopped()
+                        Self.logBuffer.append("⏸ listener went down — test parked; Start restarts it")
+                    }
+                    return
+                }
+                self.keepRunning = false
+                self.sendNotification(
                     title: L10n.t(.serverStoppedTitle),
                     body: L10n.t(.serverStoppedBody) + "\n" + L10n.t(.longPressCopyLogs),
                     category: Self.serverStoppedCategoryID
@@ -1427,13 +1552,13 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             Self.logBuffer.append("🛑 Stop requested via config — shutting down after reply")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
                 guard let self = self else { return }
-                Self.logBuffer.append("🛑 Stopping server and ending test (config stop_server)")
-                self.server?.onStateChange = nil
-                self.server?.stop()
-                self.keepRunning = false   // break the run loop → test ends cleanly
+                self.stopService("Stopping server (config stop_server)")
             }
+            let restartHint = parksWhenStopped
+                ? "Start it again from the LoopCtrl app or with loopctrl://start"
+                : "Re-launch the LoopCtrl runner to start it again"
             return ([
-                "message": .string("Server is shutting down. It will stop listening in ~1s. Re-launch the LoopCtrl runner to start it again (your token is preserved — no re-auth needed)."),
+                "message": .string("Server is shutting down. It will stop listening in ~1s. \(restartHint) (your token is preserved — no re-auth needed)."),
                 "stopping": .bool(true),
             ], nil)
         }
@@ -1872,6 +1997,8 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     }
 
     private func refreshStatusNotification() {
+        // Parked (all-in-one, service stopped): nothing to advertise.
+        guard server != nil else { return }
         let sessions = AuthManager.shared.activeSessions.count
         let addr = remoteAccessEnabled ? getDeviceAddress() : "127.0.0.1"
         let mins = Int(ProcessInfo.processInfo.systemUptime - Self.serverStartedAt) / 60

@@ -127,6 +127,34 @@ final class RunnerAdmin: ObservableObject {
         loopctrlLog("Runner admin: disconnected")
     }
 
+    // MARK: - Stopping
+
+    /// Stop the runner's server over `/rpc` (`config{stop_server:true}`),
+    /// without bringing the runner to the front.
+    ///
+    /// The other way to stop it, `loopctrl://stop`, can only be delivered by
+    /// opening the runner: LoopCtrl leaves the screen, the runner ends its
+    /// test and XCTest exit()s it — if the bounce back to LoopCtrl doesn't
+    /// land, the user is left on the Home Screen, as if LoopCtrl had closed.
+    /// Over `/rpc` the runner replies, then stops and exits in the
+    /// background, and LoopCtrl stays where it is.
+    ///
+    /// Returns false when this app has no working key (never paired, or
+    /// revoked) or the call failed; the caller then falls back to the URL.
+    func stopServer() async -> Bool {
+        guard client.isPaired else { return false }
+        do {
+            _ = try await client.call("config", ["stop_server": true], timeout: 5)
+            loopctrlLog("Runner admin: stop_server sent")
+            return true
+        } catch RunnerClient.Failure.notRunning {
+            return true   // nothing left to stop
+        } catch {
+            handle(error)
+            return false
+        }
+    }
+
     // MARK: - Visibility
 
     @Published private(set) var changingVisibility = false
