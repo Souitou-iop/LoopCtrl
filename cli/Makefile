@@ -3,16 +3,16 @@
 # Built and tested inside the same container image the target runs, so "it
 # compiles" and "it runs there" are the same check.
 
-IMAGE   := ictrl-cli-build
+IMAGE   := loopctrl-cli-build
 SRC     := main.c sha256.c x25519.c util.c
 CFLAGS  := -O2 -std=c11 -Wall -Wextra -static -fno-strict-aliasing
-OUT     := ictrl
+OUT     := loopctrl
 
 .PHONY: all build test clean shell
 
 all: build
 
-## Cross-compile in Alpine arm64, emitting ./ictrl on the host.
+## Cross-compile in Alpine arm64, emitting ./loopctrl on the host.
 build:
 	docker build --platform linux/arm64 -t $(IMAGE) .
 	docker run --rm --platform linux/arm64 -v "$(PWD):/out" $(IMAGE) \
@@ -23,7 +23,7 @@ build:
 ## Run the self-test in the target environment.
 test: build
 	docker run --rm --platform linux/arm64 -v "$(PWD):/w" -w /w $(IMAGE) \
-		sh -c './ictrl 2>&1 | head -3; echo "--- selftest ---"; ./selftest'
+		sh -c './loopctrl 2>&1 | head -3; echo "--- selftest ---"; ./selftest'
 
 ## Interactive shell in the build image, for poking at things.
 shell:

@@ -5,7 +5,7 @@
 // plaintext. Vectors come from the RFCs and from the Python reference client, so
 // a mismatch here means the CLI and the reference implementation have diverged.
 
-#include "ictrl.h"
+#include "loopctrl.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -23,7 +23,7 @@ static int hexeq(const uint8_t *got, size_t n, const char *want) {
 }
 
 int main(void) {
-    printf("ictrl selftest\n");
+    printf("loopctrl selftest\n");
 
     // ── SHA-256, FIPS 180-2 ──
     {

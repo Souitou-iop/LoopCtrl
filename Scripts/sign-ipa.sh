@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Re-sign an iCTRL .ipa with your own (paid) Apple Developer identity.
+# Re-sign an LoopCtrl .ipa with your own (paid) Apple Developer identity.
 #
-#   Scripts/sign-ipa.sh -i iCTRLUITests-Runner.ipa [-o out.ipa]
+#   Scripts/sign-ipa.sh -i LoopCtrlUITests-Runner.ipa [-o out.ipa]
 #       [-t TEAMID]          team; default: $DEVELOPMENT_TEAM, then
 #                            Config/Local.xcconfig, then the Xcode project
 #       [-p PROFILE]         .mobileprovision path, profile UUID or profile name;
@@ -11,11 +11,11 @@
 #       [-s IDENTITY]        signing identity name or SHA-1; default: the
 #                            keychain identity whose certificate is in the profile
 #
-# Works for both packages (the runner and the iCTRL host app). macOS only — it
+# Works for both packages (the runner and the LoopCtrl host app). macOS only — it
 # uses Apple's `codesign`.
 #
 # Why a script and not "any signing tool": the runner is an XCUITest host with a
-# nested test bundle, PlugIns/iCTRLUITests.xctest. That bundle needs its OWN
+# nested test bundle, PlugIns/LoopCtrlUITests.xctest. That bundle needs its OWN
 # signature, applied before the app around it (inside out), and it must carry
 # the runner's bundle identifier. Most signing tools only recurse into
 # .framework/.appex, so they leave the .xctest with the original signature: the
@@ -68,8 +68,8 @@ if [[ -z "$TEAM" ]]; then TEAM="${DEVELOPMENT_TEAM:-}"; fi
 if [[ -z "$TEAM" && -f "$REPO/Config/Local.xcconfig" ]]; then
     TEAM="$(awk -F' *= *' '$1 == "DEVELOPMENT_TEAM" { print $2; exit }' "$REPO/Config/Local.xcconfig")"
 fi
-if [[ -z "$TEAM" && -d "$REPO/iCTRL.xcodeproj" ]]; then
-    TEAM="$(xcodebuild -project "$REPO/iCTRL.xcodeproj" -target iCTRLUITests -showBuildSettings 2>/dev/null \
+if [[ -z "$TEAM" && -d "$REPO/LoopCtrl.xcodeproj" ]]; then
+    TEAM="$(xcodebuild -project "$REPO/LoopCtrl.xcodeproj" -target LoopCtrlUITests -showBuildSettings 2>/dev/null \
             | awk '$1 == "DEVELOPMENT_TEAM" { print $3; exit }')"
 fi
 

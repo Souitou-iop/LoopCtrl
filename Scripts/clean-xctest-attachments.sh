@@ -4,12 +4,12 @@
 # Why this exists: since Xcode 15 a UI test screen-records by default. The
 # video (30fps H.264) is written by testmanagerd into its own container, under
 # tmp/Attachments, and is deleted only when the harness says the test passed.
-# The iCTRL server test runs for hours and normally ends killed, so every run
+# The LoopCtrl server test runs for hours and normally ends killed, so every run
 # left its video behind. Settings shows them as "System Data"; they can reach
 # tens of GB and fill the disk. A reboot does not clear them, and the
 # runner cannot either (that container is outside its sandbox).
 #
-# Current runners no longer record (see iCTRLUITests/ScreenRecordingDisabler.m),
+# Current runners no longer record (see LoopCtrlUITests/ScreenRecordingDisabler.m),
 # so this is for phones that ran an older runner, or other XCUITest tools such
 # as WebDriverAgent. Needs Xcode (devicectl) and a USB-connected, trusted
 # phone; no sudo. Deleting is safe while no UI test is running: these files are

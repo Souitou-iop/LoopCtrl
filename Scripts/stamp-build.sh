@@ -8,7 +8,7 @@
 # didn't work" — which has already burned debugging time on this project.
 set -euo pipefail
 
-OUT="${SRCROOT:-$(cd "$(dirname "$0")/.." && pwd)}/iCTRLKit/BuildStamp.swift"
+OUT="${SRCROOT:-$(cd "$(dirname "$0")/.." && pwd)}/LoopCtrlKit/BuildStamp.swift"
 STAMP="$(date '+%Y-%m-%d %H:%M')"
 
 # Only rewrite when the minute actually changed — an unconditional write makes

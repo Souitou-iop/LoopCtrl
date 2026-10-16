@@ -5,7 +5,7 @@
 // with respect to the scalar: the ladder swaps via a mask rather than branching,
 // so a private key never steers control flow.
 
-#include "ictrl.h"
+#include "loopctrl.h"
 #include <string.h>
 
 typedef uint64_t fe[5];   // radix 2^51

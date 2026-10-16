@@ -1,4 +1,4 @@
-#include "ictrl.h"
+#include "loopctrl.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>

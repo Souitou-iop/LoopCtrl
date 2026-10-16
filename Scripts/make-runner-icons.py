@@ -18,7 +18,7 @@ from pathlib import Path
 from PIL import Image
 
 REPO = Path(__file__).resolve().parent.parent
-SOURCE = REPO / "iCTRLApp/Assets.xcassets/AppIcon.appiconset/icon_1024x1024.png"
+SOURCE = REPO / "LoopCtrlApp/Assets.xcassets/AppIcon.appiconset/icon_1024x1024.png"
 OUT = REPO / "Config/RunnerIcon"
 
 # (base name, point size, scale, suffix): file is <base>[@<scale>x]<suffix>.png

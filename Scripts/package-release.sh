@@ -60,7 +60,7 @@ strip_one() {
     echo "✅ $OUT_DIR/$name ($(du -h "$OUT_DIR/$name" | cut -f1 | tr -d ' '))"
 }
 
-for ipa in "$REPO/iCTRLUITests-Runner.ipa" "$REPO/iCTRL.ipa"; do
+for ipa in "$REPO/LoopCtrlUITests-Runner.ipa" "$REPO/LoopCtrl.ipa"; do
     [[ -f "$ipa" ]] || { echo "❌ $ipa missing — run make ipa first" >&2; exit 1; }
     strip_one "$ipa"
 done

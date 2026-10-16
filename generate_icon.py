@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate iCTRL app icon with proper font rendering."""
+"""Generate LoopCtrl app icon with proper font rendering."""
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -94,6 +94,6 @@ for px, py, pr, pc in [(820, 340, 5, (0, 204, 255, 100)), (190, 690, 4, (123, 66
     ImageDraw.Draw(p).ellipse([px - pr, py - pr, px + pr, py + pr], fill=pc)
     img.alpha_composite(p)
 
-output = "iCTRLApp/Assets.xcassets/AppIcon.appiconset/icon_1024x1024.png"
+output = "LoopCtrlApp/Assets.xcassets/AppIcon.appiconset/icon_1024x1024.png"
 img.save(output, "PNG")
 print(f"✅ Icon saved to {output}")

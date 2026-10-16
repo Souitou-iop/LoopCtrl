@@ -1,5 +1,5 @@
-#ifndef ICTRL_NEARBY_H
-#define ICTRL_NEARBY_H
+#ifndef LOOPCTRL_NEARBY_H
+#define LOOPCTRL_NEARBY_H
 
 // Nearby discovery over Apple peer-to-peer Wi-Fi (macOS only; see nearby.c).
 

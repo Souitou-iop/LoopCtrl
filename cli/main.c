@@ -1,4 +1,4 @@
-// ictrl — a static CLI for the iCTRL encrypted JSON-RPC protocol (v1).
+// loopctrl — a static CLI for the LoopCtrl encrypted JSON-RPC protocol (v1).
 //
 // Exists because the Python reference client is a poor fit for the Minis
 // sandbox: that Alpine minirootfs has no python3, so using it costs an `apk add`
@@ -9,7 +9,7 @@
 // Protocol: every /rpc body is an encrypted envelope. The request path is
 // HMAC-SHA256 only; X25519 appears solely in LAN pairing.
 
-#include "ictrl.h"
+#include "loopctrl.h"
 #ifdef __APPLE__
 #include "nearby.h"
 #endif
@@ -33,11 +33,11 @@
 #include <time.h>
 #include <unistd.h>
 
-#define LABEL_MAC      "ictrl-v1|mac"
-#define LABEL_ENC_REQ  "ictrl-v1|enc-req"
-#define LABEL_ENC_RESP "ictrl-v1|enc-resp"
-#define LABEL_PAIR     "ictrl-pair"
-#define LABEL_WRAP     "ictrl-wrap"
+#define LABEL_MAC      "loopctrl-v1|mac"
+#define LABEL_ENC_REQ  "loopctrl-v1|enc-req"
+#define LABEL_ENC_RESP "loopctrl-v1|enc-resp"
+#define LABEL_PAIR     "loopctrl-pair"
+#define LABEL_WRAP     "loopctrl-wrap"
 
 /// Key-store entry to use when it differs from the host: nearby devices are
 /// keyed by "nearby:<device id>" because their link-local address changes.
@@ -53,7 +53,7 @@ static int g_pair_implicit = 0;
 static void die(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    fprintf(stderr, "ictrl: ");
+    fprintf(stderr, "loopctrl: ");
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
@@ -340,13 +340,13 @@ static int json_str(const char *json, const char *key, char *out, size_t outsz) 
 
 // ── Token store ─────────────────────────────────────────────────────────────
 //
-// ~/.ictrl/token.json, same file and shape the Python client uses, so the two
+// ~/.loopctrl/token.json, same file and shape the Python client uses, so the two
 // are interchangeable on one machine.
 
 static void store_path(char *out, size_t n) {
     const char *home = getenv("HOME");
     if (!home) home = "/root";
-    snprintf(out, n, "%s/.ictrl/token.json", home);
+    snprintf(out, n, "%s/.loopctrl/token.json", home);
 }
 
 static char *read_file(const char *path, size_t *len) {
@@ -410,7 +410,7 @@ static void save_token(const char *host, const uint8_t key[32], const char *tok,
     const char *home = getenv("HOME");
     if (!home) home = "/root";
     char dir[512];
-    snprintf(dir, sizeof dir, "%s/.ictrl", home);
+    snprintf(dir, sizeof dir, "%s/.loopctrl", home);
     mkdir(dir, 0700);
 
     char path[512];
@@ -499,7 +499,7 @@ static int rpc_call(const char *hostport, const char *method, const char *params
     uint8_t key[32];
     char tok[9];
     if (load_token(STORE_KEY(hostport), key, tok) != 0)
-        die("no key for %s — run: ictrl --host %s pair", STORE_KEY(hostport), hostport);
+        die("no key for %s — run: loopctrl --host %s pair", STORE_KEY(hostport), hostport);
 
     char host[256], port[16];
     split_host(hostport, host, sizeof host, port, sizeof port);
@@ -563,7 +563,7 @@ static int rpc_call(const char *hostport, const char *method, const char *params
     buf_free(&env);
 
     if (status != 200) {
-        fprintf(stderr, "ictrl: rpc failed (HTTP %d): %s\n", status,
+        fprintf(stderr, "loopctrl: rpc failed (HTTP %d): %s\n", status,
                 resp.data ? (const char *)resp.data : "");
         buf_free(&resp);
         return 1;
@@ -646,7 +646,7 @@ static int do_pair(const char *hostport, const char *client_name) {
     http_post(host, port, "/pair", (const char *)req.data, req.len, &resp, &status);
     buf_free(&req);
     if (status != 200) {
-        fprintf(stderr, "ictrl: pair failed (HTTP %d): %s\n", status,
+        fprintf(stderr, "loopctrl: pair failed (HTTP %d): %s\n", status,
                 resp.data ? (const char *)resp.data : "");
         buf_free(&resp);
         return 1;
@@ -664,7 +664,7 @@ static int do_pair(const char *hostport, const char *client_name) {
     uint8_t shared[32];
     x25519(shared, priv, devpub);
 
-    // k_wrap = HMAC(shared, "ictrl-pair" || clientPub || devicePub)
+    // k_wrap = HMAC(shared, "loopctrl-pair" || clientPub || devicePub)
     hmac_ctx wc;
     hmac_init(&wc, shared, 32);
     hmac_update(&wc, (const uint8_t *)LABEL_PAIR, strlen(LABEL_PAIR));
@@ -687,25 +687,25 @@ static int do_pair(const char *hostport, const char *client_name) {
 
     save_token(STORE_KEY(hostport), key, tok, client_name);
     fprintf(g_pair_implicit ? stderr : stdout,
-            "paired — tok=%s (key cached in ~/.ictrl/token.json)\n", tok);
+            "paired — tok=%s (key cached in ~/.loopctrl/token.json)\n", tok);
     buf_free(&resp);
     return 0;
 }
 
 static void usage(void) {
     fprintf(stderr,
-        "ictrl — iCTRL encrypted JSON-RPC client (protocol v1)\n\n"
+        "loopctrl — LoopCtrl encrypted JSON-RPC client (protocol v1)\n\n"
         "Usage:\n"
-        "  ictrl [--host HOST:PORT] pair [--name NAME]   pair (tap Allow on the device)\n"
-        "  ictrl [--host HOST:PORT] call METHOD [JSON]   one RPC call\n"
-        "  ictrl [--host HOST:PORT] shot [FILE]          save a screenshot (JPEG)\n"
-        "  ictrl [--host HOST:PORT] skill               fetch the operating manual\n"
+        "  loopctrl [--host HOST:PORT] pair [--name NAME]   pair (tap Allow on the device)\n"
+        "  loopctrl [--host HOST:PORT] call METHOD [JSON]   one RPC call\n"
+        "  loopctrl [--host HOST:PORT] shot [FILE]          save a screenshot (JPEG)\n"
+        "  loopctrl [--host HOST:PORT] skill               fetch the operating manual\n"
 #ifdef __APPLE__
-        "  ictrl scan                                    list nearby devices (peer-to-peer Wi-Fi)\n"
-        "  ictrl --nearby NAME|ID call|shot|pair ...     use a nearby device; pairs on first use\n"
+        "  loopctrl scan                                    list nearby devices (peer-to-peer Wi-Fi)\n"
+        "  loopctrl --nearby NAME|ID call|shot|pair ...     use a nearby device; pairs on first use\n"
 #endif
         "\nDefault host is 127.0.0.1:8200 (inside Minis this is the device itself).\n"
-        "Env: ICTRL_HOST overrides the default host.\n");
+        "Env: LOOPCTRL_HOST overrides the default host.\n");
 }
 
 /// Pulls a top-level numeric field out of a JSON response. Enough for the few
@@ -775,7 +775,7 @@ static int do_shot(const char *hostport, const char *path, int argc, char **argv
 
     const char *dp = strstr((const char *)json.data, "\"data\"");
     if (!dp) {
-        fprintf(stderr, "ictrl: screenshot failed: %s\n", (const char *)json.data);
+        fprintf(stderr, "loopctrl: screenshot failed: %s\n", (const char *)json.data);
         buf_free(&json);
         return 1;
     }
@@ -853,7 +853,7 @@ static void use_device_key(const char *hostport, const char *known_id, int pairi
 }
 
 int main(int argc, char **argv) {
-    const char *hostport = getenv("ICTRL_HOST");
+    const char *hostport = getenv("LOOPCTRL_HOST");
     if (!hostport) hostport = "127.0.0.1:8200";
 
     int i = 1;
@@ -874,7 +874,7 @@ int main(int argc, char **argv) {
         int n = nearby_scan(devs, NEARBY_MAX, 3.0, NULL);
         if (n == -1) die("no awdl0 interface — is Wi-Fi turned on?");
         if (n < 0) die("nearby browse failed");
-        if (n == 0) printf("no nearby devices — on the phone, turn on Nearby Discovery (iCTRL notification) "
+        if (n == 0) printf("no nearby devices — on the phone, turn on Nearby Discovery (LoopCtrl notification) "
                            "and keep Wi-Fi switched on; it need not be joined to a network\n");
         for (int k = 0; k < n; k++) {
             char store[96], older[96];
@@ -898,7 +898,7 @@ int main(int argc, char **argv) {
                 die("\"%s\" matches several devices; use the id", nearby);
             hit = &devs[k];
         }
-        if (!hit) die("no nearby device matches \"%s\" — run: ictrl scan. On the phone, turn on Nearby Discovery and keep Wi-Fi switched on", nearby);
+        if (!hit) die("no nearby device matches \"%s\" — run: loopctrl scan. On the phone, turn on Nearby Discovery and keep Wi-Fi switched on", nearby);
         snprintf(nearby_host, sizeof nearby_host, "%s", hit->host);
         hostport = nearby_host;
         use_device_key(hostport, hit->id, !strcmp(cmd, "pair"));
@@ -908,7 +908,7 @@ int main(int argc, char **argv) {
         if (strcmp(cmd, "pair") && load_token(g_store_key, key, tok) != 0) {
             fprintf(stderr, "pairing with %s — approve the prompt on the phone\n", hit->name);
             char name[256];
-            if (gethostname(name, sizeof name) != 0) snprintf(name, sizeof name, "ictrl");
+            if (gethostname(name, sizeof name) != 0) snprintf(name, sizeof name, "loopctrl");
             g_pair_implicit = 1;
             if (do_pair(hostport, name) != 0) return 1;
             g_pair_implicit = 0;

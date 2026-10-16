@@ -2,7 +2,7 @@
 # Build the idevice xcframework (MIT, github.com/jkcoxson/idevice) from source,
 # with the patches in Patches/idevice applied.
 #
-# Built rather than fetched because iCTRL needs one function the release does
+# Built rather than fetched because LoopCtrl needs one function the release does
 # not have: pairable_host_accept_unadvertised, on-device pairing without the
 # library's own mDNS advertising (raw multicast, which an iOS app may only send
 # with the multicast entitlement). The app publishes the Bonjour service itself.

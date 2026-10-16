@@ -1,7 +1,7 @@
-// Nearby discovery (macOS only): find iCTRL devices advertised over Apple
+// Nearby discovery (macOS only): find LoopCtrl devices advertised over Apple
 // peer-to-peer Wi-Fi (AWDL) with the system dns_sd API.
 //
-// The phone registers "_ictrl._tcp" on its awdl0 interface only, with TXT
+// The phone registers "_loopctrl._tcp" on its awdl0 interface only, with TXT
 // keys "v" (protocol version) and "id" (stable device id). Each instance found
 // on awdl0 is resolved to a link-local IPv6 address scoped to awdl0; callers
 // connect with the socket bound to that interface (see tcp_connect).
@@ -109,7 +109,7 @@ int nearby_scan(nearby_device *out, int max, double wait_s, const char *want) {
     S.awdl = if_nametoindex("awdl0");
     if (!S.awdl) return -1;
     DNSServiceRef b;
-    if (DNSServiceBrowse(&b, NEARBY_FLAGS, 0, "_ictrl._tcp", NULL, browse_cb, NULL)
+    if (DNSServiceBrowse(&b, NEARBY_FLAGS, 0, "_loopctrl._tcp", NULL, browse_cb, NULL)
         != kDNSServiceErr_NoError)
         return -2;
     add_ref(b);

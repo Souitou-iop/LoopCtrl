@@ -1,4 +1,4 @@
-name: iCTRL
+name: LoopCtrl
 options:
   bundleIdPrefix: com.openminis
   deploymentTarget:
@@ -16,17 +16,17 @@ settings:
     SWIFT_VERSION: "5.0"
 
 targets:
-  iCTRL:
+  LoopCtrl:
     type: application
     platform: iOS
     sources:
-      - path: iCTRLApp
+      - path: LoopCtrlApp
         excludes:
           - AllInOne-Info.plist
-      - path: iCTRLKit
+      - path: LoopCtrlKit
       # Shared with the runner: one string table for both processes, so a phrase
       # the user sees in a notification matches the one in the app.
-      - path: iCTRLUITests/Localized.swift
+      - path: LoopCtrlUITests/Localized.swift
 
     dependencies:
       # idevice (MIT) — the lockdown/RSD/image-mounter client that does the
@@ -36,7 +36,7 @@ targets:
         embed: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: "$(ICTRL_BUNDLE_PREFIX).ictrl"
+        PRODUCT_BUNDLE_IDENTIFIER: "$(LOOPCTRL_BUNDLE_PREFIX).loopctrl"
         GENERATE_INFOPLIST_FILE: YES
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: 1
@@ -46,42 +46,42 @@ targets:
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "iCTRL pairs with this device from Settings, reaches its debug service through LocalDevVPN or Shadowrocket to mount the Developer Disk Image, and serves the automation API on your network."
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "LoopCtrl pairs with this device from Settings, reaches its debug service through LocalDevVPN or Shadowrocket to mount the Developer Disk Image, and serves the automation API on your network."
         # LSApplicationQueriesSchemes can't be expressed as an INFOPLIST_KEY_
         # setting — Xcode only maps an allowlist of keys and drops this one
         # silently — so it lives in a real plist that gets merged in. Without it
         # iOS denies UIApplication.open() for these schemes with no error, which
         # would break the Start button and the StikDebug shortcut.
-        INFOPLIST_FILE: iCTRLApp/Info.plist
+        INFOPLIST_FILE: LoopCtrlApp/Info.plist
 
-  # SPIKE (docs/runner-merge-spike.md): iCTRL and the runner as ONE app. The
-  # main executable is iCTRL's own, so it launches with no DDI; the test bundle
+  # SPIKE (docs/runner-merge-spike.md): LoopCtrl and the runner as ONE app. The
+  # main executable is LoopCtrl's own, so it launches with no DDI; the test bundle
   # rides along in PlugIns/ and InProcessRunner dlopens XCTest after the mount.
-  iCTRLAllInOne:
+  LoopCtrlAllInOne:
     type: application
     platform: iOS
     sources:
-      - path: iCTRLApp
+      - path: LoopCtrlApp
         excludes:
           - Info.plist
           - AllInOne-Info.plist
-      - path: iCTRLKit
-      - path: iCTRLUITests/Localized.swift
+      - path: LoopCtrlKit
+      - path: LoopCtrlUITests/Localized.swift
     dependencies:
       - framework: Frameworks/IDevice.xcframework
         embed: false
-      - target: iCTRLUITests
+      - target: LoopCtrlUITests
         embed: true
         codeSign: true
         copy:
           destination: plugins
     settings:
       base:
-        # Its own product name: the iCTRL target still gets built (the UI test
-        # target depends on it), and two iCTRL.app outputs collide.
-        PRODUCT_NAME: iCTRLAllInOne
-        INFOPLIST_KEY_CFBundleDisplayName: iCTRL
-        PRODUCT_BUNDLE_IDENTIFIER: "$(ICTRL_BUNDLE_PREFIX).ictrl"
+        # Its own product name: the LoopCtrl target still gets built (the UI test
+        # target depends on it), and two LoopCtrl.app outputs collide.
+        PRODUCT_NAME: LoopCtrlAllInOne
+        INFOPLIST_KEY_CFBundleDisplayName: LoopCtrl
+        PRODUCT_BUNDLE_IDENTIFIER: "$(LOOPCTRL_BUNDLE_PREFIX).loopctrl"
         GENERATE_INFOPLIST_FILE: YES
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: 1
@@ -91,54 +91,57 @@ targets:
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "iCTRL pairs with this device from Settings, reaches its debug service through LocalDevVPN or Shadowrocket to mount the Developer Disk Image, and serves the automation API on your network."
-        INFOPLIST_FILE: iCTRLApp/AllInOne-Info.plist
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) ICTRL_ALL_IN_ONE"
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "LoopCtrl pairs with this device from Settings, reaches its debug service through LocalDevVPN or Shadowrocket to mount the Developer Disk Image, and serves the automation API on your network."
+        INFOPLIST_FILE: LoopCtrlApp/AllInOne-Info.plist
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOOPCTRL_ALL_IN_ONE"
         # XCTRunner's own LC_RPATHs. Nothing is linked through them at launch
         # (the app does not link XCTest), so a missing DDI costs nothing; they
         # resolve the test bundle's @rpath/XCTest.framework and
         # @rpath/libXCTestSwiftSupport.dylib once the image is mounted.
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks /System/Developer/Library/Frameworks /System/Developer/usr/lib /Developer/Library/Frameworks /Developer/usr/lib"
 
-  iCTRLUITests:
+  LoopCtrlUITests:
     type: bundle.ui-testing
     platform: iOS
     sources:
-      - path: iCTRLUITests
-      - path: iCTRLKit
+      - path: LoopCtrlUITests
+      - path: LoopCtrlKit
       # The operating manual, bundled so GET /skill can serve it at runtime.
       - path: SKILL.md
         buildPhase: resources
       # The reference client, served at GET /skill/examples/python so a caller
       # can download a working v1-envelope implementation straight off the
       # device instead of writing the crypto itself.
-      - path: Scripts/ictrl_rpc.py
+      - path: Scripts/loopctrl_rpc.py
         buildPhase: resources
       # Static aarch64-musl CLI, served at GET /skill/examples/cli. Built for
       # the Minis sandbox (Alpine arm64), whose minirootfs has no python3 — the
       # reference client there would cost an `apk add` before the first call.
-      - path: cli/ictrl
+      # Optional: rebuilt with `make -C cli build` (Docker). Without it the
+      # endpoint answers 404 and points at the Python client.
+      - path: cli/loopctrl
         buildPhase: resources
-      - path: cli/ictrl.sh
+        optional: true
+      - path: cli/loopctrl.sh
         buildPhase: resources
     dependencies:
-      - target: iCTRL
+      - target: LoopCtrl
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: "$(ICTRL_BUNDLE_PREFIX).ictrl.uitests"
+        PRODUCT_BUNDLE_IDENTIFIER: "$(LOOPCTRL_BUNDLE_PREFIX).loopctrl.uitests"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
-        SWIFT_OBJC_BRIDGING_HEADER: iCTRLUITests/XCTestPrivate-Bridging-Header.h
+        SWIFT_OBJC_BRIDGING_HEADER: LoopCtrlUITests/XCTestPrivate-Bridging-Header.h
         # The server runs in THIS (runner) process, so the runner is the app that
         # needs Local Network access. Declared here so the permission prompt has a
         # rationale (raised via a LAN touch only when on Wi-Fi and remote is
         # unreachable — skipped on cellular).
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "iCTRL needs local network access to serve the automation API on your LAN."
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "LoopCtrl needs local network access to serve the automation API on your LAN."
         TEST_HOST: ""
     postBuildScripts:
       - name: "Strip unnecessary XCTest frameworks"
         script: |
-          RUNNER_APP="${BUILT_PRODUCTS_DIR}/iCTRLUITests-Runner.app"
+          RUNNER_APP="${BUILT_PRODUCTS_DIR}/LoopCtrlUITests-Runner.app"
           echo "🔧 Stripping XCTest frameworks from Runner.app..."
           rm -rf "${RUNNER_APP}/Frameworks/XCTAutomationSupport.framework"
           rm -rf "${RUNNER_APP}/Frameworks/XCTest.framework"
@@ -152,18 +155,18 @@ targets:
           echo "✅ Frameworks stripped"
 
 schemes:
-  iCTRLAllInOne:
+  LoopCtrlAllInOne:
     build:
       targets:
-        iCTRLAllInOne: all
-  iCTRL:
+        LoopCtrlAllInOne: all
+  LoopCtrl:
     build:
       targets:
-        iCTRL: all
-        iCTRLUITests: [test]
+        LoopCtrl: all
+        LoopCtrlUITests: [test]
     test:
       targets:
-        - iCTRLUITests
+        - LoopCtrlUITests
       testPlans: []
       # testStartServer is one test that runs for hours and always ends killed,
       # i.e. "failed" — so XCTest's default screen recording (30fps H.264 in

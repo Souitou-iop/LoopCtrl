@@ -5,13 +5,13 @@
 // from the Apple Development certificate in your keychain:
 //
 //   DEVELOPMENT_TEAM = ABCDE12345
-//   ICTRL_BUNDLE_PREFIX = com.example.you
+//   LOOPCTRL_BUNDLE_PREFIX = com.example.you
 //
 // The prefix matters as much as the team: an explicit App ID is unique across
-// ALL developer accounts, so "com.openminis.ictrl" can only ever be registered
+// ALL developer accounts, so "com.openminis.loopctrl" can only ever be registered
 // by one team, and automatic signing fails for everyone else.
 
 DEVELOPMENT_TEAM =
-ICTRL_BUNDLE_PREFIX = com.openminis
+LOOPCTRL_BUNDLE_PREFIX = com.openminis
 
 #include? "Local.xcconfig"

@@ -4,7 +4,7 @@
 🛠 生成内置常用 app 的 bundle id 清单 (AppBundles.plist)
 
 用 iTunes Search API 查询一批国内外常用 app 的名称 → bundle_id，
-写入 iCTRLUITests/AppBundles.plist，打包进 runner。
+写入 LoopCtrlUITests/AppBundles.plist，打包进 runner。
 运行时 search_app / launch_app 先查这份内置清单（离线、秒回），
 未命中再回退到 iTunes Search API。
 
@@ -32,7 +32,7 @@ except ImportError:
     def tqdm(it, **kw):
         return it
 
-OUTPUT = Path(__file__).parent / "iCTRLUITests" / "AppBundles.plist"
+OUTPUT = Path(__file__).parent / "LoopCtrlUITests" / "AppBundles.plist"
 
 # 🌏 常用 app 查询列表: (搜索关键词, 商店国家)
 # 国内 app 用 cn 商店，国际 app 用 us 商店，命中更准。
@@ -91,7 +91,7 @@ def query_itunes(term, country):
     })
     url = f"https://itunes.apple.com/search?{params}"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "iCTRL/1.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "LoopCtrl/1.0"})
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         results = data.get("results", [])

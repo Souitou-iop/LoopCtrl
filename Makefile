@@ -1,17 +1,17 @@
 .PHONY: build ipa ipa-allinone clean help
 
-PROJECT       = iCTRL.xcodeproj
-SCHEME        = iCTRL
+PROJECT       = LoopCtrl.xcodeproj
+SCHEME        = LoopCtrl
 DERIVED_DATA  = build
 BUILD_DIR     = $(DERIVED_DATA)/Build/Products/Debug-iphoneos
 
-MAIN_APP      = iCTRL.app
-MAIN_IPA      = iCTRL.ipa
+MAIN_APP      = LoopCtrl.app
+MAIN_IPA      = LoopCtrl.ipa
 
-RUNNER_APP    = iCTRLUITests-Runner.app
-RUNNER_BIN    = iCTRLUITests-Runner
-XCTEST_BUNDLE = iCTRLUITests.xctest
-RUNNER_IPA    = iCTRLUITests-Runner.ipa
+RUNNER_APP    = LoopCtrlUITests-Runner.app
+RUNNER_BIN    = LoopCtrlUITests-Runner
+XCTEST_BUNDLE = LoopCtrlUITests.xctest
+RUNNER_IPA    = LoopCtrlUITests-Runner.ipa
 
 # Signing identity is read from the freshly-built app (below, in `ipa`) so the
 # re-sign uses EXACTLY what xcodebuild chose from the Xcode project's automatic
@@ -52,8 +52,8 @@ build:
 # ──────────────────────────────────────────────
 # Package both IPAs
 #
-#   iCTRL.ipa                — Main app (settings & control UI)
-#   iCTRLUITests-Runner.ipa  — XCTest runner (automation engine)
+#   LoopCtrl.ipa                — Main app (settings & control UI)
+#   LoopCtrlUITests-Runner.ipa  — XCTest runner (automation engine)
 # ──────────────────────────────────────────────
 ipa: build
 	@echo ""
@@ -88,7 +88,7 @@ ipa: build
 	rm -rf "$(BUILD_DIR)/$(RUNNER_APP)/Frameworks/Testing.framework"
 	rm -f  "$(BUILD_DIR)/$(RUNNER_APP)/Frameworks/libXCTestSwiftSupport.dylib"
 	@rmdir "$(BUILD_DIR)/$(RUNNER_APP)/Frameworks" 2>/dev/null || true
-	@# ── Back-compat shim for older iOS (see iCTRLCompat/XCTCompatShim.m) ──
+	@# ── Back-compat shim for older iOS (see LoopCtrlCompat/XCTCompatShim.m) ──
 	@# Xcode's prebuilt XCTRunner stub hard-binds classes that don't exist in the
 	@# XCTest shipped by older Developer disk images, so the runner dies at launch
 	@# with "Symbol not found: _OBJC_CLASS_$$_XCTCommandLineToolHelper" on e.g.
@@ -115,7 +115,7 @@ ipa: build
 	xcrun -sdk iphoneos clang -dynamiclib -arch arm64 -isysroot "$$SDK" \
 		-mios-version-min=16.0 -install_name "@rpath/libXCTCompatShim.dylib" \
 		-framework Foundation -o "$$APP/Frameworks/libXCTCompatShim.dylib" \
-		iCTRLCompat/XCTCompatShim.m; \
+		LoopCtrlCompat/XCTCompatShim.m; \
 	BIN="$$APP/$(RUNNER_BIN)"; TMP="$$BIN.patching"; \
 	cp "$$BIN" "$$TMP"; \
 	trap 'rm -f "$$TMP"' EXIT; \
@@ -130,21 +130,21 @@ ipa: build
 	@# build-for-testing embeds a .dSYM inside the app; it is debug-symbol data,
 	@# not needed at runtime, and bloats the IPA (~3MB). Strip it before packaging.
 	@find "$(BUILD_DIR)/$(RUNNER_APP)" -name "*.dSYM" -exec rm -rf {} + 2>/dev/null || true
-	@echo "🔗 Registering ictrl:// URL scheme..."
+	@echo "🔗 Registering loopctrl:// URL scheme..."
 	@PLIST="$(BUILD_DIR)/$(RUNNER_APP)/Info.plist"; \
 	/usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$$PLIST" 2>/dev/null || true; \
 	/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$$PLIST"; \
 	/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$$PLIST"; \
-	/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string com.openminis.ictrl" "$$PLIST"; \
+	/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string com.openminis.loopctrl" "$$PLIST"; \
 	/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "$$PLIST"; \
-	/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string ictrl" "$$PLIST"
+	/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string loopctrl" "$$PLIST"
 	@echo "📡 Declaring the nearby Bonjour service type..."
-	@# Advertising _ictrl._tcp (nearby discovery) fails with NoAuth unless the
+	@# Advertising _loopctrl._tcp (nearby discovery) fails with NoAuth unless the
 	@# app declares the type. Only the nearby listener depends on it.
 	@PLIST="$(BUILD_DIR)/$(RUNNER_APP)/Info.plist"; \
 	/usr/libexec/PlistBuddy -c "Delete :NSBonjourServices" "$$PLIST" 2>/dev/null || true; \
 	/usr/libexec/PlistBuddy -c "Add :NSBonjourServices array" "$$PLIST"; \
-	/usr/libexec/PlistBuddy -c "Add :NSBonjourServices:0 string _ictrl._tcp" "$$PLIST"
+	/usr/libexec/PlistBuddy -c "Add :NSBonjourServices:0 string _loopctrl._tcp" "$$PLIST"
 	@echo "🏷  Aligning .xctest bundle id with the Runner..."
 	@# Rewrite the embedded .xctest CFBundleIdentifier to match the Runner app id,
 	@# so the plugin and its host share one identifier. Done BEFORE the re-sign so
@@ -214,21 +214,21 @@ ipa: build
 	@echo "════════════════════════════════════════"
 
 # ──────────────────────────────────────────────
-# SPIKE: iCTRL + runner as one app (docs/runner-merge-spike.md)
+# SPIKE: LoopCtrl + runner as one app (docs/runner-merge-spike.md)
 #
-#   iCTRL-AllInOne.ipa — iCTRL's own executable (no XCTest link, launches
-#   without a DDI) with PlugIns/iCTRLUITests.xctest; XCTest is loaded in-process
-#   after the mount. Same bundle id as iCTRL.ipa, so it replaces that install.
+#   LoopCtrl-AllInOne.ipa — LoopCtrl's own executable (no XCTest link, launches
+#   without a DDI) with PlugIns/LoopCtrlUITests.xctest; XCTest is loaded in-process
+#   after the mount. Same bundle id as LoopCtrl.ipa, so it replaces that install.
 # ──────────────────────────────────────────────
-ALLINONE_APP  = iCTRLAllInOne.app
-ALLINONE_IPA  = iCTRL-AllInOne.ipa
+ALLINONE_APP  = LoopCtrlAllInOne.app
+ALLINONE_IPA  = LoopCtrl-AllInOne.ipa
 
 ipa-allinone: Frameworks/IDevice.xcframework $(PROJECT)/project.pbxproj
 	@./Scripts/stamp-build.sh
 	xcodebuild build \
 		-project $(PROJECT) \
 		-derivedDataPath $(DERIVED_DATA) \
-		-scheme iCTRLAllInOne \
+		-scheme LoopCtrlAllInOne \
 		-destination "generic/platform=iOS" \
 		-allowProvisioningUpdates \
 		ARCHS=arm64
@@ -259,11 +259,11 @@ ipa-allinone: Frameworks/IDevice.xcframework $(PROJECT)/project.pbxproj
 # ──────────────────────────────────────────────
 clean:
 	rm -rf $(DERIVED_DATA)
-	rm -f $(MAIN_IPA) $(RUNNER_IPA) iCTRL-AllInOne.ipa
+	rm -f $(MAIN_IPA) $(RUNNER_IPA) LoopCtrl-AllInOne.ipa
 	@echo "✅ Cleaned"
 
 help:
-	@echo "iCTRL Build System"
+	@echo "LoopCtrl Build System"
 	@echo ""
 	@echo "  make build   Build both apps with Xcode signing"
 	@echo "  make ipa     Build + package both IPAs"

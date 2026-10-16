@@ -1,19 +1,19 @@
 ---
-name: ictrl-phone-control
-description: Control an iPhone over HTTP to automate real apps — tap, type, swipe, read the screen's view tree, launch apps, take screenshots. Use when the user asks to operate a phone, drive an iOS app, automate a mobile task (search a product, check an order, fill a form), or inspect what's on a device's screen. The service is iCTRL, JSON-RPC 2.0 on port 8200; requests are encrypted, so drive it with a client downloaded from the device (a static CLI needing no interpreter, or a Python one) rather than hand-written HTTP.
+name: loopctrl-phone-control
+description: Control an iPhone over HTTP to automate real apps — tap, type, swipe, read the screen's view tree, launch apps, take screenshots. Use when the user asks to operate a phone, drive an iOS app, automate a mobile task (search a product, check an order, fill a form), or inspect what's on a device's screen. The service is LoopCtrl, JSON-RPC 2.0 on port 8200; requests are encrypted, so drive it with a client downloaded from the device (a static CLI needing no interpreter, or a Python one) rather than hand-written HTTP.
 skill_version: "1.98.12"
 ---
 
-# iCTRL — control an iPhone over HTTP
+# LoopCtrl — control an iPhone over HTTP
 
-iCTRL runs on the iPhone and serves UI automation as **JSON-RPC 2.0 over HTTP, port 8200**, encrypted. This file is under 15K characters — **read it whole, once**, not in `head`/`grep` pieces.
+LoopCtrl runs on the iPhone and serves UI automation as **JSON-RPC 2.0 over HTTP, port 8200**, encrypted. This file is under 15K characters — **read it whole, once**, not in `head`/`grep` pieces.
 
 ## Quick start
 
 On the phone (e.g. Minis) — the device is `127.0.0.1`:
 ```bash
-C=~/.ictrl/bin; I="sh $C/ictrl.sh"
-[ -f $C/ictrl ] || { mkdir -p $C && wget -qO $C/ictrl http://127.0.0.1:8200/skill/clients/cli && wget -qO $C/ictrl.sh http://127.0.0.1:8200/skill/clients/cli.sh; }
+C=~/.loopctrl/bin; I="sh $C/loopctrl.sh"
+[ -f $C/loopctrl ] || { mkdir -p $C && wget -qO $C/loopctrl http://127.0.0.1:8200/skill/clients/cli && wget -qO $C/loopctrl.sh http://127.0.0.1:8200/skill/clients/cli.sh; }
 $I call device_info                       # 401 → $I pair (user taps Allow)
 $I call resolve_app '{"text":"<brand>|<store name>|<alias>"}'  # every name it may go by
 $I call launch_app '{"bundle_id":"<id>"}'
@@ -22,10 +22,10 @@ $I call find_element '{"element_id":"<label>"}'           # → ref
 $I call tap '{"ref":"<ref>"}'
 ```
 - `device_info.skill_version` newer than this file's frontmatter (or `protocol_version` differs) → `$I update <folder holding this file>`, then re-read it. Device older: don't downgrade; use only its `capabilities[]`.
-- Keep the client in `~/.ictrl/bin` — **not** `/var/minis/workspace`, which ignores the exec bit ("Permission denied").
-- Elsewhere: `curl -o ictrl_rpc.py http://<host>:8200/skill/clients/python`, then `python3 ictrl_rpc.py --host <host>:8200 call …`. The CLI takes `--host`/`ICTRL_HOST`.
-- **No address?** Have the user turn on *Nearby Discovery* (needs Remote Access, Wi-Fi on). `ictrl_rpc.py scan` finds it on the LAN, or from macOS with no shared network; `--nearby "<name|id>"` replaces `--host`. First use pairs (one Allow).
-- Keys: `~/.ictrl/token.json`, one per device (`/whoami` id) for USB, LAN, nearby; reuse (30-day idle expiry). Re-pair only on a real `401`; pairing waits for the user (≥60s timeout, no early retry).
+- Keep the client in `~/.loopctrl/bin` — **not** `/var/minis/workspace`, which ignores the exec bit ("Permission denied").
+- Elsewhere: `curl -o loopctrl_rpc.py http://<host>:8200/skill/clients/python`, then `python3 loopctrl_rpc.py --host <host>:8200 call …`. The CLI takes `--host`/`LOOPCTRL_HOST`.
+- **No address?** Have the user turn on *Nearby Discovery* (needs Remote Access, Wi-Fi on). `loopctrl_rpc.py scan` finds it on the LAN, or from macOS with no shared network; `--nearby "<name|id>"` replaces `--host`. First use pairs (one Allow).
+- Keys: `~/.loopctrl/token.json`, one per device (`/whoami` id) for USB, LAN, nearby; reuse (30-day idle expiry). Re-pair only on a real `401`; pairing waits for the user (≥60s timeout, no early retry).
 
 ## Rules — read these first
 
@@ -111,7 +111,7 @@ Most responses carry a **`hint`** (what limited the result, what to do next) —
 
 - **Default: `page_source{visible_only:true, max_children:50}`** — on-screen nodes only, well under 1s even on long feeds. Omit `visible_only` only when you need off-screen structure.
 - `filter:{text|label|type:"…"}` returns matching nodes + ancestors — the cheap way to harvest repeated values (prices, titles).
-- **`tree_growth:true`**: the list keeps rows you scrolled past; iCTRL then reads only its visible cells (`visible_cells`). Long reads: `collect`; relaunching resets it.
+- **`tree_growth:true`**: the list keeps rows you scrolled past; LoopCtrl then reads only its visible cells (`visible_cells`). Long reads: `collect`; relaunching resets it.
 - `enhanced:true`: whole tree + text drawn in images (`ocr_only`). Slower; only when asked for everything.
 - **Thin tree?** When `channel.recommended` is `ocr` (or `sparse_hint`/`viewport_warning` appears), read with `screen_text`: text plus tappable point coordinates.
 - `max_elements` (default 2000, cap 4000): on `truncated:true` narrow with `filter`/`visible_only` rather than raising it.
@@ -125,7 +125,7 @@ Most responses carry a **`hint`** (what limited the result, what to do next) —
 ## Apps
 
 - `resolve_app` looks offline first (`opened_here` = launched on this device before — use it directly; then a built-in catalog), else the App Store. Only `opened_here` says anything about *this* device.
-- **`launch_app` is the real install test**: success = installed, error = not. Newer iOS refuses `list_apps` enumeration; it then returns only apps opened via iCTRL before (`source:"opened_history"`). Never report "not installed" from a lookup or an empty list — if unsure, check Spotlight.
+- **`launch_app` is the real install test**: success = installed, error = not. Newer iOS refuses `list_apps` enumeration; it then returns only apps opened via LoopCtrl before (`source:"opened_history"`). Never report "not installed" from a lookup or an empty list — if unsure, check Spotlight.
 - `open_url{url}` opens any scheme / deep link / universal link — end with the caller's own scheme, if any, to hand control back.
 - **No target app**: reads and actions apply to what is on screen. Apps jump (login, payment, ads): after a surprise, read first. A `ref` tap is refused once its app leaves the front.
 - Coordinate actions and `type` return `page_check`; **`same_page:false`** = the screen had changed, before the action, since you last saw it: read, check what you hit, fix.

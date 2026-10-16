@@ -3,11 +3,11 @@
 # Create Config/Local.xcconfig — your team and bundle-id prefix for local builds.
 #
 #   Scripts/setup-signing.sh               (called by `make` when the file is missing)
-#   DEVELOPMENT_TEAM=ABCDE12345 ICTRL_BUNDLE_PREFIX=com.example.you Scripts/setup-signing.sh
+#   DEVELOPMENT_TEAM=ABCDE12345 LOOPCTRL_BUNDLE_PREFIX=com.example.you Scripts/setup-signing.sh
 #
 # Team, in order: $DEVELOPMENT_TEAM, then the team of the first "Apple
 # Development" certificate in your keychain (Xcode puts it there when you sign
-# in under Settings → Accounts — a free Apple ID works). Prefix: $ICTRL_BUNDLE_PREFIX,
+# in under Settings → Accounts — a free Apple ID works). Prefix: $LOOPCTRL_BUNDLE_PREFIX,
 # else one derived from the team, so it can't collide with anyone else's App IDs.
 
 set -euo pipefail
@@ -36,12 +36,12 @@ MSG
     exit 1
 fi
 
-PREFIX="${ICTRL_BUNDLE_PREFIX:-com.openminis.$(echo "$TEAM" | tr '[:upper:]' '[:lower:]')}"
+PREFIX="${LOOPCTRL_BUNDLE_PREFIX:-com.openminis.$(echo "$TEAM" | tr '[:upper:]' '[:lower:]')}"
 
 cat > "$OUT" <<CONF
 // Your local signing settings — gitignored, read by Config/Signing.xcconfig.
 // Edit freely; delete this file to have it detected again.
 DEVELOPMENT_TEAM = $TEAM
-ICTRL_BUNDLE_PREFIX = $PREFIX
+LOOPCTRL_BUNDLE_PREFIX = $PREFIX
 CONF
-echo "🔑 Config/Local.xcconfig: team $TEAM, bundle ids $PREFIX.ictrl[.uitests]"
+echo "🔑 Config/Local.xcconfig: team $TEAM, bundle ids $PREFIX.loopctrl[.uitests]"

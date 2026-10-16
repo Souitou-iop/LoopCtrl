@@ -1,11 +1,11 @@
-// SHA-256 and HMAC-SHA256 — the only primitives the iCTRL request path needs.
+// SHA-256 and HMAC-SHA256 — the only primitives the LoopCtrl request path needs.
 //
 // Written out rather than linked because the target is a static musl binary
 // that must run with no package installs: inside Minis the Alpine rootfs is a
 // minirootfs with no OpenSSL and no python3, and `apk add` needs a network
 // round-trip before the first command could run.
 
-#include "ictrl.h"
+#include "loopctrl.h"
 #include <string.h>
 
 static uint32_t ror(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
