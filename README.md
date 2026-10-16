@@ -1,6 +1,10 @@
-# LoopCtrl
+<p align="right"><b>English</b> | <a href="README.zh-CN.md">简体中文</a></p>
 
-**AI-friendly iOS automation service, built on XCUITest.**
+<p align="center"><img src="docs/assets/loopctrl-icon.png" alt="LoopCtrl icon" width="160"></p>
+
+<h1 align="center">LoopCtrl</h1>
+
+<p align="center"><b>An iPhone you can hand to an AI agent: encrypted JSON-RPC automation, built on XCUITest.</b></p>
 
 > [!WARNING]
 > **For automated testing and research only.** LoopCtrl hands full control of a
@@ -18,52 +22,45 @@
 > You are responsible for how you use it, including compliance with the terms
 > of the apps you automate.
 
-LoopCtrl turns an iPhone into a controllable automation endpoint. It runs a
-long-lived XCUITest runner that exposes a **JSON-RPC 2.0 API over HTTP** (default
-port `8300`), so an AI agent — or any HTTP client — can drive the device: tap,
-swipe, type, read the UI tree, take screenshots, launch apps, open URLs, and more.
+## What it is
 
-Unlike a raw XCUITest script, LoopCtrl is designed to be **discovered and driven by a
-model**: `GET /skill` serves a complete operating manual and `GET /schema`
-documents every method with its parameters, so an agent can learn the API at
-runtime and call it correctly without prior knowledge.
+LoopCtrl runs a long-lived XCUITest runner on the iPhone. The runner serves a
+**JSON-RPC 2.0 API over HTTP**, with every request encrypted, so an AI agent
+(or any HTTP client) can tap, swipe, type, read the UI tree, take screenshots,
+launch apps, open URLs and more.
 
-**Works with any agent.** The JSON-RPC API and the skill are built in and
-progressively discoverable: an agent starts from the manual and drills into the
-schema only as it needs to. Any agent that can make HTTP requests can use it,
-such as OpenClaw, Hermes, Minis, Claude Code or Codex. All it needs is the
-phone's IP address and port; these agents usually explore the endpoint and
-install the skill themselves to learn how to drive the phone. Minis is
-additionally optimized for LoopCtrl, so it carries out interactions on the phone
-faster.
+It is designed to be **discovered and driven by a model**. The device serves its
+own operating manual at `GET /skill` and the full method list, with parameters,
+at `GET /schema`, so an agent given only an address can learn the API at runtime.
+Any agent that can make HTTP requests works, for example OpenClaw, Hermes, Minis,
+Claude Code or Codex.
 
-**Hand it to your agent in one sentence.** Once the runner is up (with remote
-access enabled, if the agent isn't on the phone), tell your agent:
+Once the server is running (with Remote Access on, if the agent isn't on the
+phone), tell your agent:
 
-> *"My iPhone is running LoopCtrl at 192.168.1.20:8300 — figure out how to drive it."*
+> *"My iPhone is running LoopCtrl at 192.168.1.20:8300. Figure out how to drive it."*
 
-It finds the manual at `GET /skill` and the method list at `GET /schema`,
-downloads a client from the device, and asks to pair. Approve the pairing
-notification on the phone, and from there it works out the rest.
+It reads the manual, downloads a client from the device and asks to pair. You
+approve the request on the phone, and it takes it from there.
 
 ```mermaid
 flowchart LR
   subgraph setup["Set up once"]
     direction TB
-    S1["① Sign and install<br/>SideStore · sign-ipa.sh · Xcode"]
-    S2["② Mount the DDI<br/>LoopCtrl app · StikDebug · Xcode"]
-    S3["③ Launch the runner<br/>allow Notifications and Local Network"]
+    S1["1. Install<br/>SideStore or sign-ipa.sh"]
+    S2["2. Pair, then mount the DDI<br/>LoopCtrl app, through a tunnel"]
+    S3["3. Start the server<br/>allow Notifications and Local Network"]
     S1 --> S2 --> S3
   end
 
   subgraph phone["iPhone"]
     direction TB
-    R["LoopCtrl runner :8300<br/>127.0.0.1 only by default"]
-    N["🔔 Runner notifications<br/>✅ Allow pairing · 🌐 Remote Access · 📡 Nearby · 🛑 Stop"]
-    N -. "🌐 Remote Access opens it to the LAN" .-> R
+    R["LoopCtrl server :8300<br/>127.0.0.1 only by default"]
+    N["Notifications and app<br/>Allow pairing · Remote Access · Nearby · Stop"]
+    N -. "Remote Access opens it to the LAN" .-> R
   end
 
-  A["🤖 Agent<br/>OpenClaw · Hermes · Minis · Claude Code · Codex<br/>given only IP:port"]
+  A["Agent<br/>OpenClaw · Hermes · Minis · Claude Code · Codex<br/>given only IP:port"]
 
   S3 --> R
   A -- "1 · GET /skill, /schema: learn the API" --> R
@@ -72,286 +69,206 @@ flowchart LR
   A == "3 · encrypted JSON-RPC: tap, swipe, type, read UI, screenshot" ==> R
 ```
 
-An agent on the phone itself, such as Minis, reaches the runner on
-`127.0.0.1`. An agent on another machine needs **🌐 Remote Access** turned on
-and the same Wi-Fi network.
+An agent on the phone itself (Minis, for example) reaches the server on
+`127.0.0.1`. An agent on another machine needs **Remote Access** turned on and
+the same Wi-Fi network.
 
-- **Bundle ID:** `com.openminis.loopctrl`
-- **Transport:** JSON-RPC 2.0 over HTTP, port `8300` by default (Settings → Port in the app; not iCTRL's 8200, so both can be installed)
-- **Auth:** encrypted envelope (X25519 pairing → HMAC-SHA256 sealed requests)
-- **Shipped as two IPAs:** `LoopCtrlUITests-Runner.ipa` (the automation engine —
-  **required, and the one that must be running**) + `LoopCtrl.ipa` (the
-  companion app — **optional**, see [The LoopCtrl app](#the-loopctrl-app-optional))
-- **Needs:** a way to sign the IPA (free Apple ID via SideStore, or a paid
-  account) and the Developer Disk Image mounted — see
-  [Installation](#before-you-start--two-things-you-need)
+| | |
+|---|---|
+| **Bundle ID** | `com.openminis.loopctrl` (the runner uses `com.openminis.loopctrl.uitests` in the two-IPA build; a source build uses your own prefix, see [Building](#building)) |
+| **Transport** | JSON-RPC 2.0 over HTTP. Default port **8300**, changeable in the app (Settings → Port). Nearby discovery uses the port above it (8301). |
+| **Auth** | Encrypted envelope: X25519 pairing, then HMAC-SHA256 sealed requests |
+| **Needs** | iOS 16 or later; a way to sign the IPA (free Apple ID via SideStore, or a paid account); the Developer Disk Image mounted |
 
-## The LoopCtrl app (optional)
+> **Port 8300, not 8200.** The default moved away from iCTRL's 8200 so LoopCtrl
+> and iCTRL can both be installed. Two runners on one port collide, and the one
+> still holding it keeps iOS's "Automation Running" banner up after the other
+> has stopped. If you pick a port yourself, don't share it with another
+> automation app.
 
-The runner does all the automation and runs on its own. `LoopCtrl.ipa` is a
-companion app for doing the surrounding chores on the phone itself:
+## Two builds
 
-- **Mount the Developer Disk Image without a Mac**, and re-mount it after a
-  reboot in one tap ([Option 3](#option-3--the-loopctrl-app)). Pairing files can
-  be picked in the app or shared to LoopCtrl from Files, Mail, AirDrop or a chat.
-- **Start and stop the runner**, and see whether it is running and which
-  version.
-- **Visibility:** see and switch who can reach the runner — 🟢 this device
-  only, 🟡 LAN, or 🟡 LAN + nearby (AWDL).
-- **Authorized clients:** every computer, agent and browser holding a key,
-  where each last connected from (this device / USB, LAN, nearby, VPN), and
-  revoking any of them.
-- **Runner logs, live**, with pause, refresh and filter.
+| | **All-in-one** (`LoopCtrl-AllInOne.ipa`) | **Two IPAs** (`LoopCtrl.ipa` + `LoopCtrlUITests-Runner.ipa`) |
+|---|---|---|
+| Apps installed | One | Two: the app, and the runner that does the automation |
+| How the server starts | The app loads the runner's XCTest bundle in-process after the Developer Disk Image is mounted | The app opens the runner through its `loopctrl://` URL scheme |
+| Free Apple ID app limit | Uses one of the 3 slots | Uses two |
+| Stop | Parks the server, LoopCtrl stays open, Start works again | The runner exits |
+| Status | **Experimental.** `docs/runner-merge-spike.md` is a feasibility spike and its on-device checklist (background survival, SideStore re-signing) is not marked as completed. | The established path |
 
-The app pairs with the runner once like any client (one Allow in the runner's
-notification). You can skip it if you mount the DDI with Xcode or StikDebug and
-manage the runner from its notification or a computer — with a free Apple ID's
-three-app limit, installing StikDebug *or* the LoopCtrl app is enough.
+Both are built from the same sources. The app is the same in both; only how
+the server is launched differs. The all-in-one app has the same bundle id as
+`LoopCtrl.ipa`, so it replaces that install. Paired keys, logs and settings are
+kept per app container and are not migrated from an older runner.
+
+## The app
+
+The home screen shows three states and one action:
+
+| Row | Values |
+|---|---|
+| **Pairing** | Paired / Not paired |
+| **Disk Image** | Mounted / Not mounted / Unavailable |
+| **Service** | Checking / Running / Stopped |
+
+The one primary button follows the next step: **Mount Disk Image**, then
+**Start Server**, then **Stop Server**. While the server runs, the home screen
+also shows its **This device** address (`127.0.0.1:<port>`), the **Wi-Fi**
+address once Remote Access is on, and the **Remote Access** switch. Tap an
+address to copy it.
+
+The gear opens **Settings**:
+
+- **Pairing & Disk Image**: pairing and mounting, in one flow:
+  - pair on this device (iOS 27 and later: Settings → Privacy & Security →
+    Developer Mode → "Pair with LoopCtrl", then type the code the app shows), or
+    import a pairing file (from StikPair, or from iLoader exported on iOS 17.4
+    or later; a file from `idevicepair` alone won't mount);
+  - choose the **tunnel app**, LocalDevVPN or Shadowrocket (with Settings →
+    Other → "Include Route 10.7.0.1/32" on);
+  - download the image files, then mount. About 100 MB up to iOS 26.3, about
+    17 MB from iOS 26.4.
+- **Port**: 1024 to 65534, locked while the server runs, with a restore-default
+  button.
+- **Server details** (while running): address, server version, protocol,
+  methods, capabilities, **Visibility** (this device only, LAN, LAN + nearby),
+  **Authorized Clients** (with revoke) and **Runner Logs**.
+- **Alternative** (while the image isn't mounted): links to LocalDevVPN and StikDebug.
+- **Device** (model, system, screen, name), **About** and this app's own **Logs**.
+
+Managing clients and reading runner logs need this app paired with the runner
+once, like any other client (one Allow). In the all-in-one build the server
+shares the app's process, so the Remote Access switch needs no pairing.
 
 ## Features
 
-**Built for AI agents**
-- **Self-describing.** The device serves its own operating manual (`GET /skill`,
-  under 15K characters, most important rules first) and a full method schema
-  (`GET /schema`). An agent given only the address learns the rest by itself.
-- **Responses that steer.** Every result carries a `hint`, and every error says
-  what to do next. A `ref` re-resolves the live element at tap time;
-  `visibility` and `alternatives` flag look-alikes; scrolls report whether they
-  moved and where you are in the list.
-- **Knows the apps on the phone.** `resolve_app` turns an app name into a bundle
-  id offline and remembers which apps actually opened on this device, even
-  where iOS refuses to list installed apps.
+- **Self-describing.** `GET /skill` is the operating manual (kept under 15K
+  characters, most important rules first); `GET /schema` lists every method.
+- **Responses that steer.** Results carry a `hint` and errors say what to do
+  next. A `ref` re-resolves the live element at tap time; `visibility` and
+  `alternatives` flag look-alikes; scrolls report whether they moved.
+- **Knows the apps on the phone.** `resolve_app` turns a name into a bundle id
+  offline and remembers which apps actually opened on this device.
+- **Fast.** Taps are synthesized touch events with no wait-for-idle (about
+  280 ms median in the author's measurements). `page_source` is bounded on the
+  device (`visible_only`, `max_children`), so long feeds don't turn into
+  seconds-long reads.
+- **Sees what the accessibility tree can't.** `screen_text` runs on-device
+  Vision OCR and returns text with tappable coordinates; `page_source` falls
+  back to it when the tree comes back thin.
+- **Robust when unattended.** Calls for an app that has left the screen are
+  refused in milliseconds. `logs`, `config` and `reset` keep answering while UI
+  calls hang, and logs survive a crash.
+- **Secure by default.** Pairing is approved on the phone; every request is
+  encrypted and authenticated, with replay and clock-skew protection. Remote
+  access is off until you turn it on.
+- **No Mac needed.** Install with a free Apple ID through SideStore, pair and
+  mount the Developer Disk Image on the device.
+- **Also included.** A live H.264 screen stream (`GET /stream`) and a browser
+  control page (`GET /remote`, also usable from another phone, with Add to Home
+  Screen); deep links through `open_url`; `home`, `lock`, `unlock`.
 
-**Fast**
-- **~280ms taps.** Synthesized touch events with no wait-for-idle.
-- **The visible screen in under 1s**, even on long-scrolled feeds (p50 416ms
-  across 8 apps). Snapshots are bounded on the device, so the app never
-  serializes thousands of off-screen rows.
-- **Element lookups in ~0.3–1s**, on the same bounded walk.
+### How it differs from WebDriverAgent
 
-**Sees what the accessibility tree can't**
-- **On-device OCR** (`screen_text`, Vision) returns text with tappable
-  coordinates. `page_source` measures its own coverage and falls back to it
-  automatically when the tree comes back thin (web views, custom-drawn text).
-- **Feedback on coordinate taps.** A tap by coordinates reports which element it
-  hit, or warns that it landed on empty space.
-
-**Robust in long, unattended sessions**
-- **Never queries an app that has left the screen.** Such calls are refused in
-  milliseconds instead of stalling for seconds. System alerts and the home
-  screen are recognised as the foreground.
-- **Diagnosable while stuck.** `logs`, `config` and `reset` keep answering while
-  UI calls hang. A circuit breaker stops queueing behind a stuck call, timeouts
-  name the call holding the queue, and logs survive a crash.
-
-**Secure by default**
-- **Pairing is approved on the phone.** Every request is then encrypted and
-  authenticated: X25519 key exchange, a per-request HMAC-SHA256 envelope, and
-  replay and clock-skew protection.
-- **Local only until you say otherwise.** Remote access is off by default, and
-  an unused key expires after 30 days. Nearby discovery is a separate, explicit
-  step, and only this device can switch it on.
-
-**No Mac required**
-- Install with a **free Apple ID** through SideStore, and mount the Developer
-  Disk Image **on the device** with the LoopCtrl app or StikDebug.
-- **No UI to look after.** Long-press the runner's notifications to approve
-  pairing, toggle remote access or stop the server.
-- **Clients come from the device:** a Python client and a pure-C static CLI for
-  agents in on-device sandboxes such as Minis.
-- **No address to type:** with nearby discovery on, clients find the phone on
-  the LAN, or from a Mac over Apple peer-to-peer Wi-Fi with no shared network
-  at all. One key per device works over USB, the LAN and nearby.
-
-**Also included:**
-- live H.264 screen stream (`GET /stream`) and a browser control page (`GET /remote`)
-  that also works from another phone: full screen, a floating quick-control ball,
-  and Add to Home Screen for a view with no browser bars;
-- deep links via `open_url`;
-- `home`, `lock`, `unlock`;
-- iOS 16 and later.
-
-## How it works
-
-LoopCtrl is a UITest target that never stops. On launch it starts an `NWListener`
-HTTP server and holds the run loop open (WebDriverAgent-style: block on
-`distantFuture`, near-zero idle CPU). Every RPC maps to an XCUITest action
-executed against the foreground app or a bound target app.
-
-```
-AI agent / curl ──HTTP JSON-RPC──▶ LoopCtrl runner (XCUITest) ──▶ iOS UI
-```
-
-Interactions are synthesized with `XCSynthesizedEventRecord` / `XCPointerEventPath`,
-which bypasses XCUITest's quiescence waits.
-
-## How it differs from WebDriverAgent
-
-[WebDriverAgent](https://github.com/appium/WebDriverAgent) (WDA) is Appium's
-iOS driver: a heavyweight server built for test suites, usually driven from a
-Mac. LoopCtrl borrows several of WDA's proven mechanisms: the never-ending XCUITest
-runner, the `distantFuture` run loop and its app-activation handling. Its aim is
-different, though. LoopCtrl is a phone an **AI agent** operates in real time,
-often from the phone itself, so the work went into speed, robustness and making
-every response usable by a model.
+[WebDriverAgent](https://github.com/appium/WebDriverAgent) (WDA) is Appium's iOS
+driver, built for test suites and usually driven from a Mac. LoopCtrl borrows
+its proven mechanisms (the never-ending XCUITest runner, the `distantFuture`
+run loop, app-activation handling; no code is copied) but is aimed at an agent
+operating a phone in real time, often from the phone itself.
 
 | | WebDriverAgent (estimated from its source and defaults, not measured) | LoopCtrl |
 |---|---|---|
-| **Taps** | `XCUIElement`/`XCUICoordinate.tap`, which waits for the app to go idle before and after (`waitForIdleTimeout` 10s by default). *Estimated* **~0.5–1s** per tap | Synthesized touch events with no idle waits: **~280ms median** (measured) |
-| **Reading long lists** | A snapshot limited to depth 50 (`snapshotMaxDepth`). That caps nesting but not breadth, so every off-screen row of a long feed is still serialized. *Estimated* **several seconds** per read on a long-scrolled X timeline, sometimes long enough to time out | Snapshots bounded in depth *and* breadth on the device, keeping only what is on screen: **p50 416ms / p90 593ms across 8 apps, never over 1s** (measured). Element lookups use the same bounded walk (~0.3–1s) |
-| **When the tree is empty** (web views, custom-drawn text, sparse recycling lists) | — | On-device **Vision OCR** (`screen_text`, ~0.5s) returns text with tappable point coordinates. `page_source` measures its own coverage and falls back to OCR by itself |
-| **Built for** | Test frameworks (WebDriver/Appium protocol) | AI agents. The device serves its own manual (`GET /skill`) and schema (`GET /schema`). Every response carries a `hint`, and errors say what to do next. `ref`s re-resolve the live element; `visibility`/`alternatives` flag look-alikes; scrolls report whether they moved and where you are |
-| **Security** | Plain HTTP, no authentication | Pairing must be approved on the phone. Every request is encrypted and authenticated (X25519 pairing, per-request HMAC-SHA256 envelope, replay and clock-skew protection) |
-| **Clients** | Appium / WebDriver client libraries | Downloaded straight from the device: a Python client, and a **pure-C static CLI** (aarch64-musl, no runtime dependencies, ~9x faster to start than Python) for agents in on-device sandboxes like Minis |
-| **Needs a Mac** | To build, sign and usually to drive | Only optionally. The DDI can be mounted on the device, signing can go through SideStore, and the runner serves on its own |
-| **When things go wrong** | — | Diagnostics stay up while UI calls are stuck (`logs`, `config`, `reset`). A circuit breaker stops queueing behind a stuck call, and timeouts name the call holding the queue. Logs survive a crash |
+| **Taps** | `XCUIElement.tap`, which waits for the app to go idle. Roughly 0.5 to 1 s | Synthesized events, no idle wait. About 280 ms median (measured) |
+| **Long lists** | Depth-limited snapshots; every off-screen row is still serialized. Several seconds on a long feed | Bounded in depth and breadth on the device. p50 416 ms, p90 593 ms across 8 apps (measured) |
+| **Empty tree** | n/a | On-device OCR (`screen_text`), used automatically as a fallback |
+| **Built for** | Test frameworks (WebDriver / Appium protocol) | Agents: self-served manual and schema, hints in every response |
+| **Security** | Plain HTTP, no authentication | Approved pairing, encrypted and authenticated requests |
+| **Clients** | Appium / WebDriver libraries | Served by the device: Python and a static C CLI |
+| **Needs a Mac** | To build, sign and usually to drive | Optional |
 
-The runner IPA is about 1MB.
+## Installation
 
----
+LoopCtrl's engine is an XCUITest runner, and iOS only runs one when two things
+are true. Sort them out first.
 
-# Installation
-
-## Before you start — two things you need
-
-LoopCtrl's automation engine is an XCUITest runner, and iOS only runs one when two
-conditions hold. Sort out both before anything else:
-
-**1. A way to sign and install the IPA.** Both a free Apple ID and a paid
-developer account work:
+**1. A way to sign and install the IPA.**
 
 | You have | How |
 |---|---|
-| Free Apple ID | The **latest SideStore** signs and installs it → [A](#a-free-apple-id--sidestore) |
-| Paid developer account | Sign with [`Scripts/sign-ipa.sh`](Scripts/sign-ipa.sh) → [B](#b-paid-developer-account--scriptssign-ipash), or run from Xcode → [C](#c-paid-developer-account--xcode) |
+| Free Apple ID | The **latest SideStore** signs and installs it ([A](#a-free-apple-id-sidestore)) |
+| Paid developer account | [`Scripts/sign-ipa.sh`](Scripts/sign-ipa.sh) ([B](#b-paid-account-scriptssign-ipash)), or run from Xcode ([C](#c-paid-account-xcode)) |
 
-The runner can't be signed with just any tool. Its IPA contains a nested test
-bundle, `PlugIns/LoopCtrlUITests.xctest`, which needs its own signature. That
-bundle has to be signed first, from the inside out, and it has to carry the
-runner's bundle id. Most signers only recurse into `.framework`/`.appex` and
-leave the `.xctest` alone. The package then installs fine and **crashes the
-moment it launches**. Use one of the routes above, which handle this.
+The runner can't be signed with just any tool: its IPA contains a nested test
+bundle, `PlugIns/LoopCtrlUITests.xctest`, that needs its own signature, applied
+first and carrying the host's bundle id. Most signers skip it and the package
+**crashes the moment it launches**. The routes above handle this. The same
+applies to the all-in-one IPA.
 
-**2. The Developer Disk Image (DDI) mounted.** XCUITest talks to the
-`testmanagerd` daemon, and that daemon only exists while a DDI is mounted. A
-reboot unmounts it, so remount after every restart:
+**2. The Developer Disk Image (DDI) mounted.** XCUITest talks to `testmanagerd`,
+which only exists while a DDI is mounted. A reboot unmounts it, so remount after
+every restart ([Step 2](#step-2-pair-and-mount-the-ddi)).
 
-| You have | How |
-|---|---|
-| A Mac with Xcode | Connect the phone once; Xcode mounts it automatically → [Option 1](#option-1--xcode) |
-| No Mac | [StikDebug](#option-2--stikdebug) **or** the [LoopCtrl app](#option-3--the-loopctrl-app) mounts it on the device. You need only one; with a free Apple ID there is room for only one ([why](#a-free-apple-id--sidestore)) |
+Enable **Developer Mode** first (Settings → Privacy & Security → Developer Mode,
+then restart); development-signed apps won't open without it.
 
-Once both are in place: [launch the runner](#step-3--launch-the-runner).
+### Step 1: install
 
----
-
-## Step 1 — Sign & install
-
-Enable **Developer Mode** first (iOS 16+: **Settings → Privacy & Security →
-Developer Mode**, then restart). Development-signed apps won't open without it.
-
-### A. Free Apple ID — SideStore
+#### A. Free Apple ID: SideStore
 
 A free account issues 7-day certificates, and SideStore re-signs your apps
 before they expire.
 
-1. **Install SideStore** with [iLoader](https://github.com/nab138/iLoader) on
-   your computer. Connect the phone over USB, sign in with your Apple ID, and
-   install SideStore. iLoader also sets up the pairing file SideStore needs.
-2. **Install [LocalDevVPN](https://apps.apple.com/app/localdevvpn/id6755608044)**
+1. Install SideStore with [iLoader](https://github.com/nab138/iLoader) on your
+   computer (it also sets up the pairing file SideStore needs).
+2. Install [LocalDevVPN](https://apps.apple.com/app/localdevvpn/id6755608044)
    from the App Store and connect it. SideStore installs and refreshes apps
    through it.
-3. **Use the latest SideStore release.** Older builds signed with `ldid`, which
-   skips the `.xctest`, so the runner installs and then crashes on launch.
-4. In SideStore: **My Apps → +** → pick `LoopCtrlUITests-Runner.ipa`.
-   Optionally install `LoopCtrl.ipa` the same way (see the app limit below).
-5. On the device: **Settings → General → VPN & Device Management** → trust
-   your Apple ID's developer certificate.
+3. Use the **latest SideStore**. Older builds signed with `ldid`, which skips the
+   `.xctest`, so the runner installs and then crashes on launch.
+4. In SideStore: **My Apps → +**, then pick the IPAs: `LoopCtrl-AllInOne.ipa`, or
+   `LoopCtrlUITests-Runner.ipa` plus `LoopCtrl.ipa`.
+5. Trust your developer certificate: Settings → General → VPN & Device Management.
 
-> **Free-account limits.**
-> - Certificates last **7 days**. Open SideStore and refresh before they
->   expire (it can refresh in the background while LocalDevVPN is connected).
->   Otherwise the runner stops launching.
-> - A free account can have at most **3 sideloaded apps** active at once, and
->   SideStore itself counts as one. The limit is counted by the device, so a
->   second Apple ID doesn't raise it. With the runner that leaves room for
->   **one** more, which is how you mount the DDI without a Mac. Pick **either**
->   the LoopCtrl app **or** StikDebug:
->   - **LoopCtrl app** if you don't use StikDebug already. It is built for this:
->     it shows whether the DDI is mounted, remounts in one tap, and starts the
->     runner.
->   - **StikDebug** if you already have it for JIT. It mounts the DDI just as
->     well, and you don't need the LoopCtrl app at all.
->
->   If you mount with Xcode on a Mac instead, you need neither. SideStore plus
->   the runner is enough.
+> **Free-account limits.** Certificates last **7 days**; refresh in SideStore
+> (it can do so in the background while LocalDevVPN is connected) or the apps
+> stop launching. At most **3 sideloaded apps** can be active, and SideStore
+> counts as one. The all-in-one build leaves room for one more app; the two-IPA
+> build fills the remaining two slots.
 
-### B. Paid developer account — `Scripts/sign-ipa.sh`
+#### B. Paid account: `Scripts/sign-ipa.sh`
 
-You need three things:
-- an **Apple Development** certificate in your keychain;
-- a **development** provisioning profile that includes your device. A wildcard
-  `TEAMID.*` App ID covers both packages. Opening the project in Xcode once
-  with automatic signing downloads one.
-- a Mac, because the script uses Apple's `codesign`.
+You need an **Apple Development** certificate in your keychain, a **development**
+provisioning profile that includes your device (a wildcard `TEAMID.*` App ID
+covers every package; opening the project in Xcode once with automatic signing
+downloads one), and a Mac (the script uses `codesign`).
 
 ```bash
-Scripts/sign-ipa.sh -i LoopCtrlUITests-Runner.ipa
-# → LoopCtrlUITests-Runner-signed.ipa
+Scripts/sign-ipa.sh -i LoopCtrl-AllInOne.ipa
+# → LoopCtrl-AllInOne-signed.ipa
 ```
 
-With no other options, the script picks everything itself:
+With no other options the script picks everything itself:
 
 | Option | Default |
 |---|---|
-| `-t TEAMID` | `$DEVELOPMENT_TEAM`, then `Config/Local.xcconfig`, then the Xcode project's build settings |
-| `-p PROFILE` | the installed development profile for that team that covers the package's bundle id. An exact App ID wins over a wildcard, then the one that expires last. `-p` takes a `.mobileprovision` path, a profile UUID or a profile name. |
-| `-s IDENTITY` | the keychain signing identity whose certificate is in that profile. `-s` takes a name or SHA-1 (`security find-identity -v -p codesigning`). |
+| `-t TEAMID` | `$DEVELOPMENT_TEAM`, then `Config/Local.xcconfig`, then the Xcode project |
+| `-p PROFILE` | the installed development profile for that team that covers the bundle id (exact App ID over wildcard, then the latest expiry). Takes a path, UUID or name. |
+| `-s IDENTITY` | the keychain identity whose certificate is in that profile. Takes a name or SHA-1. |
 | `-o OUT` | `<input>-signed.ipa` |
 
-It checks up front that the profile and identity actually belong together.
-This is matched on certificate hashes, because the ID in an identity's name is
-the certificate holder's, not the team's. A mismatch is reported before
-anything is signed. Without this check, iOS would reject the install with an
-error that never mentions the profile.
+It checks that the profile and identity belong together before signing, sets the
+`.xctest` bundle id to the host's, signs inside out (dylibs, frameworks,
+`PlugIns/*`, the app), adds the entitlements a runner needs (including
+`get-task-allow`) and verifies every nested binary before repacking. It refuses
+a distribution profile, since a runner signed with one installs but never
+launches. Use it for any of the IPAs.
 
-The script does four things, in this order:
-1. sets the `.xctest`'s bundle id to the runner's;
-2. signs from the inside out: loose dylibs → frameworks → `PlugIns/*` → the app;
-3. writes the entitlements a test runner needs, including `get-task-allow`;
-4. verifies every nested binary before it repacks.
+Install the result with Xcode's **Devices and Simulators → Installed Apps → +**,
+Apple Configurator, or `ideviceinstaller -i <ipa>`.
 
-It refuses a distribution profile, because a runner signed with one installs
-but never launches. The same command signs `LoopCtrl.ipa`.
+#### C. Paid account: Xcode
 
-Install the signed IPA with any of:
-- Xcode's **Devices and Simulators → Installed Apps → +**;
-- Apple Configurator;
-- `ideviceinstaller -i <ipa>`.
-
-<details>
-<summary>What the script is working with</summary>
-
-```
-LoopCtrlUITests-Runner.app/
-├── LoopCtrlUITests-Runner          ← host binary
-├── Frameworks/
-│   └── libXCTCompatShim.dylib   ← must be signed, or dyld rejects it
-└── PlugIns/
-    └── LoopCtrlUITests.xctest/     ← signed FIRST, separately, with the runner's id
-        └── LoopCtrlUITests
-```
-
-`ldid` in particular will not sign the `.xctest`: it only recurses into
-`.framework` and `.appex`. An unsigned dylib fails at launch with *"mapped file
-has no cdhash"*, which looks nothing like a signing problem. That is why the
-script verifies each nested binary before it repacks.
-</details>
-
-### C. Paid developer account — Xcode
-
-The simplest route if you have the source and a Mac. It also takes care of
-[the DDI](#option-1--xcode).
+The simplest route with the source and a Mac; it also takes care of the DDI.
 
 ```bash
 brew install xcodegen
@@ -359,181 +276,128 @@ make build        # fetches dependencies, writes your signing config, generates 
 open LoopCtrl.xcodeproj
 ```
 
-1. Select the **LoopCtrl** scheme and your device.
-2. **Product → Test** (⌘U).
+Select the **LoopCtrl** scheme and your device, then **Product → Test** (⌘U).
+Change team and bundle-id prefix in `Config/Local.xcconfig`, not under Signing &
+Capabilities: the project is regenerated from `project.yml`. The runner keeps
+running after the test session detaches, so you can quit Xcode.
 
-Your team and bundle-id prefix come from `Config/Local.xcconfig` (see
-[Building](#building)). Change them there rather than under *Signing &
-Capabilities*: the project is regenerated from `project.yml`, which would undo
-edits made in Xcode.
+### Step 2: pair and mount the DDI
 
-Xcode builds, signs, installs and launches the runner. The runner keeps running
-after the test session detaches, so you can quit Xcode and keep using the API.
+The image does **not survive a reboot**; repeat this after every restart.
 
----
+- **Xcode on a Mac.** Connect the phone over USB or the same network and wait
+  for **Window → Devices and Simulators** to show it ready. Xcode mounts the
+  image itself.
+- **StikDebug.** [StikDebug](https://github.com/StikDebug/StikDebug) mounts it on
+  the device. It needs LocalDevVPN and a pairing file; follow its own guide.
+  With a free Apple ID there is room for either StikDebug or the LoopCtrl app,
+  not both, alongside SideStore and the runner in the two-IPA build.
+- **The LoopCtrl app** (no Mac). Tap **Mount Disk Image** on the home screen,
+  or **Settings → Pairing & Disk Image**, and follow the sheet:
+  1. **Pair.** Either **Pair on this device** (iOS 27 and later) or **Import a
+     pairing file** (see above).
+  2. **Download image files** (once, then reused).
+  3. **Wi-Fi.** Any network will do; cellular alone won't, because the tunnel
+     runs over the local interface.
+  4. **Tunnel app.** Pick LocalDevVPN or Shadowrocket and connect it. The app
+     opens it for you.
+  5. **Mount Developer Disk Image.** The first mount needs internet, since Apple
+     issues a signing ticket for the specific device.
 
-## Step 2 — Mount the DDI
+  After a reboot, mount again; the pairing file and downloaded image are kept.
 
-The image does **not survive a reboot**. After every restart, remount it with
-any one of the options below, then launch the runner again.
+### Step 3: start the server
 
-### Option 1 — Xcode
+Tap **Start Server** in the LoopCtrl app (the two-IPA build opens the
+runner, `LoopCtrlUITests-Runner`, which you can also tap on the Home Screen).
 
-Connect the phone to a Mac running Xcode, over USB or the same network. Wait
-until **Window → Devices and Simulators** shows the device as ready. Xcode
-mounts the DDI on its own when it prepares the device for development, and the
-image stays mounted until the next reboot. You can disconnect afterwards.
+**The first time, iOS asks for three things:**
+1. **Your passcode**, when a UI-automation session starts. This can return after
+   a reboot.
+2. **Notifications → Allow.** The runner's notifications are how you approve
+   pairing and control it. Fix a denial later under Settings → Notifications.
+3. **Local Network → Allow.** Without it the self-check and nearby discovery
+   fail (LAN clients may still connect, which hides the problem). Fix it under
+   Settings → Privacy & Security → Local Network; the app warns when it is
+   missing.
 
-### Option 2 — StikDebug
+### Controlling the server
 
-[StikDebug](https://github.com/StikDebug/StikDebug) mounts the DDI on the
-device itself, with no computer involved after setup:
-
-1. Sideload StikDebug (for example with SideStore) and install
-   [LocalDevVPN](https://apps.apple.com/app/localdevvpn/id6755608044) from the
-   App Store.
-2. Give StikDebug a pairing file, following its own setup guide. iLoader can
-   provide one.
-3. Connect LocalDevVPN, then open StikDebug. It mounts the Developer Disk Image
-   by itself at launch. Once it reports the image as mounted, you're done.
-
-### Option 3 — the LoopCtrl app
-
-`LoopCtrl.ipa` (the host app) includes the same kind of on-device mounter. It is
-signed and installed like the runner ([Step 1](#step-1--sign--install)). Then:
-
-**Settings → Runtime requirements → Mount without a Mac…**, and follow the
-four steps on that screen:
-
-1. **Start LocalDevVPN.** Tap *Open LocalDevVPN & connect*. The app sends you
-   there and brings you back.
-2. **Import a pairing file.** Use the one iLoader produces, or create one on a
-   Mac with `idevicepair pair` (libimobiledevice) and send it over AirDrop,
-   Files or iCloud. If the picker can't reach the file, share it to LoopCtrl from
-   the app that has it; LoopCtrl confirms once it is stored.
-3. **Download image files.** About 100 MB, downloaded once and reused.
-4. **Mount Developer Disk Image.**
-
-Two things this option needs:
-- **Wi-Fi.** The tunnel runs over the local network interface, which cellular
-  doesn't provide.
-- **Internet on the first mount.** Apple has to issue a signing ticket for this
-  specific device.
-
-When LoopCtrl shows *Mounted*, the runner can launch. After a reboot, use
-**Re-mount…** on the same screen.
-
----
-
-## Step 3 — Launch the runner
-
-Tap **LoopCtrlUITests-Runner** on the Home Screen, or **Start Server** in the
-LoopCtrl app.
-
-**The first time, iOS asks for three things. Answer all three:**
-1. **Your device passcode.** iOS may ask for it when a UI-automation session
-   starts; enter it. This can come back after a reboot.
-2. **Notifications → Allow.** The runner has no screen of its own, and its
-   notifications are how you control it (below). If you deny this, you can't
-   approve a pairing request. Fix it later under **Settings → Notifications →
-   LoopCtrlUITests-Runner**.
-3. **Local Network → Allow.** The runner asks right after it starts. Without
-   it the self-check and nearby discovery fail (clients connecting in over the
-   LAN may still work, which hides the problem). If you denied it, switch on
-   **LoopCtrlUITests-Runner** under **Settings → Privacy & Security → Local
-   Network**; the LoopCtrl app warns when it is missing.
-
-### Controlling LoopCtrl from its notification
-
-An XCUITest runner can't show an interface: it opens, starts the server and
-moves to the background. Everything you'd expect on a settings screen is in its
-notifications instead. **Long-press a notification** (or swipe left → *View*)
-to get its menu:
+From the app: the primary button starts and stops it, and the **Remote Access**
+switch (home screen, while running) opens it to the LAN. The same controls live
+in the server's notifications; **long-press a notification** (or swipe left →
+View) for its menu:
 
 | Notification | Menu |
 |---|---|
-| **🟢 LoopCtrl Server Ready** — always present while the server runs; refreshes silently every 5 minutes. Its first line says who can reach the phone: **🔒 This device only**, **🌐 LAN reachable**, **📡 Nearby discoverable**, or why nearby isn't ready yet (e.g. *turn on Wi-Fi*, *allow Local Network*) | **🌐 Enable Remote Access** / **🔒 Disable Remote Access**, **📡 Enable Nearby Discovery** / **📴 Disable Nearby Discovery** (with remote access on), **🛑 Stop Server** |
-| **Pairing request** from a client | **✅ Allow** / **⛔️ Deny** |
-| **⏹️ LoopCtrl Server Stopped** | **📋 Copy Logs** |
+| **LoopCtrl Server Ready**, present while the server runs. Its first line says who can reach the phone: *This device only*, *LAN reachable*, *Nearby discoverable*, or why nearby isn't ready (turn on Wi-Fi, allow Local Network) | Enable / Disable Remote Access, Enable / Disable Nearby Discovery (with Remote Access on), Stop Server |
+| **Authorization Request** from a client | Allow / Deny |
+| **LoopCtrl Server Stopped** | Copy Logs |
 
-- **Remote access is off by default.** The server only answers on the device
-  itself (`127.0.0.1`), e.g. an agent running in an on-device sandbox. To drive
-  the phone from another machine, choose **🌐 Enable Remote Access** first.
-- **Allow** and the remote-access switch only work while the phone is
-  unlocked. iOS asks for Face ID / the passcode if it isn't.
-- To start again after **Stop Server**, open the runner (or tap **Start
-  Server** in the LoopCtrl app) again.
-- The LoopCtrl app shows the same switch as a **Visibility** menu.
+Allow and the Remote Access switch only work while the phone is unlocked.
 
-### Who can reach it: visibility
+### Who can reach it
 
 | Setting | Reachable from | Announced (Bonjour) |
 |---|---|---|
-| 🔒 **This device only** (default) | apps on the phone, a computer over USB | nowhere |
-| 🌐 **LAN** (remote access on) | anyone on the same network who knows the address | nowhere |
-| 📡 **LAN + nearby** (nearby discovery on) | the above, plus nearby Apple devices over peer-to-peer Wi-Fi (AWDL) | on the LAN and over AWDL |
+| **This device only** (default) | apps on the phone, a computer over USB | nowhere |
+| **LAN** (Remote Access on) | anyone on the same network who knows the address | nowhere |
+| **LAN + nearby** (nearby discovery on) | the above, plus nearby Apple devices over peer-to-peer Wi-Fi (AWDL) | on the LAN and over AWDL |
 
 Every client still needs a key approved on the phone; visibility only decides
 who can ask. Nearby discovery can be switched **on** only from the phone itself
-(its notification, the LoopCtrl app, or a computer over USB); anyone with a key
-can switch it off.
+(notification, app, or a computer over USB); a client holding a key can switch
+it off.
 
-### Finding the device: nearby discovery
+### Finding the phone: nearby discovery
 
-With **📡 Nearby discovery** on, a client needs no address:
+With nearby discovery on, a client needs no address:
 
 ```bash
-python3 loopctrl_rpc.py scan                        # lists the phone: LAN and/or nearby (AWDL)
+python3 loopctrl_rpc.py scan                       # lists the phone on the LAN and/or nearby (AWDL)
 python3 loopctrl_rpc.py --nearby "iPhone 15 (7f3a)" call device_info   # or an id prefix: --nearby 7f3a
 ```
 
-- **On the LAN** from any OS (macOS uses Bonjour; elsewhere the Python client
-  sends its own mDNS query).
-- **Over AWDL** from a Mac, with no shared network: the phone only needs Wi-Fi
-  switched **on**, not joined to anything. This needs macOS (the Python client,
-  or the C CLI built on macOS).
-- The phone is advertised as its model plus a short id, e.g. *iPhone 15
-  (7f3a)*; a paired client can rename it with `config{device_name}`. On the LAN
-  iOS also announces the phone's own host name, which often contains its
-  owner's name.
-- A phone whose screen is off may stop being discoverable over AWDL, as with
-  AirDrop. Wake it if it disappears.
+- On the LAN this works from any OS.
+- Over AWDL it works from a Mac with no shared network (the phone only needs
+  Wi-Fi switched on). This needs macOS: the Python client, or the C CLI built
+  with `make -C cli macos`.
+- The phone is advertised as its model plus a short id; a paired client can
+  rename it with `config{device_name}`. A phone with its screen off may stop
+  being discoverable over AWDL.
 
 ### Check that it's up
 
-With remote access enabled, from another machine on the same Wi-Fi:
+With Remote Access on, from another machine on the same Wi-Fi:
 
 ```bash
 curl http://<device-ip>:8300/schema
 ```
 
-If that returns a JSON document, the runner is up.
+A JSON document means the server is up.
 
-**If the runner opens and closes immediately:**
-- The DDI isn't mounted, usually because the phone rebooted. Remount it
-  ([Step 2](#step-2--mount-the-ddi)).
-- The `.xctest` wasn't signed. Re-sign with a route from
-  [Step 1](#step-1--sign--install).
-- The free certificate expired. Refresh in SideStore.
+**The runner opens and closes immediately:** the DDI isn't mounted (usually
+after a reboot), the `.xctest` wasn't signed (re-sign with a route from Step 1),
+or the free certificate expired (refresh in SideStore).
 
-**If `curl` can't connect but the runner is running:** remote access is still
-off (see above), Local Network access was denied (**Settings → Privacy &
-Security → Local Network**), or the phone is on cellular. A LAN client can only
-reach it over Wi-Fi.
+**`curl` can't connect but the server is running:** Remote Access is still off,
+Local Network access was denied, or the phone is on cellular.
 
----
+## Clients and quick start
 
-## Quick start
+Every `/rpc` body is an **encrypted envelope**; there is no plaintext path.
+Don't hand-roll the crypto. Download a client from the device:
 
-Every `/rpc` body is an **encrypted envelope**; there is no plaintext path. Don't
-hand-roll the crypto — download a client from the device itself:
+| Client | Where | Notes |
+|---|---|---|
+| **Python** | `GET /skill/clients/python` ([`Scripts/loopctrl_rpc.py`](Scripts/loopctrl_rpc.py)) | Standard library only; LAN pairing (X25519) additionally needs `pip install cryptography`. Has `scan` / `--nearby`. |
+| **Static CLI** | `GET /skill/clients/cli` (+ `cli.sh`), source in [`cli/`](cli/) | `aarch64-linux-musl`, no runtime dependencies, for sandboxes without Python (such as Minis). Run it as `sh loopctrl.sh …`, since downloaded files lose the exec bit. |
 
 ```bash
 # Fetch the reference client (unauthenticated)
 curl -o loopctrl_rpc.py http://<device-ip>:8300/skill/clients/python
 
-# Pair once — long-press the pairing notification on the phone → ✅ Allow
-# (blocks up to 60s). Standard library only, no packages to install.
+# Pair once: approve the request on the phone (waits up to 60 s)
 python3 loopctrl_rpc.py --host <device-ip>:8300 pair
 
 # Drive it
@@ -541,213 +405,196 @@ python3 loopctrl_rpc.py --host <device-ip>:8300 call device_info
 python3 loopctrl_rpc.py --host <device-ip>:8300 call tap '{"x":100,"y":200}'
 ```
 
-No address at hand? Turn on nearby discovery and use `scan` / `--nearby`
-([above](#finding-the-device-nearby-discovery)). Keys are stored per device in
-`~/.loopctrl/token.json`, so a phone paired once works over USB, the LAN and nearby
-without pairing again.
+Keys are stored per device in `~/.loopctrl/token.json`, so a phone paired once
+works over USB, the LAN and nearby. Both clients share that file.
 
-There is also a static aarch64-musl CLI at `/skill/clients/cli` for sandboxes
-with no Python.
+Building the CLI (needs Docker, or `zig` as a fallback):
 
-**`GET /skill`** returns the full operating manual in Markdown, so you don't need
-to brief an agent yourself. Give it the address ("*My iPhone is running LoopCtrl at
-192.168.1.20:8300 — figure out how to drive it.*") and it will read the manual
-and drive the device from there.
+```bash
+make -C cli build     # static aarch64-musl binary → cli/loopctrl
+make -C cli test      # crypto self-test
+make -C cli macos     # macOS client (arm64 + x86_64) with nearby discovery
+```
 
-## API surface
+`cli/loopctrl` is committed because the runner bundles it; rebuild and commit it
+whenever `cli/main.c` or the protocol changes.
 
-All methods are JSON-RPC 2.0 (`POST /rpc`). Highlights:
+## API
+
+All methods are JSON-RPC 2.0 over `POST /rpc`. `GET /schema` has the full list
+with parameters.
 
 | Group | Methods |
 |---|---|
 | **Touch** | `tap`, `double_tap`, `long_press`, `tap_element`, `find_and_tap`, `swipe`, `scroll`, `scroll_to_element`, `drag`, `page` |
-| **Text** | `type` (with `submit`/`clear`), `clear_text` |
-| **Read** | `screenshot`, `page_source`, `find_element`, `screen_text` (Vision OCR) |
+| **Text** | `type`, `clear_text` |
+| **Read** | `screenshot`, `page_source`, `find_element`, `screen_text`, `collect` |
 | **Apps** | `launch_app`, `activate_app`, `terminate_app`, `list_apps`, `resolve_app`, `open_url` |
 | **Device** | `device_info`, `home`, `lock`, `unlock`, `is_locked`, `wait` |
-| **Server** | `config` (remote access, `nearby_discovery`, `device_name`, sessions and revocation, `stop_server`), `reset`, `stream_ticket` |
+| **Server** | `config` (remote access, port, nearby discovery, device name, sessions and revocation, `stop_server`), `logs`, `reset`, `stream_ticket` |
 
 Notable behaviour:
 
-- **`page_source{visible_only, max_children}`** — on a recycling list (chat
-  lists, feeds) the accessibility tree holds far more rows than are on screen.
-  `visible_only:true` with `max_children:50` measured p50 416ms across 8 apps and
-  returns only what is actually visible.
-- **Automatic OCR fallback** — when the tree comes back with nothing on screen,
-  the response also carries `ocr_items[]` read from a screenshot, in the same
-  shape as `find_element` results.
-- **App binding** — `launch_app` binds subsequent interactions to that app;
-  read-only methods act on the current foreground to avoid activation stalls.
-- **`config{stop_server:true}`** — shut the service down remotely; paired keys
-  persist, so relaunching needs no re-pairing.
+- `page_source{visible_only, max_children}` returns only what is on screen, and
+  adds `ocr_items[]` when the accessibility tree has nothing visible.
+- `launch_app` binds later interactions to that app; read-only methods act on
+  the current foreground app.
+- `config{stop_server:true}` stops the service; paired keys persist, so starting
+  again needs no re-pairing.
 
-`GET /`, `GET /remote` (browser control page), `GET /stream` (live H.264),
-`GET /logs`, and `GET /logs/history?date=` expose docs, a UI and redacted logs.
-`GET /whoami` (unauthenticated) returns the device id, name and versions, and
-every response carries the id in an `X-LOOPCTRL-Device` header, so clients can keep
-one key per device.
+Plain HTTP endpoints: `GET /`, `GET /schema`, `GET /skill`, `GET /whoami`
+(unauthenticated: device id, name, versions), `GET /remote` (browser control
+page), `GET /stream` (live H.264) and `GET /logs`, `/logs/files`,
+`/logs/history?date=`. The last two need a single-use ticket from
+`stream_ticket`. Every response carries the device id in an
+`X-LOOPCTRL-Device` header.
 
-## Auth & sessions
+`device_info` and `/schema` report `server_version`, `protocol_version`, `build`
+and a `capabilities` array; feature-detect against `capabilities` rather than
+comparing versions.
 
-`POST /pair` returns a 32-byte key `K` after the device user taps **Allow**:
+## Auth and sessions
 
-- **Over USB/localhost** — `{"client_name":"…","plain":true}` returns `K`
+`POST /pair` returns a 32-byte key `K` after the user taps **Allow**:
+
+- **Over USB / localhost**: `{"client_name":"…","plain":true}` returns `K`
   directly (accepted only from `127.0.0.1`).
-- **Over the LAN** — send an X25519 public key and unwrap:
+- **Over the LAN**: send an X25519 public key and unwrap:
   `K = token_ct XOR HMAC(HMAC(X25519(c_priv,d_pub), "loopctrl-pair"||c_pub||d_pub), "loopctrl-wrap")`
 
 Each request is then sealed with HMAC-SHA256 keys derived from `K` and a fresh
-16-byte nonce; replays and clock skew beyond ±120s are rejected.
+nonce; replays and clock skew beyond ±120 s are rejected.
 
-Pairing rules:
-- **Every pairing is approved on the phone**; there is no "trusted for a while"
-  shortcut. An unanswered request is refused after 60 s and its prompt removed.
+- **Every pairing is approved on the phone.** An unanswered request is refused
+  after 60 s.
 - **Check the key before allowing.** The prompt shows a key fingerprint and the
-  client prints the same one (`key fingerprint: …`). Discovery can be answered
-  by anyone on the network under your phone's name, so allow only a request
-  whose fingerprint matches your computer's — and if the client says it is
-  pairing but the phone shows no prompt, something else answered.
-- **One request waits at a time**, with a 15 s cooldown after a refusal. Requests
-  from the phone itself (the LoopCtrl app, USB) have their own slot, so a remote
-  caller can't lock them out.
-- Requests that arrive over AWDL are labelled *nearby device* in the prompt.
+  client prints the same one. Discovery can be answered by anyone on the network
+  under your phone's name, so allow only a matching fingerprint; if the client
+  says it is pairing but the phone shows no prompt, something else answered.
+- **One request waits at a time**, with a cooldown after a refusal. Requests from
+  the phone itself have their own slot. Requests over AWDL are labelled *nearby
+  device*.
 - `config` lists each client with where it last connected from (this device /
-  USB, LAN, nearby, VPN) and can revoke it, as can the LoopCtrl app.
-
-Keys live in a sandbox file (not the Keychain), so OTA re-signing doesn't
-invalidate them. **A key is dropped after 30 days with no successful call** —
-every request slides that window forward, so a key in regular use never expires.
-
-### Version negotiation
-
-`device_info` and `/schema` report `server_version` (semver), `protocol_version`
-(int), `build` (compile timestamp — the only way to tell two builds apart when
-the version wasn't bumped), and a `capabilities` array. Feature-detect against
-`capabilities` rather than comparing versions.
+  USB, LAN, nearby, VPN) and can revoke it, as can the app (Settings → Authorized
+  Clients).
+- Keys live in a sandbox file, not the Keychain, so re-signing doesn't invalidate
+  them. A key is dropped after **30 days with no successful call**; every request
+  slides that window.
 
 ## Building
 
-From a fresh clone, with Xcode signed in to an Apple ID (Settings → Accounts —
-a free one works):
+From a fresh clone, with Xcode signed in to an Apple ID (a free one works):
 
 ```bash
 brew install xcodegen
-rustup target add aarch64-apple-ios   # Rust from https://rustup.rs
-make ipa          # → LoopCtrl.ipa + LoopCtrlUITests-Runner.ipa
+rustup target add aarch64-apple-ios       # Rust from https://rustup.rs
+make ipa             # → LoopCtrl.ipa + LoopCtrlUITests-Runner.ipa
+make ipa-allinone    # → LoopCtrl-AllInOne.ipa
 ```
 
-Nothing else needs to be set up. On the first run, `make`:
-- **builds** the idevice xcframework from source with `Patches/idevice` applied
-  (several minutes, once, `Scripts/build-idevice.sh`);
-- **writes `Config/Local.xcconfig`** (gitignored) with your team, read from the
+| Command | What it does |
+|---|---|
+| `make ipa` | Builds and packages the two-IPA build |
+| `make ipa-allinone` | Builds and packages the all-in-one app |
+| `make ipa UNSIGNED=1` (or `ipa-allinone`) | Builds without Xcode signing and signs ad-hoc, with no team or registered device needed, for packages that SideStore or `sign-ipa.sh` re-sign anyway. The bundle prefix is `com.openminis`. |
+| `Scripts/package-release.sh [OUT_DIR]` | Strips provisioning profiles (your name, team id, device UDIDs) from the IPAs built by `make ipa` / `make ipa-allinone`, ad-hoc signs them and writes them to `release/` |
+| `make build` | `xcodebuild build-for-testing` only |
+| `make clean` | Removes build output and the IPAs |
+
+On the first run `make`:
+
+- builds the idevice xcframework from source with `Patches/idevice` applied
+  (several minutes, once; `Scripts/build-idevice.sh`, which needs Rust with the
+  `aarch64-apple-ios` target);
+- writes `Config/Local.xcconfig` (gitignored) with your team, read from the
   Apple Development certificate in your keychain, and a bundle-id prefix derived
-  from it. Explicit App IDs are unique across all accounts, so the prefix has to
-  be yours: `com.openminis.loopctrl` belongs to one team only. To choose them
-  yourself: `DEVELOPMENT_TEAM=ABCDE12345 LOOPCTRL_BUNDLE_PREFIX=com.example.you make ipa`,
-  or edit the file. Delete it to have it detected again.
-- **generates `LoopCtrl.xcodeproj`** with XcodeGen (gitignored; regenerated
-  whenever `project.yml` or the signing config changes).
+  from it, since an explicit App ID belongs to one team only. To choose them:
+  `DEVELOPMENT_TEAM=ABCDE12345 LOOPCTRL_BUNDLE_PREFIX=com.example.you make ipa`;
+- generates `LoopCtrl.xcodeproj` with XcodeGen (gitignored; regenerated when
+  `project.yml` or the signing config changes).
 
-It then builds with `xcodebuild build-for-testing` and post-processes the
-runner:
-- strips the XCTest frameworks the runner doesn't need;
-- inserts a compat shim for older iOS (`Scripts/insert-dylib.py`, no `optool`
-  needed);
-- aligns the `.xctest` bundle id, re-signs inside out, and verifies that every
-  embedded binary is signed before packaging.
+Requirements: macOS, Xcode, `xcodegen`, Rust (for the idevice build). The CLI
+build is separate and needs Docker or `zig`.
 
-To publish a build, run `Scripts/package-release.sh`. It writes `release/` copies
-stripped of your provisioning profile (your name, team id and device UDIDs) and
-ad-hoc signed. Whoever installs them re-signs anyway.
+The runner is post-processed after the build: XCTest frameworks are stripped, a
+compat shim for older iOS is inserted, the `.xctest` bundle id is aligned and
+everything is re-signed inside out and verified. The all-in-one build gets the
+last two steps only.
+
+### App icon
+
+The icon is an Icon Composer document, `LoopCtrlApp/AppIcon.icon`. After editing
+it, export the iOS Default rendition at 1024 px over `Config/AppIcon-iOS-1024.png`
+and run `python3 generate_icon.py` (needs Pillow). It writes the runner's
+home-screen icons (`Config/RunnerIcon/`), the icon embedded in the `/remote` web
+app and the 512 px image the home screen displays.
 
 ## Project layout
 
 ```
-LoopCtrlApp/        SwiftUI host app (status, sessions, settings)
-LoopCtrlKit/        Shared lib: JSONRPCServer, AuthManager, SecureEnvelope, RPC registry
-LoopCtrlUITests/    The automation engine: test entry + run loop, ActionHandler,
-                 ForegroundApp / LockStateMonitor / EarlyURLHook (private APIs)
-LoopCtrlCompat/     Back-compat shim for older iOS XCTest
-Config/          Signing.xcconfig (committed defaults) + Local.xcconfig (yours, gitignored)
-Scripts/         sign-ipa.sh (re-sign with your own identity), loopctrl_rpc.py
-                 (reference client), clean-xctest-attachments.sh (free test
-                 videos left on a phone), build helpers
-SKILL.md         The operating manual served at GET /skill
-project.yml      xcodegen spec
-Makefile         build + sign + package
+LoopCtrlApp/       SwiftUI app: home screen, Settings, pairing and DDI mounting (DDI/),
+                   in-process runner for the all-in-one build (Runner/), AppIcon.icon
+LoopCtrlKit/       Shared: JSONRPCServer, AuthManager, SecureEnvelope, RPC registry, ServerPort
+LoopCtrlUITests/   The automation engine: test entry and run loop, action handlers,
+                   private-API helpers, localized strings (Localized.swift)
+LoopCtrlCompat/    Shim for older iOS XCTest (two-IPA runner)
+Config/            Signing.xcconfig (committed) + Local.xcconfig (yours, gitignored), icons
+Scripts/           sign-ipa.sh, package-release.sh, loopctrl_rpc.py (reference client),
+                   build-idevice.sh, setup-signing.sh, clean-xctest-attachments.sh, build helpers
+cli/               Static C client (served at /skill/clients/cli)
+docs/              runner-merge-spike.md (all-in-one feasibility notes, in Chinese)
+SKILL.md           The operating manual served at GET /skill
+project.yml        XcodeGen spec
+Makefile           build, sign, package
 ```
 
-## Notes & limitations
+## Notes and limitations
 
-- The **runner** must be running — the host app alone does nothing.
-- **Nearby discovery** over AWDL needs macOS on the client side and Wi-Fi
-  switched on at both ends. Endpoints that need no key (`/schema`, `/skill`,
-  `/remote`, `/whoami`, `/pair`) answer over it too, and the screen stream is
-  not encrypted on any channel.
-- Uses several private XCTest / `LSApplicationWorkspace` APIs — **not** App Store
-  safe; intended for automation on your own devices.
-- `unlock` only wakes the screen. It cannot enter a passcode, and it is not a way
-  to keep the screen awake; set Auto-Lock to Never for long unattended runs.
-  Note that screen sleep does **not** stop the runner — read-only tasks still
-  work with the display off.
+- Nearby discovery over AWDL needs macOS on the client and Wi-Fi switched on at
+  both ends. Endpoints that need no key (`/schema`, `/skill`, `/remote`,
+  `/whoami`, `/pair`) answer over it too, and the screen stream is not
+  encrypted on any channel.
+- LoopCtrl uses private XCTest and `LSApplicationWorkspace` APIs. It is **not**
+  App Store safe and is meant for your own devices.
+- `unlock` only wakes the screen; it can't enter a passcode or keep the screen
+  awake. Set Auto-Lock to Never for long unattended runs. Screen sleep doesn't
+  stop the server.
 - `list_apps` uses a private API that newer iOS versions may refuse, returning an
-  empty list on a device full of apps. Use `launch_app` to test for an app.
+  empty list. Use `launch_app` to test for an app.
 - Synthesized input is indistinguishable from real touches at the system level,
-  but that is no guarantee against app-side anti-automation heuristics — apps
-  with bot detection may still challenge you.
-- **Huge "System Data" on a phone that ran an older runner.** Since Xcode 15 a UI
-  test screen-records itself by default, and the video is kept on the phone
-  (testmanagerd's `tmp/Attachments`) unless the test passes. A server test that
-  runs for hours and ends killed left one video per run — tens of GB, untouched
-  by a reboot. Current runners turn this off
-  (`LoopCtrlUITests/ScreenRecordingDisabler.m`). To see and clear what an older
-  runner (or WebDriverAgent) left, connect the phone over USB and run
-  `Scripts/clean-xctest-attachments.sh` (lists only), then add `--delete`.
+  but apps with bot detection may still challenge you.
+- **Large "System Data" after an older runner.** Since Xcode 15 a UI test
+  screen-records itself and keeps the video on the phone unless the test passes;
+  a server test that ends killed left one video per run. Current runners turn
+  this off. To see and clear what an older runner (or WebDriverAgent) left,
+  connect over USB and run `Scripts/clean-xctest-attachments.sh` (lists only),
+  then add `--delete`.
 
-## Credits & licensing
+## License and credits
 
-LoopCtrl is licensed under the **Apache License, Version 2.0** (see `LICENSE`).
-Versions before 1.32.0 were released under the AGPL-3.0; see `NOTICE.md` for
-why it changed.
-
-This project would not exist without the following work.
+LoopCtrl is licensed under the **Apache License, Version 2.0** (see
+[`LICENSE`](LICENSE)). Versions before 1.32.0 were released under the AGPL-3.0;
+[`NOTICE.md`](NOTICE.md) explains why that changed and lists third-party
+components.
 
 | Project | Used for | License |
 |---|---|---|
-| [jkcoxson/idevice](https://github.com/jkcoxson/idevice) | The Rust library doing all the real protocol work behind `LoopCtrlApp/DDI` — RSD tunnel, lockdownd, image mounter. Built from source as an xcframework by `Scripts/build-idevice.sh`, with one patch adding on-device pairing without its own mDNS advertising. | MIT |
-| [StikDebug](https://github.com/StikDebug/StikDebug) (formerly StikJIT) | **Inspired LoopCtrl's DDI mounting.** Mounting the Developer Disk Image from the device itself, with no privileged entitlement, is StikDebug's idea. `DDIMounter.swift` is an independent implementation against the `idevice` API — no code is copied. | AGPL-3.0 |
-| [StosVPN](https://github.com/SideStore/StosVPN) / [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN) | Provides the local tunnel that makes the device's own `remoted` service routable at `10.7.0.1:49152`, which is what lets an on-device app reach its own lockdownd at all. LocalDevVPN is a maintained fork of StosVPN and is what ships on the App Store. | NOASSERTION — check upstream before reuse |
-| [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage) | Mirror of the personalized DDI components (`BuildManifest.plist`, `Image.dmg`, `Image.dmg.trustcache`). Apple doesn't publish these for direct download; the same files ship inside Xcode, and you can import your own copy instead. Maintained by the pymobiledevice3 author. | See upstream |
-| [WebDriverAgent](https://github.com/appium/WebDriverAgent) | Prior art for the long-lived XCUITest runner: the `distantFuture` run loop, failure-proof test case, and app-activation handling all follow patterns it established (see [How it differs](#how-it-differs-from-webdriveragent)). No code is copied. | Apache-2.0 |
+| [jkcoxson/idevice](https://github.com/jkcoxson/idevice) | The Rust library behind `LoopCtrlApp/DDI`: RSD tunnel, lockdownd, image mounter. Built from source by `Scripts/build-idevice.sh` with one patch for on-device pairing. | MIT |
+| [StikDebug](https://github.com/StikDebug/StikDebug) | Inspired the on-device DDI mounting. `DDIMounter.swift` is an independent implementation against the `idevice` API; no code is copied. | AGPL-3.0 |
+| [StosVPN](https://github.com/SideStore/StosVPN) / [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN) | The local tunnel that makes the device's own debug service reachable at `10.7.0.1`. Invoked as a separate app, not vendored. | NOASSERTION; check upstream |
+| [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage) | Mirror of the personalized DDI components, downloaded at runtime and not redistributed. The same files ship inside Xcode. | See upstream |
+| [WebDriverAgent](https://github.com/appium/WebDriverAgent) | Prior art for the long-lived XCUITest runner. No code is copied. | Apache-2.0 |
 
-### How the pieces fit
+### Why a tunnel app is needed
 
-On iOS 17.4+ the developer services (MobileImageMounter, `com.apple.dvt.*`,
-`testmanagerd`) moved behind **RSD (RemoteServiceDiscovery)** — they are no
-longer plain lockdownd ports. Reaching them from the device itself takes four
-layers:
-
-```
-StosVPN / LocalDevVPN   a route to this device's own lockdownd  (NetworkExtension)
-        ↓
-lockdownd               CoreDeviceProxy → CDTunnel handshake
-        ↓
-idevice (Rust, MIT)     RSD over that tunnel, then image_mounter
-        ↓
-DDIMounter.swift        pairing-file auth → RSD connect → personalized mount
-```
-
-The VPN is needed for the *first* step, not for the tunnel: it is not a real VPN
-at all but a packet reflector. It assigns the device `10.7.0.0`, routes only
-`10.7.0.0/24` (the default route is explicitly excluded, so no real traffic is
-captured), and swaps source/destination addresses so that `10.7.0.1` reflects
-back to the device. That exists because an app cannot reach its own lockdownd on
-`127.0.0.1:62078`; the reflected address makes the connection look ordinary and
-inbound. The RSD tunnel itself is implemented in userspace by `idevice` and needs
-no interface of its own.
-
-The pairing file authenticates the conversation — the same credential Xcode on a
-Mac would use. **It must be in RemotePairing (RP) format**: with an older
-lockdown-format file on iOS 17+, service connections die instantly with EPIPE
-while UDID lookups still appear to succeed, which is a confusing way to fail.
-No privileged entitlement is involved anywhere.
+On iOS 17.4 and later the developer services (image mounter, `testmanagerd`)
+sit behind RSD (RemoteServiceDiscovery), not plain lockdownd ports. An app can't
+reach its own lockdownd on `127.0.0.1:62078`, so LocalDevVPN is used as a packet
+reflector, not as a real VPN: it assigns the device `10.7.0.0`, routes only
+`10.7.0.0/24` (the default route is excluded, so no real traffic is captured)
+and reflects `10.7.0.1` back to the device, which makes the connection look
+ordinary and inbound. The RSD tunnel itself is implemented in userspace by
+`idevice`. Pairing uses the same credential Xcode would, and **must be in
+RemotePairing (RP) format**: with an older lockdown-only file, service
+connections die instantly while UDID lookups still appear to succeed. No
+privileged entitlement is involved anywhere.
