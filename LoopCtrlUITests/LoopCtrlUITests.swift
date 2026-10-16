@@ -596,13 +596,13 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             } else {
                 Self.persistedNearby = false
                 Self.logBuffer.append("🔒 Server started on 127.0.0.1:\(port) (local only)")
-                postStatusNotification(detail: String(format: L10n.t(.localOnlyBody), "127.0.0.1:\(port)"))
+                postStatusNotification(port: port)
             }
             return true
         } catch {
             Self.logBuffer.append("🔴 Failed to start server: \(error)")
             sendNotification(
-                title: L10n.t(.serverFailedTitle),
+                subtitle: String(format: L10n.t(.serverFailedSubtitle), "\(port)"),
                 body: error.localizedDescription
             )
             return false
@@ -610,7 +610,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     }
 
     /// Stop serving. Every deliberate stop comes here: the loopctrl://stop
-    /// URL, the 🛑 action on the status notification, `config{stop_server}`.
+    /// URL, the Stop Service action on the status notification, `config{stop_server}`.
     /// Two-app setup: end the test, as before. All-in-one: drop the listener
     /// and park (see parksWhenStopped). Main thread.
     private func stopService(_ reason: String) {
@@ -628,15 +628,21 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         Self.logBuffer.append("⏸ service stopped — test parked; loopctrl://start (LoopCtrl's Start) restarts it")
     }
 
-    /// Withdraw the "running" notification (its 🛑 action has nothing left to
+    /// Withdraw the "running" notification (its Stop Service action has nothing left to
     /// stop) and post the usual "stopped" one.
     private func announceStopped() {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [Self.serverReadyNotifID])
         center.removeDeliveredNotifications(withIdentifiers: [Self.serverReadyNotifID])
+        sendStoppedNotification()
+    }
+
+    /// "Service stopped". Its one action, Copy Logs, would go unnoticed on a
+    /// notification that otherwise needs nothing, so the body says it is there.
+    private func sendStoppedNotification() {
         sendNotification(
-            title: L10n.t(.serverStoppedTitle),
-            body: L10n.t(.serverStoppedBody) + "\n" + L10n.t(.longPressCopyLogs),
+            subtitle: L10n.t(.serverStoppedSubtitle),
+            body: L10n.t(.longPressCopyLogs),
             category: Self.serverStoppedCategoryID
         )
     }
@@ -912,17 +918,18 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
 
-        // Register auth category with Allow/Deny actions
-        let allowAction = UNNotificationAction(
-            identifier: Self.allowActionID,
-            title: L10n.t(.allow),
-            options: [.authenticationRequired]
-        )
-        let denyAction = UNNotificationAction(
-            identifier: Self.denyActionID,
-            title: L10n.t(.deny),
-            options: [.destructive]
-        )
+        // Every action carries an SF Symbol; identifiers are what the response
+        // handler keys off, so they never change with the presentation.
+        func action(_ id: String, _ title: L10n.Key, _ symbol: String,
+                    _ options: UNNotificationActionOptions = []) -> UNNotificationAction {
+            UNNotificationAction(identifier: id, title: L10n.t(title), options: options,
+                                 icon: UNNotificationActionIcon(systemImageName: symbol))
+        }
+
+        // Pairing request. Allow needs the device unlocked: a locked phone left
+        // on a desk must not hand control to whoever is asking.
+        let allowAction = action(Self.allowActionID, .allow, "checkmark.circle", [.authenticationRequired])
+        let denyAction = action(Self.denyActionID, .deny, "xmark.circle", [.destructive])
         let authCategory = UNNotificationCategory(
             identifier: Self.authCategoryID,
             actions: [allowAction, denyAction],
@@ -930,17 +937,10 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             options: []
         )
 
-        // Register server-ready category with actions
-        let enableRemoteAction = UNNotificationAction(
-            identifier: Self.enableRemoteActionID,
-            title: L10n.t(.enableRemote),
-            options: [.authenticationRequired]
-        )
-        let stopServerAction = UNNotificationAction(
-            identifier: Self.stopServerActionID,
-            title: L10n.t(.stopServer),
-            options: [.destructive, .authenticationRequired]
-        )
+        // Status, local only: Remote Access on + Stop.
+        let enableRemoteAction = action(Self.enableRemoteActionID, .enableRemote, "network", [.authenticationRequired])
+        let stopServerAction = action(Self.stopServerActionID, .stopServer, "stop.circle",
+                                      [.destructive, .authenticationRequired])
         let serverReadyCategory = UNNotificationCategory(
             identifier: Self.serverReadyCategoryID,
             actions: [enableRemoteAction, stopServerAction],
@@ -948,22 +948,12 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             options: []
         )
 
-        // Remote-enabled category: Disable Remote + Stop
-        let disableRemoteAction = UNNotificationAction(
-            identifier: Self.disableRemoteActionID,
-            title: L10n.t(.disableRemote),
-            options: [.authenticationRequired]
-        )
-        let enableNearbyAction = UNNotificationAction(
-            identifier: Self.enableNearbyActionID,
-            title: L10n.t(.enableNearby),
-            options: [.authenticationRequired]
-        )
-        let disableNearbyAction = UNNotificationAction(
-            identifier: Self.disableNearbyActionID,
-            title: L10n.t(.disableNearby),
-            options: [.authenticationRequired]
-        )
+        // Status, remote access on: Remote Access off, Nearby on/off, Stop.
+        let disableRemoteAction = action(Self.disableRemoteActionID, .disableRemote, "lock", [.authenticationRequired])
+        let enableNearbyAction = action(Self.enableNearbyActionID, .enableNearby,
+                                        "dot.radiowaves.left.and.right", [.authenticationRequired])
+        let disableNearbyAction = action(Self.disableNearbyActionID, .disableNearby,
+                                         "antenna.radiowaves.left.and.right.slash", [.authenticationRequired])
         // Remote access on, nearby off: offer to turn nearby on.
         let serverRemoteCategory = UNNotificationCategory(
             identifier: Self.serverRemoteCategoryID,
@@ -979,12 +969,8 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             options: []
         )
 
-        // Stopped category: Copy Logs
-        let copyLogsAction = UNNotificationAction(
-            identifier: Self.copyLogsActionID,
-            title: L10n.t(.copyLogs),
-            options: []
-        )
+        // Stopped: Copy Logs.
+        let copyLogsAction = action(Self.copyLogsActionID, .copyLogs, "doc.on.doc")
         let serverStoppedCategory = UNNotificationCategory(
             identifier: Self.serverStoppedCategoryID,
             actions: [copyLogsAction],
@@ -1143,11 +1129,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                     return
                 }
                 self.keepRunning = false
-                self.sendNotification(
-                    title: L10n.t(.serverStoppedTitle),
-                    body: L10n.t(.serverStoppedBody) + "\n" + L10n.t(.longPressCopyLogs),
-                    category: Self.serverStoppedCategoryID
-                )
+                self.sendStoppedNotification()
             }
         }
     }
@@ -1343,7 +1325,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             DispatchQueue.main.async {
                 guard let self = self, let srv = srv, self.server === srv else { return }
                 Self.logBuffer.append("📡 Nearby status: \(status.rawValue)")
-                self.postStatusNotification(detail: self.addressLines(port: srv.port), silent: true)
+                self.postStatusNotification(port: srv.port, silent: true)
                 if status == .denied {
                     // Also catches access revoked while running; the re-check
                     // it starts clears it again if that was something else.
@@ -1661,7 +1643,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                 let port = UInt16(server?.port ?? Self.persistedPort)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     guard let self = self else { return }
-                    self.postStatusNotification(detail: self.addressLines(port: port))
+                    self.postStatusNotification(port: port)
                 }
             }
         }
@@ -1680,8 +1662,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                     try newServer.start()
                     if self.remoteAccessEnabled && self.nearbyEnabled { newServer.startNearby() }
                     Self.logBuffer.append("⚙️ Config applied, server restarted on port \(port)")
-                    let detail = self.remoteAccessEnabled ? self.addressLines(port: port) : String(format: L10n.t(.localOnlyBody), "127.0.0.1:\(port)")
-                    self.postStatusNotification(detail: detail)
+                    self.postStatusNotification(port: port)
                 } catch {
                     Self.logBuffer.append("🔴 Config restart failed: \(error)")
                 }
@@ -1967,11 +1948,23 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     /// delivery time, which is what floats it back to the top.
     private static let serverReadyNotifID = "loopctrl.server.ready"
 
-    private func sendNotification(title: String, body: String, category: String? = nil,
+    /// Title shared by the service's notifications; what happened goes in the
+    /// subtitle. In the two-app build they come from the runner, whose own name
+    /// iOS shows above them, so the title is what says they are LoopCtrl's.
+    private static let notificationTitle = "LoopCtrl"
+
+    /// Notification Centre groups by thread: service status and failures in
+    /// one stack, pairing requests (which need an answer) in their own.
+    private static let statusThreadID = "loopctrl.status"
+    private static let pairingThreadID = "loopctrl.pairing"
+
+    private func sendNotification(subtitle: String, body: String, category: String? = nil,
                                   identifier: String? = nil, silent: Bool = false) {
         let content = UNMutableNotificationContent()
-        content.title = title
+        content.title = Self.notificationTitle
+        content.subtitle = subtitle
         content.body = body
+        content.threadIdentifier = Self.statusThreadID
         // Silent refreshes go in the list WITHOUT a banner: .passive is
         // documented as "Added to the notification list; does not light up
         // screen or play sound". That matters more than the sound — a banner
@@ -2040,7 +2033,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             DispatchQueue.main.async {
                 guard let self = self, self.remoteAccessEnabled else { return }
                 self.server?.recheckNearby()
-                let signature = self.statusMarker + "|" + (self.lanAddress() ?? "-")
+                let signature = self.statusLines.joined(separator: "/") + "|" + (self.lanAddress() ?? "-")
                 guard signature != self.lastNetworkSignature else { return }
                 let first = self.lastNetworkSignature.isEmpty
                 self.lastNetworkSignature = signature
@@ -2053,37 +2046,35 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
 
     private func refreshStatusNotification() {
         // Parked (all-in-one, service stopped): nothing to advertise.
-        guard server != nil else { return }
+        guard let port = server?.port else { return }
         let sessions = AuthManager.shared.activeSessions.count
-        let addr = remoteAccessEnabled ? getDeviceAddress() : "127.0.0.1"
         let mins = Int(ProcessInfo.processInfo.systemUptime - Self.serverStartedAt) / 60
         let human = mins < 60 ? "\(mins)m" : "\(mins / 60)h\(mins % 60)m"
         postStatusNotification(
-            detail: "\(addr):\(server?.port ?? Self.persistedPort) · \(sessions) client\(sessions == 1 ? "" : "s") · up \(human)",
+            port: port,
+            footer: String(format: L10n.t(.statusUptime), sessions, human),
             silent: true
         )
     }
 
     // MARK: - Status notification
 
-    /// The one reachability marker that applies right now: local only; remote
-    /// with or without a LAN address; or, while nearby discovery is on, its
-    /// actual state (discoverable, starting, or what it is waiting for).
-    private var statusMarker: String {
-        guard remoteAccessEnabled else { return L10n.t(.statusLocal) }
-        // While nearby discovery is switched on, its marker says whether it
-        // actually works and, if not, what is missing — the menu already shows
-        // that it is on, so falling back to the LAN marker would contradict it.
+    /// Who can connect right now, then, while nearby discovery is switched on,
+    /// whether it actually works and, if not, what is missing — the menu already
+    /// shows that it is on, so saying nothing would contradict it.
+    private var statusLines: [String] {
+        guard remoteAccessEnabled else { return [L10n.t(.statusLocal)] }
+        var lines = [lanAddress() != nil ? L10n.t(.statusLAN) : L10n.t(.statusNoLAN)]
         if nearbyEnabled {
             switch server?.nearbyStatus ?? .off {
-            case .advertising: return L10n.t(.statusNearby)
-            case .needsWiFi:   return L10n.t(.nearbyNeedsWiFi)
-            case .denied:      return L10n.t(.nearbyNeedsPermission)
-            case .failed:      return L10n.t(.nearbyNotReady)
-            case .starting, .off: return L10n.t(.nearbyStarting)
+            case .advertising: lines.append(String(format: L10n.t(.statusNearby), NearbyIdentity.name))
+            case .needsWiFi:   lines.append(L10n.t(.nearbyNeedsWiFi))
+            case .denied:      lines.append(L10n.t(.nearbyNeedsPermission))
+            case .failed:      lines.append(L10n.t(.nearbyNotReady))
+            case .starting, .off: lines.append(L10n.t(.nearbyStarting))
             }
         }
-        return lanAddress() != nil ? L10n.t(.statusLAN) : L10n.t(.statusNoLAN)
+        return lines
     }
 
     /// Category, and so the long-press menu, for the current state.
@@ -2092,17 +2083,22 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         return nearbyEnabled ? Self.serverNearbyCategoryID : Self.serverRemoteCategoryID
     }
 
-    /// Post (or replace) the status notification: marker line, detail, menu hint.
-    /// While advertised nearby, the name nearby clients see is listed too.
-    private func postStatusNotification(title: String = L10n.t(.serverReadyTitle), detail: String,
+    /// Post (or replace) the status notification.
+    ///
+    /// Subtitle: "Running · <address>", the LAN address while remote access is
+    /// on and there is one, else loopback. Body: `note` (what just changed, if
+    /// anything), who can connect, the nearby state, any further LAN addresses,
+    /// then `footer`.
+    private func postStatusNotification(port: UInt16, note: String? = nil, footer: String? = nil,
                                         silent: Bool = false) {
-        var lines = [statusMarker]
-        if remoteAccessEnabled, server?.isNearbyAdvertising ?? false {
-            lines.append("“\(NearbyIdentity.name)”")
-        }
-        lines.append(detail)
-        lines.append(L10n.t(remoteAccessEnabled ? .longPressNearbyOrStop : .longPressRemoteOrStop))
-        sendNotification(title: title, body: lines.joined(separator: "\n"), category: statusCategory,
+        let host = remoteAccessEnabled ? getDeviceAddress() : "127.0.0.1"
+        var lines: [String] = []
+        if let note { lines.append(note) }
+        lines += statusLines
+        if remoteAccessEnabled { lines += otherAddressLines(port: port) }
+        if let footer { lines.append(footer) }
+        sendNotification(subtitle: String(format: L10n.t(.statusRunning), "\(host):\(port)"),
+                         body: lines.joined(separator: "\n"), category: statusCategory,
                          identifier: Self.serverReadyNotifID, silent: silent)
     }
 
@@ -2120,7 +2116,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         // posts again when it does. Refresh now so the menu flips immediately.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self else { return }
-            self.postStatusNotification(detail: self.addressLines(port: self.server?.port ?? Self.persistedPort))
+            self.postStatusNotification(port: self.server?.port ?? Self.persistedPort)
         }
     }
 
@@ -2168,9 +2164,8 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             // Clear any stale failure notice from a previous Wi-Fi session.
             reportedRemoteFailure = false
             clearRemoteFailedNotification()
-            postStatusNotification(
-                detail: addressLines(port: server?.port ?? Self.persistedPort) + " — " + L10n.t(.onDeviceOnlySuffix)
-            )
+            // The status lines say "Not on Wi-Fi · only this device can connect".
+            postStatusNotification(port: server?.port ?? Self.persistedPort)
         }
     }
 
@@ -2189,24 +2184,27 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         do {
             try newServer.start()
             Self.logBuffer.append("🔒 Remote access disabled, local only")
-            postStatusNotification(title: L10n.t(.remoteDisabledTitle), detail: String(format: L10n.t(.remoteDisabledBody), "127.0.0.1:\(newServer.port)"))
+            postStatusNotification(port: newServer.port, note: L10n.t(.remoteDisabledNote))
         } catch {
             Self.logBuffer.append("🔴 Failed to disable remote access: \(error)")
         }
     }
 
-    private func sendAuthNotification(clientName: String, requestID: String, nearby: Bool, fingerprint: String?) {
+    /// "New connection request", subtitle "“name” · LAN / nearby / this device",
+    /// body the key fingerprint first — a banner truncates the body, and the key
+    /// is what to check before allowing.
+    private func sendAuthNotification(clientName: String, requestID: String, nearby: Bool, local: Bool,
+                                      fingerprint: String?) {
         let content = UNMutableNotificationContent()
         content.title = L10n.t(.authRequestTitle)
-        var lines = String(format: L10n.t(nearby ? .authRequestNearbyBody : .authRequestBody), clientName)
-            .components(separatedBy: "\n")
-        // Second line, ahead of the long-press hint: a banner shows only the
-        // first few lines, and the key is what to check before allowing.
-        if let fingerprint {
-            lines.insert(String(format: L10n.t(.authKeyLine), fingerprint), at: min(1, lines.count))
-        }
+        let source: L10n.Key = nearby ? .authFromNearby : (local ? .authFromLocal : .authFromLAN)
+        content.subtitle = String(format: L10n.t(source), clientName)
+        var lines: [String] = []
+        if let fingerprint { lines.append(String(format: L10n.t(.authKeyLine), fingerprint)) }
+        lines.append(L10n.t(.authRequestBody))
         content.body = lines.joined(separator: "\n")
         content.sound = .default
+        content.threadIdentifier = Self.pairingThreadID
         content.categoryIdentifier = Self.authCategoryID
 
         let request = UNNotificationRequest(
@@ -2288,19 +2286,12 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         allReachableAddresses().first?.address
     }
 
-    /// Address lines for a notification body: one `http://host:port` per
-    /// interface, labelled. Falls back to just the primary address when there is
-    /// only one, so the common single-Wi-Fi case stays terse.
-    private func addressLines(port: UInt16) -> String {
-        let all = allReachableAddresses()
-        // No LAN: only this device (and a USB-connected computer) can connect.
-        // Never show a tunnel or cellular address in its place.
-        guard !all.isEmpty else { return "127.0.0.1:\(port)" }
-        // One address needs no label; several do, so you can tell which network
-        // each belongs to.
-        if all.count == 1 { return "\(all[0].address):\(port)" }
-        return all.map { "\($0.label): http://\($0.address):\(port)" }
-            .joined(separator: "\n")
+    /// LAN addresses after the first, one labelled line each, for the status
+    /// body (the first is in the subtitle). Usually none: the common single
+    /// Wi-Fi case stays terse. With no LAN there are none either — never a
+    /// tunnel or cellular address in their place.
+    private func otherAddressLines(port: UInt16) -> [String] {
+        allReachableAddresses().dropFirst().map { "\($0.label) \($0.address):\(port)" }
     }
 
     /// The single address for places that need exactly one: the LAN address,
@@ -2355,7 +2346,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                 self.selfWokeForCurrentOutage = false
                 self.clearRemoteFailedNotification()
                 if announceSuccess || recovering {
-                    self.postStatusNotification(detail: self.addressLines(port: portNum))
+                    self.postStatusNotification(port: portNum)
                 }
             } else {
                 Self.logBuffer.append("🔴 Remote reachability FAILED on \(address):\(portNum) — likely Local Network permission")
@@ -2364,8 +2355,8 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                 if !wasFailed {
                     self.reportedRemoteFailure = true
                     self.sendNotification(
-                        title: L10n.t(.remoteFailedTitle),
-                        body: String(format: L10n.t(.remoteFailedBody), "\(address):\(portNum)"),
+                        subtitle: String(format: L10n.t(.remoteFailedSubtitle), "\(address):\(portNum)"),
+                        body: L10n.t(.remoteFailedBody),
                         identifier: Self.remoteFailedNotifID
                     )
                 }
@@ -2409,13 +2400,20 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
 extension LoopCtrlUITests: AuthManagerDelegate {
     func authManager(_ manager: AuthManager, didReceiveAuthRequest clientName: String, requestID: String,
                      nearby: Bool, fingerprint: String?, completion: @escaping (Bool) -> Void) {
+        authManager(manager, didReceiveAuthRequest: clientName, requestID: requestID,
+                    nearby: nearby, local: false, fingerprint: fingerprint, completion: completion)
+    }
+
+    func authManager(_ manager: AuthManager, didReceiveAuthRequest clientName: String, requestID: String,
+                     nearby: Bool, local: Bool, fingerprint: String?, completion: @escaping (Bool) -> Void) {
         authLock.lock()
         pendingAuthCompletions[requestID] = completion
         currentAuthRequestID = requestID
         authLock.unlock()
 
         Self.logBuffer.append("🔐 Auth request from \"\(clientName)\"\(nearby ? " (nearby device)" : "")")
-        sendAuthNotification(clientName: clientName, requestID: requestID, nearby: nearby, fingerprint: fingerprint)
+        sendAuthNotification(clientName: clientName, requestID: requestID, nearby: nearby, local: local,
+                             fingerprint: fingerprint)
     }
 
     func authManager(_ manager: AuthManager, didExpireAuthRequest clientName: String, requestID: String) {

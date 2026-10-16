@@ -14,8 +14,25 @@ protocol AuthManagerDelegate: AnyObject {
     func authManager(_ manager: AuthManager, didReceiveAuthRequest clientName: String,
                      requestID: String, nearby: Bool, fingerprint: String?,
                      completion: @escaping (Bool) -> Void)
+    /// The same, also saying whether the request came over loopback (this
+    /// device, or a computer over USB), so the prompt can name where it came
+    /// from. This is the one AuthManager calls; by default it forwards to the
+    /// variant above, so a delegate that has no use for `local` need not
+    /// implement it.
+    func authManager(_ manager: AuthManager, didReceiveAuthRequest clientName: String,
+                     requestID: String, nearby: Bool, local: Bool, fingerprint: String?,
+                     completion: @escaping (Bool) -> Void)
     /// The request timed out before the user answered; withdraw its prompt.
     func authManager(_ manager: AuthManager, didExpireAuthRequest clientName: String, requestID: String)
+}
+
+extension AuthManagerDelegate {
+    func authManager(_ manager: AuthManager, didReceiveAuthRequest clientName: String,
+                     requestID: String, nearby: Bool, local: Bool, fingerprint: String?,
+                     completion: @escaping (Bool) -> Void) {
+        authManager(manager, didReceiveAuthRequest: clientName, requestID: requestID,
+                    nearby: nearby, fingerprint: fingerprint, completion: completion)
+    }
 }
 
 /// Outcome of a pairing request.
@@ -185,7 +202,7 @@ class AuthManager {
             return true
         }
         delegate.authManager(self, didReceiveAuthRequest: clientName, requestID: requestID,
-                             nearby: nearby, fingerprint: fingerprint) { [weak self] approved in
+                             nearby: nearby, local: local, fingerprint: fingerprint) { [weak self] approved in
             guard let self = self, claim() else { return }
             self.finishPairing(clientName: clientName, approved: approved, local: local, completion: completion)
         }
