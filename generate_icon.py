@@ -1,99 +1,50 @@
 #!/usr/bin/env python3
-"""Generate LoopCtrl app icon with proper font rendering."""
+"""Render the LoopCtrl app icon from AppIcon.svg.
 
-from PIL import Image, ImageDraw, ImageFont
+AppIcon.svg is the source art: a loop-arrow (the phone looping back to itself
+over 10.7.0.1) around a pointer tapping the screen (the phone controlling
+itself). It is a full-bleed square; iOS applies the corner mask.
 
+Rasterises with rsvg-convert (brew install librsvg), falling back to cairosvg,
+then flattens to RGB with Pillow since App Store icons must not carry alpha.
+Afterwards regenerate the runner icons:
+
+    python3 generate_icon.py && python3 Scripts/make-runner-icons.py
+"""
+import io
+import shutil
+import subprocess
+from pathlib import Path
+
+from PIL import Image
+
+REPO = Path(__file__).resolve().parent
+SOURCE = REPO / "AppIcon.svg"
+OUTPUT = REPO / "LoopCtrlApp/Assets.xcassets/AppIcon.appiconset/icon_1024x1024.png"
 SIZE = 1024
-CENTER = SIZE // 2
 
-img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-draw = ImageDraw.Draw(img)
 
-# Background gradient
-for y in range(SIZE):
-    for x in range(SIZE):
-        t = (x + y) / (2 * SIZE)
-        r = int(30 * (1 - t) + 13 * t)
-        g = int(34 * (1 - t) + 15 * t)
-        b = int(53 * (1 - t) + 26 * t)
-        img.putpixel((x, y), (r, g, b, 255))
+def render_svg(path: Path, size: int) -> bytes:
+    rsvg = shutil.which("rsvg-convert")
+    if rsvg:
+        return subprocess.run(
+            [rsvg, "-w", str(size), "-h", str(size), "-f", "png", str(path)],
+            check=True, capture_output=True,
+        ).stdout
+    try:
+        import cairosvg
+    except ImportError:
+        raise SystemExit("Need rsvg-convert (brew install librsvg) or cairosvg (pip install cairosvg)")
+    return cairosvg.svg2png(url=str(path), output_width=size, output_height=size)
 
-# Load fonts
-font_i = ImageFont.truetype("/System/Library/Fonts/SF-Pro-Rounded-Bold.otf", 300)
-font_ctrl = ImageFont.truetype("/System/Library/Fonts/SF-Pro-Rounded-Bold.otf", 270)
 
-# Measure "i" and "CTRL" actual rendered bounds
-i_bbox = font_i.getbbox("i")
-ctrl_bbox = font_ctrl.getbbox("CTRL")
+def main() -> None:
+    rgba = Image.open(io.BytesIO(render_svg(SOURCE, SIZE))).convert("RGBA")
+    flat = Image.new("RGB", rgba.size, rgba.getpixel((0, 0))[:3])
+    flat.paste(rgba, mask=rgba.split()[3])
+    flat.save(OUTPUT, "PNG", optimize=True)
+    print(f"✅ Icon saved to {OUTPUT.relative_to(REPO)}")
 
-i_w = i_bbox[2] - i_bbox[0]
-i_h = i_bbox[3] - i_bbox[1]
-ctrl_w = ctrl_bbox[2] - ctrl_bbox[0]
-ctrl_h = ctrl_bbox[3] - ctrl_bbox[1]
 
-# Total width and max height for centering
-spacing = 8
-total_w = i_w + spacing + ctrl_w
-max_h = max(i_h, ctrl_h)
-
-# True center position
-text_left = (SIZE - total_w) // 2
-text_top_center = (SIZE - max_h) // 2
-
-# "i" position — align baseline with CTRL
-i_x = text_left - i_bbox[0]
-i_y = text_top_center - i_bbox[1]
-
-# "CTRL" position — align vertically by baseline
-ctrl_x = text_left + i_w + spacing - ctrl_bbox[0]
-# Align baselines: "i" bottom = i_y + i_bbox[3], "CTRL" bottom = ctrl_y + ctrl_bbox[3]
-ctrl_y = (i_y + i_bbox[3]) - ctrl_bbox[3]
-
-# Orbit center = visual center of the text block
-orbit_cx = text_left + total_w // 2
-orbit_cy = text_top_center + max_h // 2
-
-def draw_arc(cx, cy, radius, start_angle, end_angle, color, width, alpha=255):
-    overlay = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    odraw = ImageDraw.Draw(overlay)
-    bbox = [cx - radius, cy - radius, cx + radius, cy + radius]
-    odraw.arc(bbox, start_angle, end_angle, fill=color + (alpha,), width=width)
-    img.alpha_composite(overlay)
-
-# Orbits centered on text
-draw_arc(orbit_cx, orbit_cy, 270, -160, 200, (0, 153, 255), 7, 90)
-draw_arc(orbit_cx, orbit_cy, 330, -150, 210, (0, 120, 230), 5, 45)
-draw_arc(orbit_cx, orbit_cy, 390, -140, 220, (80, 60, 200), 3, 22)
-
-# Draw "i" in cyan
-i_overlay = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-ImageDraw.Draw(i_overlay).text((i_x, i_y), "i", font=font_i, fill=(0, 200, 255, 255))
-img.alpha_composite(i_overlay)
-
-# Draw "CTRL" in white
-ctrl_overlay = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-ImageDraw.Draw(ctrl_overlay).text((ctrl_x, ctrl_y), "CTRL", font=font_ctrl, fill=(255, 255, 255, 255))
-img.alpha_composite(ctrl_overlay)
-
-# "i" dot glow — find rendered dot position
-i_dot_cx = i_x + i_bbox[0] + i_w // 2
-i_dot_cy = i_y + i_bbox[1] + 20  # top of "i" glyph
-
-for r in range(45, 0, -1):
-    alpha = int(60 * (1 - r / 45))
-    glow = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse(
-        [i_dot_cx - r, i_dot_cy - r, i_dot_cx + r, i_dot_cy + r],
-        fill=(0, 229, 255, alpha)
-    )
-    img.alpha_composite(glow)
-
-# Particles
-for px, py, pr, pc in [(820, 340, 5, (0, 204, 255, 100)), (190, 690, 4, (123, 66, 246, 90)), (765, 725, 4, (0, 136, 255, 65))]:
-    p = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    ImageDraw.Draw(p).ellipse([px - pr, py - pr, px + pr, py + pr], fill=pc)
-    img.alpha_composite(p)
-
-output = "LoopCtrlApp/Assets.xcassets/AppIcon.appiconset/icon_1024x1024.png"
-img.save(output, "PNG")
-print(f"✅ Icon saved to {output}")
+if __name__ == "__main__":
+    main()
