@@ -82,11 +82,12 @@ class AppState: ObservableObject {
     }
 
     func updateServerAddress() {
-        let ip = allowRemoteAccess ? (getWiFiAddress() ?? "127.0.0.1") : "127.0.0.1"
+        let ip = allowRemoteAccess ? (Self.wifiAddress() ?? "127.0.0.1") : "127.0.0.1"
         serverAddress = "\(ip):\(serverPort)"
     }
 
-    private func getWiFiAddress() -> String? {
+    /// This device's Wi-Fi (en0) IPv4 address; nil off Wi-Fi.
+    static func wifiAddress() -> String? {
         var address: String?
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
 

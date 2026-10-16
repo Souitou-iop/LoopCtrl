@@ -14,6 +14,8 @@ extension L10n {
         case serviceLabel
         case mountDiskImage, setupRow
         case runnerOpenFailed, runnerStartFailed
+        case localAddress, lanAddress, noWiFi, copied
+        case remoteAccess, remoteAccessOnFooter, remoteAccessOffFooter, remoteAccessApproveFooter
     }
 
     static func ui(_ key: UI) -> String {
@@ -23,6 +25,20 @@ extension L10n {
 
     private static let uiTable: [UI: [Lang: String]] = [
         .settingsTitle: [.en: "Settings", .zhHans: "设置", .zhHant: "設定"],
+        .localAddress: [.en: "This device", .zhHans: "本机", .zhHant: "本機"],
+        .lanAddress: [.en: "Wi-Fi", .zhHans: "局域网", .zhHant: "區域網路"],
+        .noWiFi: [.en: "Not on Wi-Fi", .zhHans: "未连接 Wi-Fi", .zhHant: "未連接 Wi-Fi"],
+        .copied: [.en: "Copied", .zhHans: "已复制", .zhHant: "已複製"],
+        .remoteAccess: [.en: "Remote Access", .zhHans: "远程访问", .zhHant: "遠端存取"],
+        .remoteAccessOnFooter: [.en: "Devices on the same Wi-Fi can reach the address above; each one still has to be approved before it can pair.",
+                                .zhHans: "同一 Wi-Fi 下的设备可以访问上面的地址，每台设备仍需你批准才能配对。",
+                                .zhHant: "同一 Wi-Fi 下的裝置可以存取上面的位址，每台裝置仍需你批准才能配對。"],
+        .remoteAccessOffFooter: [.en: "Only apps on this iPhone can connect.",
+                                 .zhHans: "只有这台 iPhone 上的 App 可以连接。",
+                                 .zhHant: "只有這台 iPhone 上的 App 可以連線。"],
+        .remoteAccessApproveFooter: [.en: "The first time, allow LoopCtrl in the prompt that appears so it can change this setting.",
+                                     .zhHans: "首次使用时，请在弹出的提示中允许 LoopCtrl，才能更改此设置。",
+                                     .zhHant: "首次使用時，請在跳出的提示中允許 LoopCtrl，才能變更此設定。"],
         .pairingLabel: [.en: "Pairing", .zhHans: "配对", .zhHant: "配對"],
         .paired: [.en: "Paired", .zhHans: "已配对", .zhHant: "已配對"],
         .notPaired: [.en: "Not paired", .zhHans: "未配对", .zhHant: "未配對"],

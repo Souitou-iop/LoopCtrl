@@ -47,6 +47,9 @@ struct SettingsView: View {
 
                     VStack(spacing: 20) {
                         statusCard
+                        if runner.isRunning {
+                            connectionCard
+                        }
                         primaryButton
                         hint
                     }
@@ -60,6 +63,7 @@ struct SettingsView: View {
         }
         .animation(.default, value: runner.state)
         .animation(.default, value: ddi.isMounted)
+        .animation(.default, value: runnerAdmin.visibility)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
@@ -135,11 +139,88 @@ struct SettingsView: View {
                       value: L10n.t(.checking), tone: .busy)
         case .running:
             StatusRow(icon: "bolt.horizontal", title: L10n.ui(.serviceLabel),
-                      value: L10n.t(.running), tone: .good,
-                      detail: "127.0.0.1:\(appState.serverPort)")
+                      value: L10n.t(.running), tone: .good)
         case .stopped:
             StatusRow(icon: "bolt.horizontal", title: L10n.ui(.serviceLabel),
                       value: L10n.t(.stopped), tone: .idle)
+        }
+    }
+
+    // MARK: - Connection
+
+    private var remoteOn: Bool {
+        runnerAdmin.visibility.map { $0 != .local } ?? false
+    }
+
+    /// Where clients reach the server, and the switch that opens it to the LAN.
+    private var connectionCard: some View {
+        VStack(spacing: 8) {
+            VStack(spacing: 0) {
+                AddressRow(title: L10n.ui(.localAddress),
+                           address: "127.0.0.1:\(appState.serverPort)")
+                if remoteOn {
+                    Divider().padding(.leading, 16)
+                    if let ip = AppState.wifiAddress() {
+                        AddressRow(title: L10n.ui(.lanAddress),
+                                   address: "\(ip):\(appState.serverPort)")
+                    } else {
+                        AddressRow(title: L10n.ui(.lanAddress), address: nil)
+                    }
+                }
+                Divider().padding(.leading, 16)
+                HStack {
+                    Text(L10n.ui(.remoteAccess))
+                    Spacer()
+                    if runnerAdmin.pairing || runnerAdmin.changingVisibility {
+                        ProgressView()
+                    } else {
+                        Toggle("", isOn: Binding(
+                            get: { remoteOn },
+                            set: { on in Task { await setRemoteAccess(on) } }))
+                            .labelsHidden()
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            }
+            .padding(.vertical, 4)
+            .card()
+
+            Text(remoteFooter)
+                .font(.footnote)
+                .foregroundColor(runnerAdmin.notice == nil ? .secondary : .orange)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        // Remote access can also be switched from the runner's notification,
+        // so keep it current while shown. Pairing is only ever started by the
+        // switch itself.
+        .task(id: runnerAdmin.isPaired) {
+            while !Task.isCancelled && runnerAdmin.isPaired {
+                await runnerAdmin.loadClients()
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+        }
+    }
+
+    private var remoteFooter: String {
+        if let notice = runnerAdmin.notice { return notice }
+        if !runnerAdmin.isPaired || runnerAdmin.pairing { return L10n.ui(.remoteAccessApproveFooter) }
+        return remoteOn ? L10n.ui(.remoteAccessOnFooter) : L10n.ui(.remoteAccessOffFooter)
+    }
+
+    /// Changing who can reach the runner is a `config` call, which needs this
+    /// app paired with it: the first time, that asks for the user's approval.
+    private func setRemoteAccess(_ on: Bool) async {
+        if !runnerAdmin.isPaired {
+            await runnerAdmin.connect()
+            guard runnerAdmin.isPaired else { return }
+        }
+        if on {
+            // Keep nearby discovery if it was already on.
+            if !remoteOn { await runnerAdmin.setVisibility(.lan) }
+        } else {
+            await runnerAdmin.setVisibility(.local)
         }
     }
 
@@ -257,6 +338,45 @@ struct SettingsView: View {
             // IPAs ship separately, so having this app is no guarantee.
             launchFailed = !ok
         }
+    }
+}
+
+/// An address a client connects to, with a copy button; nil when there is none.
+private struct AddressRow: View {
+    let title: String
+    let address: String?
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title)
+            Spacer(minLength: 8)
+            if let address {
+                Text(verbatim: address)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Button {
+                    UIPasteboard.general.string = address
+                    copied = true
+                    Task {
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        copied = false
+                    }
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .frame(width: 20)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(copied ? L10n.ui(.copied) : address)
+            } else {
+                Text(L10n.ui(.noWiFi)).foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 }
 
