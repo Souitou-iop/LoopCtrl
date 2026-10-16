@@ -1,16 +1,24 @@
 import SwiftUI
 import UIKit
 
-/// Shown in place of runner data until this app holds a key: explains the
-/// one-time approval and starts it.
-private struct RunnerConnectSection: View {
+// MARK: - Connecting
+
+/// List rows shown in place of runner data until this app holds a key: what
+/// the one-time approval is for, and the button that asks for it.
+struct RunnerConnectRows: View {
     @EnvironmentObject var admin: RunnerAdmin
 
     var body: some View {
-        Section {
-            Text(L10n.t(.connectRunnerBody))
-                .font(.callout)
-                .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            Label {
+                Text(L10n.t(.connectRunnerBody))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "person.badge.key")
+                    .foregroundColor(.accentColor)
+            }
             Button {
                 Task { await admin.connect() }
             } label: {
@@ -19,195 +27,28 @@ private struct RunnerConnectSection: View {
                         ProgressView().controlSize(.small)
                         Text(L10n.t(.waitingApproval))
                     }
+                    .frame(maxWidth: .infinity)
                 } else {
                     Label(L10n.t(.connectButton), systemImage: "link")
+                        .frame(maxWidth: .infinity)
                 }
             }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
             .disabled(admin.pairing)
-        } header: {
-            Text(L10n.t(.connectRunnerTitle))
-        } footer: {
-            NoticeText()
+            if let notice = admin.notice {
+                NoticeLabel(text: notice)
+            }
         }
+        .padding(.vertical, 6)
     }
 }
 
-/// The last error, if any.
-private struct NoticeText: View {
-    @EnvironmentObject var admin: RunnerAdmin
+// MARK: - Clients
 
-    var body: some View {
-        if let notice = admin.notice {
-            Text(notice).foregroundColor(.orange)
-        }
-    }
-}
-
-/// "Visibility: 🟢 This device only · safe" and the like; tap to change it.
-struct RunnerVisibilityRow: View {
-    @EnvironmentObject var admin: RunnerAdmin
-    let visibility: RunnerAdmin.Visibility
-
-    private static let choices: [RunnerAdmin.Visibility] = [.local, .lan, .lanAndNearby]
-
-    var body: some View {
-        Menu {
-            ForEach(Self.choices, id: \.self) { choice in
-                Button {
-                    Task { await admin.setVisibility(choice) }
-                } label: {
-                    if choice == visibility {
-                        Label(Self.text(choice), systemImage: "checkmark")
-                    } else {
-                        Text(Self.text(choice))
-                    }
-                }
-            }
-        } label: {
-            HStack {
-                Text(L10n.t(.visibilityLabel))
-                    .foregroundColor(.primary)
-                Spacer()
-                if admin.changingVisibility {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Text(visibility == .lanAndNearby && admin.nearbyPending
-                         ? L10n.t(.visibilityNearbyPending) : Self.text(visibility))
-                        .foregroundColor(.secondary)
-                }
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-        .disabled(admin.changingVisibility)
-    }
-
-    /// 🟢 only for loopback; anything another device can reach is 🟡.
-    static func text(_ visibility: RunnerAdmin.Visibility) -> String {
-        switch visibility {
-        case .local: return L10n.t(.visibilityLocal)
-        case .lan: return L10n.t(.visibilityLAN)
-        case .lanAndNearby: return L10n.t(.visibilityLANNearby)
-        }
-    }
-}
-
-// MARK: - Authorized clients
-
-/// Every client holding a key to the runner, with revocation.
-struct RunnerClientsView: View {
-    @EnvironmentObject var admin: RunnerAdmin
-    @State private var pendingRevoke: RunnerAdmin.Client?
-    @State private var confirmRevokeOthers = false
-    @State private var confirmDisconnect = false
-
-    var body: some View {
-        List {
-            if admin.isPaired {
-                if let visibility = admin.visibility {
-                    Section {
-                        RunnerVisibilityRow(visibility: visibility)
-                    }
-                }
-                clientsSection
-                actionsSection
-            } else {
-                RunnerConnectSection()
-            }
-        }
-        .navigationTitle(L10n.t(.authorizedClients))
-        .navigationBarTitleDisplayMode(.inline)
-        .refreshable { await admin.loadClients() }
-        // Alerts, not confirmation dialogs: newer iOS draws a dialog as a
-        // popover pointing at its anchor, which from a list points at the
-        // wrong row — and one attached to a row is not shown after a swipe.
-        .alert(String(format: L10n.t(.revokeConfirmTitle), pendingRevoke?.name ?? ""),
-               isPresented: Binding(get: { pendingRevoke != nil }, set: { if !$0 { pendingRevoke = nil } }),
-               presenting: pendingRevoke) { client in
-            Button(L10n.t(.cancelButton), role: .cancel) {}
-            Button(L10n.t(.revokeButton), role: .destructive) {
-                Task { await admin.revoke(client.id) }
-            }
-        } message: { _ in
-            Text(L10n.t(.revokeConfirmBody))
-        }
-        .alert(String(format: L10n.t(.revokeOthersConfirm), admin.otherClients.count),
-               isPresented: $confirmRevokeOthers) {
-            Button(L10n.t(.cancelButton), role: .cancel) {}
-            Button(L10n.t(.revokeOthers), role: .destructive) {
-                Task { await admin.revokeOthers() }
-            }
-        } message: {
-            Text(L10n.t(.revokeConfirmBody))
-        }
-        .alert(L10n.t(.disconnectThisApp), isPresented: $confirmDisconnect) {
-            Button(L10n.t(.cancelButton), role: .cancel) {}
-            Button(L10n.t(.disconnectThisApp), role: .destructive) {
-                Task { await admin.disconnect() }
-            }
-        } message: {
-            Text(L10n.t(.disconnectConfirmBody))
-        }
-        // A new client can pair while this screen is open; keep it current.
-        .task(id: admin.isPaired) {
-            while !Task.isCancelled && admin.isPaired {
-                await admin.loadClients()
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-            }
-        }
-    }
-
-    private var clientsSection: some View {
-        Section {
-            if !admin.clientsLoaded && admin.notice == nil {
-                HStack { Spacer(); ProgressView(); Spacer() }
-            } else if admin.clients.isEmpty {
-                Text(L10n.t(.noClients)).foregroundColor(.secondary)
-            }
-            ForEach(admin.clients) { client in
-                ClientRow(client: client, isSelf: client.id == admin.ownSessionID)
-                    .swipeActions {
-                        if client.id != admin.ownSessionID {
-                            Button(L10n.t(.revokeButton), role: .destructive) { pendingRevoke = client }
-                        }
-                    }
-                    .contextMenu {
-                        if client.id != admin.ownSessionID {
-                            Button(role: .destructive) { pendingRevoke = client } label: {
-                                Label(L10n.t(.revokeButton), systemImage: "xmark.circle")
-                            }
-                        }
-                    }
-
-            }
-        } header: {
-            Text(L10n.t(.authorizedClients))
-        } footer: {
-            VStack(alignment: .leading, spacing: 4) {
-                NoticeText()
-                Text(L10n.t(.clientsFooter))
-            }
-        }
-    }
-
-    private var actionsSection: some View {
-        Section {
-            if !admin.otherClients.isEmpty {
-                Button(role: .destructive) { confirmRevokeOthers = true } label: {
-                    Label(L10n.t(.revokeOthers), systemImage: "person.crop.circle.badge.xmark")
-                }
-
-            }
-            Button(role: .destructive) { confirmDisconnect = true } label: {
-                Label(L10n.t(.disconnectThisApp), systemImage: "personalhotspot.slash")
-            }
-
-        }
-    }
-}
-
-private struct ClientRow: View {
+/// One client holding a key: where it last came from, how recently, and —
+/// in its context menu — when it was paired and its session id.
+struct ClientRow: View {
     let client: RunnerAdmin.Client
     let isSelf: Bool
 
@@ -238,41 +79,78 @@ private struct ClientRow: View {
     }()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                Text(client.name).lineLimit(1)
-                if isSelf {
-                    Text(L10n.t(.thisApp))
-                        .font(.caption2)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                        .foregroundColor(.accentColor)
-                }
-            }
-            if let via = client.lastVia {
+        HStack(spacing: 12) {
+            Image(systemName: Self.sourceIcon(client.lastVia))
+                .font(.body.weight(.medium))
+                .foregroundColor(Self.sourceColor(client.lastVia))
+                .frame(width: 36, height: 36)
+                .background(Self.sourceColor(client.lastVia).opacity(0.12), in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    HStack(spacing: 3) {
-                        Image(systemName: Self.sourceIcon(via))
-                        Text(Self.sourceName(via))
-                    }
-                    .font(.caption.weight(.medium))
-                    .foregroundColor(Self.sourceColor(via))
-                    // Loopback says nothing useful ("127.0.0.1"); the source does.
-                    if let address = client.lastAddress, via != PeerSource.local.rawValue {
-                        Text(address)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
+                    Text(client.name)
+                        .lineLimit(1)
+                    if isSelf {
+                        Text(L10n.t(.thisApp))
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                            .foregroundColor(.accentColor)
                     }
                 }
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
-            Text(subtitle)
-                .font(.caption)
-                .foregroundColor(.secondary)
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// "LAN · 192.168.1.20 · 2 min ago". Loopback says nothing useful
+    /// ("127.0.0.1"); the source does.
+    private var subtitle: String {
+        var parts = [String]()
+        if let via = client.lastVia {
+            parts.append(Self.sourceName(via))
+            if let address = client.lastAddress, via != PeerSource.local.rawValue {
+                parts.append(address)
+            }
+        }
+        if let active = client.lastActiveAt {
+            // Clamp: the runner's clock reading can be a moment ahead of ours.
+            let now = Date()
+            parts.append(Self.relative.localizedString(for: min(active, now), relativeTo: now))
+        } else if let granted = client.grantedAt {
+            parts.append(String(format: L10n.t(.pairedAt), Self.absolute.string(from: granted)))
+        }
+        return parts.isEmpty ? client.id : parts.joined(separator: " · ")
+    }
+
+    /// Details that don't fit the row, as context-menu entries.
+    @ViewBuilder var details: some View {
+        if let granted = client.grantedAt {
+            Text(String(format: L10n.t(.pairedAt), Self.absolute.string(from: granted)))
+        }
+        if let active = client.lastActiveAt {
+            let now = Date()
+            Text(String(format: L10n.t(.lastActive),
+                        Self.relative.localizedString(for: min(active, now), relativeTo: now)))
+        }
+        if let address = client.lastAddress {
+            Button {
+                UIPasteboard.general.string = address
+            } label: {
+                Label(address, systemImage: "doc.on.doc")
+            }
+        }
+        Button {
+            UIPasteboard.general.string = client.id
+        } label: {
+            Label(client.id, systemImage: "number")
+        }
     }
 
     private static func sourceName(_ via: String) -> String {
@@ -286,8 +164,8 @@ private struct ClientRow: View {
         }
     }
 
-    private static func sourceIcon(_ via: String) -> String {
-        switch PeerSource(rawValue: via) {
+    private static func sourceIcon(_ via: String?) -> String {
+        switch via.flatMap(PeerSource.init(rawValue:)) {
         case .local: return "iphone"
         case .lan: return "wifi"
         case .nearby: return "dot.radiowaves.left.and.right"
@@ -297,30 +175,228 @@ private struct ClientRow: View {
         }
     }
 
-    private static func sourceColor(_ via: String) -> Color {
-        switch PeerSource(rawValue: via) {
-        case .local: return .secondary
+    private static func sourceColor(_ via: String?) -> Color {
+        switch via.flatMap(PeerSource.init(rawValue:)) {
         case .lan: return .blue
         case .nearby: return .purple
         case .vpn: return .orange
-        default: return .secondary
+        case .cellular: return .green
+        default: return .gray
+        }
+    }
+}
+
+/// The client rows, with swipe and context-menu actions, shared by the
+/// Settings sheet and the full clients screen. Revoking another client and
+/// disconnecting this app both go through the confirmations of
+/// `clientConfirmations`.
+struct ClientRows: View {
+    @EnvironmentObject var admin: RunnerAdmin
+    let clients: [RunnerAdmin.Client]
+    @Binding var pendingRevoke: RunnerAdmin.Client?
+    @Binding var confirmDisconnect: Bool
+
+    var body: some View {
+        ForEach(clients) { client in
+            let isSelf = client.id == admin.ownSessionID
+            let row = ClientRow(client: client, isSelf: isSelf)
+            row
+                .swipeActions {
+                    if isSelf {
+                        Button(L10n.t(.disconnectThisApp)) { confirmDisconnect = true }
+                            .tint(.gray)
+                    } else {
+                        Button(L10n.t(.revokeButton), role: .destructive) { pendingRevoke = client }
+                    }
+                }
+                .contextMenu {
+                    Section { row.details }
+                    if isSelf {
+                        Button(role: .destructive) { confirmDisconnect = true } label: {
+                            Label(L10n.t(.disconnectThisApp), systemImage: "personalhotspot.slash")
+                        }
+                    } else {
+                        Button(role: .destructive) { pendingRevoke = client } label: {
+                            Label(L10n.t(.revokeButton), systemImage: "xmark.circle")
+                        }
+                    }
+                }
+        }
+    }
+}
+
+extension View {
+    /// The confirmations behind revoking one client, every other client, or
+    /// this app's own key.
+    ///
+    /// Alerts, not confirmation dialogs: newer iOS draws a dialog as a
+    /// popover pointing at its anchor, which from a list points at the wrong
+    /// row — and one attached to a row is not shown after a swipe.
+    func clientConfirmations(admin: RunnerAdmin,
+                             pendingRevoke: Binding<RunnerAdmin.Client?>,
+                             confirmRevokeOthers: Binding<Bool>,
+                             confirmDisconnect: Binding<Bool>) -> some View {
+        self
+            .alert(String(format: L10n.t(.revokeConfirmTitle), pendingRevoke.wrappedValue?.name ?? ""),
+                   isPresented: Binding(get: { pendingRevoke.wrappedValue != nil },
+                                        set: { if !$0 { pendingRevoke.wrappedValue = nil } }),
+                   presenting: pendingRevoke.wrappedValue) { client in
+                Button(L10n.t(.cancelButton), role: .cancel) {}
+                Button(L10n.t(.revokeButton), role: .destructive) {
+                    Task { await admin.revoke(client.id) }
+                }
+            } message: { _ in
+                Text(L10n.t(.revokeConfirmBody))
+            }
+            .alert(String(format: L10n.t(.revokeOthersConfirm), admin.otherClients.count),
+                   isPresented: confirmRevokeOthers) {
+                Button(L10n.t(.cancelButton), role: .cancel) {}
+                Button(L10n.t(.revokeOthers), role: .destructive) {
+                    Task { await admin.revokeOthers() }
+                }
+            } message: {
+                Text(L10n.t(.revokeConfirmBody))
+            }
+            .alert(L10n.t(.disconnectThisApp), isPresented: confirmDisconnect) {
+                Button(L10n.t(.cancelButton), role: .cancel) {}
+                Button(L10n.t(.disconnectThisApp), role: .destructive) {
+                    Task { await admin.disconnect() }
+                }
+            } message: {
+                Text(L10n.t(.disconnectConfirmBody))
+            }
+    }
+}
+
+/// Every client holding a key to the runner, with revocation.
+struct RunnerClientsView: View {
+    @EnvironmentObject var admin: RunnerAdmin
+    @State private var pendingRevoke: RunnerAdmin.Client?
+    @State private var confirmRevokeOthers = false
+    @State private var confirmDisconnect = false
+
+    var body: some View {
+        List {
+            if admin.isPaired {
+                Section {
+                    if !admin.clientsLoaded && admin.notice == nil {
+                        HStack { Spacer(); ProgressView(); Spacer() }
+                    } else if admin.clients.isEmpty {
+                        Text(L10n.t(.noClients)).foregroundColor(.secondary)
+                    }
+                    ClientRows(clients: admin.clients,
+                               pendingRevoke: $pendingRevoke,
+                               confirmDisconnect: $confirmDisconnect)
+                    if let notice = admin.notice {
+                        NoticeLabel(text: notice)
+                    }
+                } footer: {
+                    Text(L10n.t(.clientsFooter))
+                }
+
+                Section {
+                    if !admin.otherClients.isEmpty {
+                        Button(role: .destructive) { confirmRevokeOthers = true } label: {
+                            Label(L10n.t(.revokeOthers), systemImage: "person.crop.circle.badge.xmark")
+                        }
+                    }
+                    Button(role: .destructive) { confirmDisconnect = true } label: {
+                        Label(L10n.t(.disconnectThisApp), systemImage: "personalhotspot.slash")
+                    }
+                }
+            } else {
+                Section { RunnerConnectRows() }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle(L10n.t(.authorizedClients))
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable { await admin.loadClients() }
+        .clientConfirmations(admin: admin,
+                             pendingRevoke: $pendingRevoke,
+                             confirmRevokeOthers: $confirmRevokeOthers,
+                             confirmDisconnect: $confirmDisconnect)
+        // A new client can pair while this screen is open; keep it current.
+        .task(id: admin.isPaired) {
+            while !Task.isCancelled && admin.isPaired {
+                await admin.loadClients()
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+        }
+    }
+}
+
+// MARK: - Log console
+
+/// Log lines in a monospaced console: filterable, following the newest line
+/// while `follow` is on, with warnings and errors tinted.
+struct LogConsole: View {
+    let lines: [String]
+    let loading: Bool
+    var follow = true
+    @Binding var filter: String
+
+    private var shown: [String] {
+        filter.isEmpty ? lines : lines.filter { $0.localizedCaseInsensitiveContains(filter) }
+    }
+
+    var body: some View {
+        let shown = shown
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if shown.isEmpty {
+                        Group {
+                            if loading {
+                                ProgressView()
+                            } else {
+                                Label(filter.isEmpty ? L10n.t(.noLogLines) : L10n.ui(.noMatches),
+                                      systemImage: filter.isEmpty ? "text.alignleft" : "magnifyingglass")
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 60)
+                    }
+                    ForEach(Array(shown.enumerated()), id: \.offset) { index, line in
+                        Text(verbatim: line)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(Self.tint(for: line))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 3)
+                            .background(index.isMultiple(of: 2) ? Color.clear : Color(.secondarySystemBackground).opacity(0.6))
+                    }
+                    Color.clear.frame(height: 1).id("bottom")
+                }
+                .textSelection(.enabled)
+                .padding(.vertical, 8)
+            }
+            .searchable(text: $filter, prompt: L10n.t(.filterPlaceholder))
+            .onChange(of: lines) { _ in
+                // Follow the newest line while live; a paused log stays where
+                // the reader left it.
+                guard follow, filter.isEmpty else { return }
+                proxy.scrollTo("bottom", anchor: .bottom)
+            }
+            .onAppear {
+                DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
         }
     }
 
-    private var subtitle: String {
-        var parts = [String]()
-        if let granted = client.grantedAt {
-            parts.append(String(format: L10n.t(.pairedAt), Self.absolute.string(from: granted)))
-        }
-        if let active = client.lastActiveAt {
-            // Clamp: the runner's clock reading can be a moment ahead of ours.
-            let now = Date()
-            parts.append(String(format: L10n.t(.lastActive),
-                                Self.relative.localizedString(for: min(active, now), relativeTo: now)))
-        }
-        parts.append(client.id)
-        return parts.joined(separator: " · ")
+    private static func tint(for line: String) -> Color {
+        let lower = line.lowercased()
+        if line.contains("🔴") || lower.contains("error") || lower.contains("failed") { return .red }
+        if line.contains("⚠️") || lower.contains("warning") { return .orange }
+        return .primary
     }
+}
+
+/// `sheet(item:)` wants Identifiable.
+struct ShareText: Identifiable {
+    let id = UUID()
+    let text: String
 }
 
 // MARK: - Runner log
@@ -333,11 +409,6 @@ struct RunnerLogsView: View {
     @State private var refreshing = false
     @State private var shareItem: ShareText?
 
-    private struct ShareText: Identifiable {
-        let id = UUID()
-        let text: String
-    }
-
     private static let pollInterval: UInt64 = 2_000_000_000
 
     private var shownLines: [String] {
@@ -347,9 +418,23 @@ struct RunnerLogsView: View {
     var body: some View {
         Group {
             if admin.isPaired {
-                logList
+                LogConsole(lines: admin.logLines,
+                           loading: !admin.logsLoaded && admin.notice == nil,
+                           follow: live,
+                           filter: $filter)
+                    .refreshable { await refresh() }
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        if let notice = admin.notice {
+                            NoticeLabel(text: notice)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(.bar)
+                        }
+                    }
             } else {
-                List { RunnerConnectSection() }
+                List { Section { RunnerConnectRows() } }
+                    .listStyle(.insetGrouped)
             }
         }
         .navigationTitle(L10n.t(.runnerLogs))
@@ -360,16 +445,18 @@ struct RunnerLogsView: View {
                     Button {
                         live.toggle()
                     } label: {
-                        Image(systemName: live ? "pause.circle" : "play.circle")
+                        StateChip(text: live ? L10n.t(.liveLabel) : L10n.t(.pausedLabel),
+                                  tone: live ? .good : .idle)
                     }
-                    .accessibilityLabel(live ? L10n.t(.pausedLabel) : L10n.t(.liveLabel))
-                    Button {
-                        Task { await refresh() }
-                    } label: {
-                        if refreshing { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
-                    }
-                    .disabled(refreshing)
+                    .buttonStyle(.plain)
+                    .accessibilityHint(live ? L10n.t(.pausedLabel) : L10n.t(.liveLabel))
                     Menu {
+                        Button {
+                            Task { await refresh() }
+                        } label: {
+                            Label(L10n.ui(.refresh), systemImage: "arrow.clockwise")
+                        }
+                        .disabled(refreshing)
                         Button {
                             UIPasteboard.general.string = shownLines.joined(separator: "\n")
                         } label: {
@@ -378,7 +465,7 @@ struct RunnerLogsView: View {
                         Button {
                             shareItem = ShareText(text: shownLines.joined(separator: "\n"))
                         } label: {
-                            Label("Share", systemImage: "square.and.arrow.up")
+                            Label(L10n.ui(.share), systemImage: "square.and.arrow.up")
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")
@@ -395,59 +482,6 @@ struct RunnerLogsView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: Self.pollInterval)
                 if live && !Task.isCancelled { await admin.loadLogs() }
-            }
-        }
-    }
-
-    private var logList: some View {
-        ScrollViewReader { proxy in
-            List {
-                Section {
-                    if admin.logsLoaded && shownLines.isEmpty {
-                        Text(L10n.t(.noLogLines)).foregroundColor(.secondary)
-                    } else if !admin.logsLoaded && admin.notice == nil {
-                        HStack { Spacer(); ProgressView(); Spacer() }
-                    }
-                    ForEach(Array(shownLines.enumerated()), id: \.offset) { _, line in
-                        Text(line)
-                            .font(.system(.caption2, design: .monospaced))
-                            .textSelection(.enabled)
-                            .listRowInsets(EdgeInsets(top: 1, leading: 12, bottom: 1, trailing: 12))
-                            .listRowSeparator(.hidden)
-                    }
-                    Color.clear.frame(height: 1).id("bottom")
-                        .listRowSeparator(.hidden)
-                } header: {
-                    // Above the lines, not in a footer: the bottom of the list
-                    // sits under the search field.
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Circle().fill(live ? Color.green : Color.secondary).frame(width: 7, height: 7)
-                            Text(live ? L10n.t(.liveLabel) : L10n.t(.pausedLabel))
-                            Spacer()
-                            Text(verbatim: "\(shownLines.count)")
-                        }
-                        Text(L10n.t(.runnerLogsCaption))
-                            .font(.caption2)
-                            .textCase(nil)
-                        NoticeText()
-                            .font(.caption)
-                            .textCase(nil)
-                    }
-                }
-            }
-            .listStyle(.plain)
-            .environment(\.defaultMinListRowHeight, 0)
-            .searchable(text: $filter, prompt: L10n.t(.filterPlaceholder))
-            .refreshable { await refresh() }
-            // Follow the newest line while live; a paused log stays where the
-            // reader left it.
-            .onChange(of: admin.logLines) { _ in
-                guard live, filter.isEmpty else { return }
-                proxy.scrollTo("bottom", anchor: .bottom)
-            }
-            .onAppear {
-                DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) }
             }
         }
     }
