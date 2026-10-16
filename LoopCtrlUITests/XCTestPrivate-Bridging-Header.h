@@ -15,6 +15,7 @@
 + (void)markTestStarted;
 + (void)markSetUpEntered;
 + (BOOL)isInProcess;
+@property (class, nonatomic, readonly) NSString *urlDeliveredNotification;
 @end
 
 NS_ASSUME_NONNULL_BEGIN

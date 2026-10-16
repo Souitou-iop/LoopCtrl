@@ -75,6 +75,10 @@ static const double kBootstrapMaxWindow = 300.0;
 + (void)pollBootstrapOnce;
 + (BOOL)isInProcess;
 + (void)deliverURL:(NSURL *)url;
++ (void)suspendNow;
++ (NSURL *)pendingLoopCtrlAppCallback;
+@property (class, nonatomic, readonly) NSString *urlDeliveredNotification;
+@property (class, nonatomic, readonly) NSString *testStartedNotification;
 @end
 
 /// Append one +load-era line DIRECTLY to today's persisted log file. These lines
@@ -358,19 +362,66 @@ static void swizzled_setDelegate(id self, SEL _cmd, id<UIApplicationDelegate> de
             return;
         }
 
-        UIApplication *app = UIApplication.sharedApplication;
-        SEL sus = NSSelectorFromString(@"suspend");
-        if (![app respondsToSelector:sus]) {
-            earlyLog(@"🏠 early-background unavailable — no suspend selector");
+        // Started from the LoopCtrl app's Start button: step aside INTO LoopCtrl
+        // rather than onto the Home Screen. Suspending dropped the user on the
+        // Home Screen for the rest of the bootstrap (10-30 s), and only the
+        // start callback, once the server was up, brought LoopCtrl back — to
+        // the user, "LoopCtrl quit when I pressed Start". Same moment, same
+        // checks as the suspend; only the destination differs. If the open is
+        // refused, suspend exactly as before.
+        NSURL *home = [self pendingLoopCtrlAppCallback];
+        if (home) {
+            [UIApplication.sharedApplication openURL:home options:@{} completionHandler:^(BOOL ok) {
+                if (ok) {
+                    earlyLog(@"🏠 early-background: returned to the LoopCtrl app (pre-setUp)");
+                } else {
+                    earlyLog(@"🏠 early-background: could not open the LoopCtrl app — suspending instead");
+                    [self suspendNow];
+                }
+            }];
             return;
         }
-        @try {
-            ((void (*)(id, SEL))objc_msgSend)(app, sus);
-            earlyLog(@"🏠 early-background: suspended (pre-setUp)");
-        } @catch (NSException *e) {
-            earlyLog([NSString stringWithFormat:@"🏠 early-background raised: %@", e.reason]);
-        }
+        [self suspendNow];
     });
+}
+
+/// -[UIApplication suspend]: out of the foreground, onto the Home Screen.
++ (void)suspendNow {
+    UIApplication *app = UIApplication.sharedApplication;
+    SEL sus = NSSelectorFromString(@"suspend");
+    if (![app respondsToSelector:sus]) {
+        earlyLog(@"🏠 early-background unavailable — no suspend selector");
+        return;
+    }
+    @try {
+        ((void (*)(id, SEL))objc_msgSend)(app, sus);
+        earlyLog(@"🏠 early-background: suspended (pre-setUp)");
+    } @catch (NSException *e) {
+        earlyLog([NSString stringWithFormat:@"🏠 early-background raised: %@", e.reason]);
+    }
+}
+
+/// The LoopCtrl app's own callback (`loopctrl-app://…`) from a pending
+/// `loopctrl://start`, if the runner was launched by that app.
+///
+/// Only that app's scheme: it ignores the callback's query and polls the
+/// server itself, so an early, status-less open costs it nothing. Other
+/// callers get exactly one callback, carrying the status, as documented.
++ (NSURL *)pendingLoopCtrlAppCallback {
+    [sEarlyLock lock];
+    NSArray<NSURL *> *urls = [sEarlyURLs copy];
+    [sEarlyLock unlock];
+    for (NSURL *url in urls) {
+        NSString *host = url.host.lowercaseString;
+        if (host.length > 0 && ![host isEqualToString:@"start"]) { continue; }
+        NSURLComponents *comps = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+        for (NSURLQueryItem *item in comps.queryItems) {
+            if (![item.name isEqualToString:@"callback"] || item.value.length == 0) { continue; }
+            NSURL *cb = [NSURL URLWithString:item.value];
+            if ([cb.scheme.lowercaseString isEqualToString:@"loopctrl-app"]) { return cb; }
+        }
+    }
+    return nil;
 }
 
 + (void)armBootstrapObserver {
@@ -482,7 +533,15 @@ static BOOL sInstalled = NO;
 + (void)markTestStarted {
     sTestStarted = YES;
     earlyLog(@"✅ testStartServer began — bootstrap OK");
+    // All-in-one: InProcessRunner holds a background task across the
+    // bootstrap and lets it go on this (it observes the name, as a string —
+    // the app does not link this bundle).
+    [[NSNotificationCenter defaultCenter] postNotificationName:self.testStartedNotification object:nil];
 }
+
+/// Names shared, as plain strings, with LoopCtrlApp/Runner/InProcessRunner.swift.
++ (NSString *)urlDeliveredNotification { return @"LoopCtrlInProcessURLDelivered"; }
++ (NSString *)testStartedNotification { return @"LoopCtrlInProcessTestStarted"; }
 
 + (void)markSetUpEntered {
     sSetUpEntered = YES;
@@ -514,10 +573,13 @@ static BOOL sInstalled = NO;
 }
 
 /// The host app's entry for loopctrl:// URLs in the all-in-one build, found by
-/// name (NSClassFromString) since the app does not link this bundle. The test's
-/// 2s safety timer drains it.
+/// name (NSClassFromString) since the app does not link this bundle. The
+/// notification wakes the test to drain it now; its 2s safety timer is the
+/// backstop.
 + (void)deliverURL:(NSURL *)url {
-    if ([url isKindOfClass:[NSURL class]]) { stashURL(url); }
+    if (![url isKindOfClass:[NSURL class]]) { return; }
+    stashURL(url);
+    [[NSNotificationCenter defaultCenter] postNotificationName:self.urlDeliveredNotification object:nil];
 }
 
 + (NSArray<NSURL *> *)drainURLs {

@@ -138,9 +138,10 @@ delegate，所以不冲突；但以后如果 App 要处理通知，需要统一�
 
 **停止**：现在的「停止」（通知按钮、`loopctrl://stop`、RPC `stop_server`）都会让
 `keepRunning = false` → 测试返回 → XCTest `exit()`。合并后这会**关闭整个 LoopCtrl**。
-原型保持了这个行为（最简单，也最可预测）。如果想保留界面，可以让同进程模式下的测试不退出循环，
-只停掉服务器，之后通过同一个测试实例重新 `start`。这需要改 `LoopCtrlUITests.swift` 里三处设置
-`keepRunning = false` 的地方，并补上「服务器已停但测试仍在」时的重启路径。原型没有做这部分。
+**已改（⚠️ 未上机）**：所有「停止」现在都走 `LoopCtrlUITests.stopService`。同进程模式下它只关掉
+`JSONRPCServer`，测试继续停在自己的 run loop 里（parked），不会返回，所以 XCTest 不会 `exit()`；
+之后 `InProcessRunner.start()` 投递 `loopctrl://start`，由同一个测试实例重新建监听器。
+监听器意外失败也一样只停不退。两个 App 的模式保持原样（测试结束、Runner 退出）。
 
 **重启之后**：DDI 消失。主程序不链接 XCTest，rpath 指向不存在的目录也没关系（启动时不会经过它们），
 所以 App 能正常启动 ✅（这是链接层面的推断，⚠️ 要上机确认）。`DeveloperDiskImage.status()`
@@ -183,16 +184,18 @@ delegate，所以不冲突；但以后如果 App 要处理通知，需要统一�
 6. **后台**：按 Home 键离开 LoopCtrl，等 5 分钟以上，再从另一台机器调用 RPC。预期：仍然能响应。
    **这是风险最大的一项。**
 7. **URL**：在 Safari 里打开 `loopctrl://start?callback=…`（服务器已在运行和尚未启动两种情况各试一次）。
-8. **停止**：点「停止」或通知里的 🛑。预期（原型的行为）：LoopCtrl 退出；再次打开后可以重新启动。
+8. **停止**：点「停止」或通知里的 🛑。预期：LoopCtrl 留在前台，状态在几秒内变成「已停止」，
+   日志出现 `⏸ service stopped — test parked`；再点「启动」，日志出现
+   `▶️ loopctrl://start while parked`，状态回到「运行中」。
 9. **iOS 16 设备（如果有）**：重复第 3–5 步，验证 KVC 构造配置那条路径。
 
 只要第 1、3、4、5 步通过，合并就成立。第 6 步决定能不能完全替代独立的 Runner。
 
 ## 7. 如果要正式采用，还需要做的
 
-- 让「停止」不关闭 App（见第 4 节），或者在界面上明确提示「停止会关闭 LoopCtrl」。
-- 在 `start()` 到 `testBundleWillStart` 之间申请 `beginBackgroundTask`，代替存根里的
-  `BKSProcessAssertion("XCTRunner Initialization")`。
+- ~~让「停止」不关闭 App~~（已做，见第 4 节，⚠️ 未上机）。
+- ~~在 `start()` 到测试开始之间申请 `beginBackgroundTask`~~（已做：`InProcessRunner` 在
+  `testStartServer` 开始时结束它，⚠️ 未上机）。
 - 把 LoopCtrl 原来「打开另一个 App」的提示文案、`LSApplicationQueriesSchemes` 中的 `loopctrl`、
   README 的安装步骤（两个 IPA 改成一个）都改掉。
 - 旧 Runner 的配对数据要么放弃（重新配对），要么做一次性导出导入。
