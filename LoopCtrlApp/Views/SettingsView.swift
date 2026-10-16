@@ -1,25 +1,25 @@
 import SwiftUI
 import UIKit
 
-/// The app's home screen.
+/// The app's home screen: the three things that decide whether automation can
+/// run (pairing, the Developer Disk Image, the server) and the one action that
+/// moves it forward. Everything else is in `OptionsView`, behind the gear.
 ///
-/// Note what this app is NOT: automation runs in the XCUITest runner, a separate
-/// process. This app can't serve RPC itself, so it doesn't try — it reports
-/// whether the runner is able to launch (the DDI check) and offers a button that
-/// launches it via `loopctrl://start`.
+/// Automation runs in the XCUITest runner — a separate app, or in-process in
+/// the all-in-one build — so the server state shown here is what an HTTP probe
+/// of it says, and Start/Stop go through its `loopctrl://` scheme.
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
 
-    /// Re-probed whenever the view appears rather than held in AppState: the DDI
-    /// can be unmounted while the app sits in the background, so a value cached
-    /// at launch goes stale silently.
+    /// Re-probed whenever the screen comes back rather than held in AppState:
+    /// the DDI can be unmounted while the app sits in the background.
     @State private var ddi = DeveloperDiskImage.status()
+    @State private var hasPairingFile = PairingFileStore.exists
     @State private var launchFailed = false
     @State private var showMountSheet = false
+    @State private var showOptions = false
     @StateObject private var runner = RunnerStatus(port: 8200)
     @EnvironmentObject private var runnerAdmin: RunnerAdmin
-    @State private var logCount = AppLog.allFiles().count
-
 
     /// The runner registers this scheme; opening it starts the automation server.
     ///
@@ -34,109 +34,51 @@ struct SettingsView: View {
     /// and this app deliberately holds no pairing key.
     private static let runnerStopURL = URL(string: "loopctrl://stop?callback=loopctrl-app://stopped")!
 
-    /// Provides the local loopback tunnel StikDebug needs to reach lockdownd.
-    /// Deliberately an App Store link and not a deep link: neither LocalDevVPN
-    /// nor its predecessor StosVPN registers a URL scheme, so any
-    /// `localdevvpn://` we invented would fail silently. StosVPN has also been
-    /// pulled from the App Store, which is why LocalDevVPN is the one named here.
-    private static let localDevVPNURL = URL(string: "https://apps.apple.com/app/localdevvpn/id6755608044")!
-
-    /// StikDebug mounts the DDI on-device. It registers both `stikdebug://` and
-    /// the legacy `stikjit://`; bare scheme just opens the app.
-    private static let stikDebugURL = URL(string: "stikdebug://")!
-    /// Used when StikDebug isn't installed — it's sideload-only, never on the
-    /// App Store, so the fallback is its distribution site.
-    private static let stikDebugSiteURL = URL(string: "https://stikdebug.xyz")!
-
     var body: some View {
-        List {
-            requirementsSection
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: 28) {
+                    Spacer(minLength: 0)
 
-            // Fallback only. The in-app mount above does the same job without
-            // leaving LoopCtrl; StikDebug stays listed because it is the
-            // battle-tested implementation this port is based on, and is worth
-            // trying if our mount fails on a device we haven't seen.
-            if !ddi.isMounted {
-                Section {
-                    HelperRow(
-                        index: 1,
-                        title: "LocalDevVPN",
-                        detail: "Required either way — it makes this device's debug service reachable.",
-                        actionTitle: "App Store",
-                        url: Self.localDevVPNURL
-                    )
-                    HelperRow(
-                        index: 2,
-                        title: "StikDebug",
-                        detail: "An alternative mounter, if the in-app one fails. Sideload from stikdebug.xyz — it isn't on the App Store.",
-                        actionTitle: "Open",
-                        url: Self.stikDebugURL,
-                        fallbackURL: Self.stikDebugSiteURL
-                    )
-                } header: {
-                    Text(L10n.t(.alternativeSection))
-                } footer: {
-                    Text(L10n.t(.alternativeFooter))
-                }
-            }
+                    AppIconImage()
 
-            if launchFailed {
-                Section {
-                    Label {
-                        Text("Couldn't open the runner. Install LoopCtrlUITests-Runner with SideStore (or your own signing), then try again.")
-                            .font(.footnote)
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
+                    Text(verbatim: "LoopCtrl")
+                        .font(.largeTitle.bold())
+
+                    VStack(spacing: 20) {
+                        statusCard
+                        primaryButton
+                        hint
                     }
-                }
-            }
+                    .frame(maxWidth: 340)
 
-            serverSection
-
-            deviceSection
-
-            Section {
-                HStack {
-                    Text(L10n.t(.versionLabel))
-                    Spacer()
-                    Text("1.0.0")
-                        .foregroundColor(.secondary)
+                    Spacer(minLength: 0)
                 }
-                HStack {
-                    Text(L10n.t(.protocolLabel))
-                    Spacer()
-                    Text("JSON-RPC 2.0")
-                        .foregroundColor(.secondary)
-                }
-                NavigationLink {
-                    LogListView()
-                } label: {
-                    HStack {
-                        Text(L10n.t(.logsLabel))
-                        Spacer()
-                        Text(verbatim: "\(logCount)")
-                            .foregroundColor(.secondary)
-                    }
-                }
-            } header: {
-                Text(L10n.t(.aboutSection))
-            } footer: {
-                // The mount runs through a Rust FFI that aborts rather than
-                // throws, so when it fails the log is often the only artifact
-                // besides a crash report — and it can be shared from here.
-                Text(L10n.t(.logsFooter))
+                .padding()
+                .frame(maxWidth: .infinity, minHeight: proxy.size.height)
             }
         }
-        .listStyle(.insetGrouped)
-        .navigationTitle("LoopCtrl")
+        .animation(.default, value: runner.state)
+        .animation(.default, value: ddi.isMounted)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showOptions = true
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .accessibilityLabel(L10n.ui(.settingsTitle))
+            }
+        }
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            ddi = DeveloperDiskImage.status()
-            logCount = AppLog.allFiles().count
+            refresh()
             runner.startPolling()
         }
         .onDisappear { runner.stopPolling() }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.didBecomeActiveNotification)) { _ in refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: PairingFileStore.didImport)) { _ in refresh() }
         .onOpenURL { url in
             // The runner bounced back: loopctrl-app://started?status=…&address=…
             guard url.scheme == "loopctrl-app" else { return }
@@ -148,226 +90,125 @@ struct SettingsView: View {
             // asking the server directly is both cheap and authoritative.
             Task { await runner.check() }
         }
-        .sheet(isPresented: $showMountSheet, onDismiss: {
-            // Re-probe: a successful mount changes what the status row should say.
-            ddi = DeveloperDiskImage.status()
-        }) {
+        // Re-probe on dismiss: a mount or a new pairing file changes the card.
+        .sheet(isPresented: $showMountSheet, onDismiss: refresh) {
             DDIMountView()
+        }
+        .sheet(isPresented: $showOptions, onDismiss: refresh) {
+            OptionsView(runner: runner)
+                .environmentObject(appState)
+                .environmentObject(runnerAdmin)
         }
     }
 
-    /// What must be true before automation can run at all.
-    ///
-    /// The Developer Disk Image is the one hard prerequisite: without it the
-    /// XCUITest runner dies in dyld before any of our code runs, so a missing
-    /// DDI is not a degraded mode — it is the whole feature not working. This
-    /// section states that, and offers the fix either way: mount it when it's
-    /// absent, re-mount when it's there but the user has reason to redo it
-    /// (a reboot drops it, and the status here can only report what it can see).
-    private var requirementsSection: some View {
-        Section {
-            HStack {
-                Text(L10n.t(.developerDiskImage))
-                Spacer()
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(ddi.isMounted ? .green : .orange)
-                        .frame(width: 8, height: 8)
-                    Text(ddi.summary)
-                        .foregroundColor(.secondary)
-                }
-            }
+    private func refresh() {
+        ddi = DeveloperDiskImage.status()
+        hasPairingFile = PairingFileStore.exists
+    }
 
-            if let layout = ddi.layout {
-                HStack {
-                    Text(L10n.t(.mountPoint))
-                    Spacer()
-                    Text(layout.rawValue)
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundColor(.secondary)
-                }
-            }
+    // MARK: - Status
 
-            // Offered in both states. Mounted is not the same as "nothing left
-            // to do": the image is dropped by a reboot, and a stale or partial
-            // mount looks identical from here, so re-mounting has to stay one
-            // tap away rather than something you can only reach by rebooting.
+    private var statusCard: some View {
+        VStack(spacing: 0) {
+            StatusRow(icon: "link",
+                      title: L10n.ui(.pairingLabel),
+                      value: hasPairingFile ? L10n.ui(.paired) : L10n.ui(.notPaired),
+                      // Only needed to mount: once the image is up, a missing
+                      // pairing file is not something to warn about.
+                      tone: hasPairingFile ? .good : ddi.isMounted ? .idle : .warning)
+            Divider().padding(.leading, 50)
+            StatusRow(icon: "externaldrive",
+                      title: L10n.ui(.diskImageLabel),
+                      value: ddi.localizedSummary,
+                      tone: ddi.isMounted ? .good : .warning)
+            Divider().padding(.leading, 50)
+            serviceRow
+        }
+        .padding(.vertical, 4)
+        .card()
+    }
+
+    @ViewBuilder private var serviceRow: some View {
+        switch runner.state {
+        case .unknown, .checking:
+            StatusRow(icon: "bolt.horizontal", title: L10n.ui(.serviceLabel),
+                      value: L10n.t(.checking), tone: .busy)
+        case .running:
+            StatusRow(icon: "bolt.horizontal", title: L10n.ui(.serviceLabel),
+                      value: L10n.t(.running), tone: .good,
+                      detail: "127.0.0.1:\(appState.serverPort)")
+        case .stopped:
+            StatusRow(icon: "bolt.horizontal", title: L10n.ui(.serviceLabel),
+                      value: L10n.t(.stopped), tone: .idle)
+        }
+    }
+
+    // MARK: - Primary action
+
+    /// One button, whichever step is next: mount the image, start, or stop.
+    @ViewBuilder private var primaryButton: some View {
+        if runner.isRunning {
+            Button(role: .destructive) {
+                stopRunner()
+            } label: {
+                primaryLabel(L10n.t(.stopServerButton), systemImage: "stop.fill")
+            }
+            .primaryAction(.red)
+        } else if !ddi.isMounted {
             Button {
                 showMountSheet = true
             } label: {
-                Label(ddi.isMounted ? L10n.t(.remount) : L10n.t(.mountWithoutMac),
-                      systemImage: ddi.isMounted ? "arrow.clockwise" : "externaldrive.badge.plus")
+                primaryLabel(L10n.ui(.mountDiskImage), systemImage: "externaldrive.badge.plus")
             }
-        } header: {
-            Text(L10n.t(.runtimeRequirements))
-        } footer: {
-            if ddi.isMounted {
-                Text(L10n.t(.ddiReadyFooter))
-            } else {
-                Text(ddi.advice ?? "The Developer Disk Image isn't mounted, so the automation "
-                                 + "runner can't launch.")
+            .primaryAction(.accentColor)
+        } else {
+            Button {
+                startRunner()
+            } label: {
+                primaryLabel(L10n.t(.startServer), systemImage: "play.fill")
             }
+            .primaryAction(.green)
         }
     }
 
-    /// This device, read locally.
-    ///
-    /// Deliberately not sourced from the server's device_info: these values are
-    /// available whether or not the runner is up, and they're most useful
-    /// precisely when it isn't — "which iOS is this?" is the first question
-    /// asked when the runner won't start.
-    private var deviceSection: some View {
-        Section {
-            LabeledRow(L10n.t(.modelLabel), DeviceInfo.modelIdentifier)
-            LabeledRow(L10n.t(.systemLabel), "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)")
-            LabeledRow(L10n.t(.screenLabel), DeviceInfo.screenDescription)
-            LabeledRow(L10n.t(.nameLabel), UIDevice.current.name, monospaced: false)
-        } header: {
-            Text(L10n.t(.deviceSection))
+    private func primaryLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.headline)
+            .frame(maxWidth: .infinity)
+    }
+
+    /// One short line under the button: what went wrong, or what it does.
+    @ViewBuilder private var hint: some View {
+        if launchFailed {
+            Label {
+                #if LOOPCTRL_ALL_IN_ONE
+                Text(L10n.ui(.runnerStartFailed))
+                #else
+                Text(L10n.ui(.runnerOpenFailed))
+                #endif
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+            }
+            .font(.footnote)
+            .foregroundColor(.orange)
+            .multilineTextAlignment(.center)
+        } else if let text = hintText {
+            Text(text)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    /// Live state of the automation server.
-    ///
-    /// The server runs inside the XCUITest runner, a separate process, so this
-    /// reports what an HTTP probe of it says rather than anything this app
-    /// knows locally — the runner can be started or killed without the app
-    /// being involved at all.
-    private var serverSection: some View {
-        Section {
-            HStack {
-                Text(L10n.t(.statusLabel))
-                Spacer()
-                switch runner.state {
-                case .unknown, .checking:
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text(L10n.t(.checking)).foregroundColor(.secondary)
-                    }
-                case .running:
-                    HStack(spacing: 6) {
-                        Circle().fill(.green).frame(width: 8, height: 8)
-                        Text(L10n.t(.running)).foregroundColor(.secondary)
-                    }
-                case .stopped:
-                    HStack(spacing: 6) {
-                        Circle().fill(.secondary).frame(width: 8, height: 8)
-                        Text(L10n.t(.stopped)).foregroundColor(.secondary)
-                    }
-                }
-            }
-
-            HStack {
-                Text(L10n.t(.addressLabel))
-                Spacer()
-                Text(verbatim: "127.0.0.1:\(appState.serverPort)")
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundColor(.secondary)
-            }
-
-            if case .running(let info) = runner.state {
-                if let version = info.serverVersion {
-                    HStack {
-                        Text(L10n.t(.serverLabel))
-                        Spacer()
-                        Text(verbatim: version)
-                            .font(.system(.body, design: .monospaced))
-                            .foregroundColor(.secondary)
-                    }
-                }
-                if let proto = info.protocolVersion {
-                    HStack {
-                        Text(L10n.t(.protocolLabel))
-                        Spacer()
-                        Text(verbatim: "v\(proto)")
-                            .font(.system(.body, design: .monospaced))
-                            .foregroundColor(.secondary)
-                    }
-                }
-                if let methods = info.methodCount {
-                    HStack {
-                        Text(L10n.t(.methodsLabel))
-                        Spacer()
-                        Text(verbatim: "\(methods)")
-                            .foregroundColor(.secondary)
-                    }
-                }
-                if !info.capabilities.isEmpty {
-                    NavigationLink {
-                        CapabilityListView(capabilities: info.capabilities)
-                    } label: {
-                        HStack {
-                            Text(L10n.t(.capabilitiesLabel))
-                            Spacer()
-                            Text(verbatim: "\(info.capabilities.count)")
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-                if let visibility = runnerAdmin.visibility {
-                    RunnerVisibilityRow(visibility: visibility)
-                }
-                if runnerAdmin.localNetworkDenied {
-                    // Remote clients connecting in still work without it, so
-                    // this is the only sign of why nearby discovery cannot.
-                    Text(L10n.t(.runnerLocalNetworkDenied))
-                        .font(.footnote)
-                        .foregroundColor(.orange)
-                }
-                NavigationLink {
-                    RunnerClientsView()
-                } label: {
-                    HStack {
-                        Text(L10n.t(.authorizedClients))
-                        Spacer()
-                        if runnerAdmin.clientsLoaded {
-                            Text(verbatim: "\(runnerAdmin.clients.count)")
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-                // Count and visibility without opening the list, kept current
-                // while this screen is shown (remote access and nearby can be
-                // switched from the runner's notification at any time). Only
-                // once paired: pairing itself is never started from here.
-                .task(id: runnerAdmin.isPaired) {
-                    while !Task.isCancelled && runnerAdmin.isPaired {
-                        await runnerAdmin.loadClients()
-                        try? await Task.sleep(nanoseconds: 5_000_000_000)
-                    }
-                }
-                NavigationLink {
-                    RunnerLogsView()
-                } label: {
-                    Text(L10n.t(.runnerLogs))
-                }
-                Button(role: .destructive) {
-                    stopRunner()
-                } label: {
-                    Label(L10n.t(.stopServerButton), systemImage: "stop.fill")
-                }
-            } else {
-                // Start lives here rather than in the toolbar: it belongs beside
-                // the state it changes, and this is where the reason it might be
-                // disabled is already on screen.
-                Button {
-                    startRunner()
-                } label: {
-                    Label(L10n.t(.startServer), systemImage: "play.fill")
-                }
-                .disabled(!ddi.isMounted)
-            }
-        } header: {
-            Text(L10n.t(.serverSectionTitle))
-        } footer: {
-            if case .running = runner.state {
-                Text("\(L10n.t(.addressLabel)): \(appState.serverPort) · \(L10n.t(.serverRunningFooter))")
-            } else if !ddi.isMounted {
-                Text(L10n.t(.mountFirstFooter))
-            } else {
-                Text(L10n.t(.startOpensRunnerFooter))
-            }
-        }
+    private var hintText: String? {
+        if runner.isRunning { return L10n.t(.serverRunningFooter) }
+        if !ddi.isMounted { return L10n.t(.mountFirstFooter) }
+        #if LOOPCTRL_ALL_IN_ONE
+        return nil
+        #else
+        return L10n.t(.startOpensRunnerFooter)
+        #endif
     }
 
     private func stopRunner() {
@@ -411,130 +252,52 @@ struct SettingsView: View {
     }
 }
 
-/// One numbered step in the "mount without a Mac" recovery flow.
-private struct HelperRow: View {
-    let index: Int
+/// One line of the status card: icon, name, and a coloured dot with the state.
+private struct StatusRow: View {
+    enum Tone { case good, warning, idle, busy }
+
+    let icon: String
     let title: String
-    let detail: String
-    /// `nil` for a step the user performs here rather than in another app.
-    let actionTitle: String?
-    let url: URL?
-    /// Opened when `url` uses a custom scheme and the app isn't installed.
-    var fallbackURL: URL? = nil
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(verbatim: "\(index)")
-                .font(.caption.bold())
-                .foregroundColor(.white)
-                .frame(width: 20, height: 20)
-                .background(Circle().fill(.tint))
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.body)
-                Text(detail)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 8)
-
-            if let actionTitle, let url {
-                Button(actionTitle) { open(url) }
-                    .font(.caption.weight(.semibold))
-                    // Rows sit in a List; .borderless keeps the tap on the button
-                    // instead of letting the whole row swallow it.
-                    .buttonStyle(.borderless)
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    private func open(_ url: URL) {
-        UIApplication.shared.open(url) { ok in
-            // A custom-scheme open fails when that app isn't installed; falling
-            // back to its download page turns a dead tap into a way forward.
-            guard !ok, let fallbackURL else { return }
-            UIApplication.shared.open(fallbackURL)
-        }
-    }
-}
-
-/// The capability tags the running server advertises.
-///
-/// A flat list rather than a summary: these are what a client feature-detects
-/// against, so the useful question is "is X there", which a searchable list
-/// answers and a count does not.
-private struct CapabilityListView: View {
-    let capabilities: [String]
-
-    var body: some View {
-        List(capabilities.sorted(), id: \.self) { tag in
-            HStack {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
-                    .font(.caption)
-                Text(verbatim: tag)
-                    .font(.system(.body, design: .monospaced))
-            }
-        }
-        .navigationTitle("Capabilities")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-/// A right-aligned value row, the shape the rest of this screen already uses.
-private struct LabeledRow: View {
-    let label: String
     let value: String
-    var monospaced = true
-
-    init(_ label: String, _ value: String, monospaced: Bool = true) {
-        self.label = label
-        self.value = value
-        self.monospaced = monospaced
-    }
+    let tone: Tone
+    /// Shown under the value, selectable (the server address).
+    var detail: String? = nil
 
     var body: some View {
-        HStack {
-            Text(label)
-            Spacer()
-            Text(verbatim: value)
-                .font(monospaced ? .system(.body, design: .monospaced) : .body)
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.body.weight(.medium))
                 .foregroundColor(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+                .frame(width: 22)
+            Text(title)
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 2) {
+                HStack(spacing: 6) {
+                    if tone == .busy {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Circle().fill(color).frame(width: 8, height: 8)
+                    }
+                    Text(value).foregroundColor(.secondary)
+                }
+                if let detail {
+                    Text(verbatim: detail)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
         }
-    }
-}
-
-/// Facts about this device that don't need the server running.
-enum DeviceInfo {
-    /// e.g. "iPhone17,2". `UIDevice.model` only ever says "iPhone", which
-    /// doesn't distinguish the hardware people actually care about here.
-    static var modelIdentifier: String {
-        // On the simulator `utsname.machine` reports the *host* architecture
-        // ("arm64"), not a device model — the real identifier is passed in the
-        // environment instead. Without this the row reads "arm64", which is
-        // both wrong and confusing next to a real device's "iPhone17,2".
-        if let simulated = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] {
-            return simulated
-        }
-        var sysinfo = utsname()
-        uname(&sysinfo)
-        let raw = withUnsafeBytes(of: &sysinfo.machine) { buf in
-            buf.prefix { $0 != 0 }.map { UInt8($0) }
-        }
-        let id = String(decoding: raw, as: UTF8.self)
-        return id.isEmpty ? UIDevice.current.model : id
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .combine)
     }
 
-    /// Points and pixels — the two coordinate spaces the automation API mixes,
-    /// so seeing both here saves a round trip when a screenshot looks wrong.
-    static var screenDescription: String {
-        let b = UIScreen.main.bounds
-        let s = UIScreen.main.scale
-        return "\(Int(b.width))×\(Int(b.height)) pt · \(Int(b.width * s))×\(Int(b.height * s)) px"
+    private var color: Color {
+        switch tone {
+        case .good: return .green
+        case .warning: return .orange
+        case .idle, .busy: return .secondary
+        }
     }
 }
