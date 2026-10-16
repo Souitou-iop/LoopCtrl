@@ -560,19 +560,17 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     /// (the app's Start button) bring the listener back on the same test.
     private var parksWhenStopped: Bool { EarlyURLHook.isInProcess() }
 
-    /// All-in-one build: XCTest's bootstrap takes LoopCtrl out of the
-    /// foreground (it was seen backgrounded by the time the test began, every
-    /// time), and nothing brought it back, so Start looked like it dropped the
-    /// user on the Home Screen. Ask the XCTest daemon to activate it again,
-    /// once now and once more shortly after, in case the hand-off lands late.
+    /// All-in-one build, fallback only: XCTest's bootstrap presses Home on the
+    /// runner, which here is LoopCtrl. InProcessRunner's BootstrapForegroundGuard
+    /// keeps that from happening; should LoopCtrl still be in the background
+    /// when the test begins, open it again through LaunchServices
+    /// (`-[XCUIApplication activate]` on its own bundle id throws).
     private func returnToLoopCtrlIfBackgrounded(retry: Bool = true) {
         guard let bundleID = Bundle.main.bundleIdentifier else { return }
-        if UIApplication.shared.applicationState != .active {
+        if UIApplication.shared.applicationState == .background {
             Self.logBuffer.append("🏠 LoopCtrl is in the background after bootstrap — bringing it back")
-            DispatchQueue.global(qos: .userInitiated).async {
-                let ok = ForegroundApp.safeActivateBundleID(bundleID)
-                Self.logBuffer.append(ok ? "🏠 LoopCtrl activated" : "🏠 couldn't activate LoopCtrl")
-            }
+            let ok = ForegroundApp.openBundleID(bundleID)
+            Self.logBuffer.append(ok ? "🏠 LoopCtrl reopened" : "🏠 couldn't reopen LoopCtrl")
         }
         if retry {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
