@@ -27,3 +27,6 @@ __pycache__/
 # Local CLI builds (the Linux cli/loopctrl is committed: the runner bundles it)
 cli/loopctrl-macos
 cli/selftest
+
+# Claude Code agent worktrees
+.claude/worktrees/
