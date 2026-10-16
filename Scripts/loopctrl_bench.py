@@ -18,9 +18,9 @@ Crypto and transport are imported from loopctrl_rpc so this can't drift from the
 real client.
 
 Usage:
-    ./loopctrl_bench.py --host 10.0.0.5:8200                     # full run
-    ./loopctrl_bench.py --host 10.0.0.5:8200 --label "let's talk!"
-    ./loopctrl_bench.py --host 10.0.0.5:8200 --probe-only        # reachability only
+    ./loopctrl_bench.py --host 10.0.0.5:8300                     # full run
+    ./loopctrl_bench.py --host 10.0.0.5:8300 --label "let's talk!"
+    ./loopctrl_bench.py --host 10.0.0.5:8300 --probe-only        # reachability only
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ import loopctrl_rpc as rpc  # noqa: E402  (path set above)
 def probe(host: str, timeout: float = 3.0) -> tuple[bool, str]:
     """Is anything listening, and does it look like LoopCtrl?"""
     hostname, _, port = host.partition(":")
-    port = int(port or 8200)
+    port = int(port or 8300)
     try:
         with socket.create_connection((hostname, port), timeout=timeout):
             pass
@@ -213,7 +213,7 @@ def timing_summary(host: str) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--host", default="127.0.0.1:8200")
+    ap.add_argument("--host", default="127.0.0.1:8300")
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--label", help="a label that EXISTS on screen (fast-path check)")
     ap.add_argument("--bad-label", default="Zzz No Such Element Zzz",

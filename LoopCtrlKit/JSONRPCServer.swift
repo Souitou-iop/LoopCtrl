@@ -61,7 +61,7 @@ class JSONRPCServer {
         print(message)
     }
 
-    init(port: UInt16 = 8200, localOnly: Bool = false) {
+    init(port: UInt16 = ServerPort.defaultPort, localOnly: Bool = false) {
         self.port = port
         self.localOnly = localOnly
     }
@@ -113,7 +113,7 @@ class JSONRPCServer {
             guard let self = self else { return }
             // Peer-to-peer peers belong to the nearby listener, which is only
             // open while the user has turned nearby discovery on. Without this
-            // check, any AWDL link the device happens to have would reach 8200.
+            // check, any AWDL link the device happens to have would reach 8300.
             if Self.isPeerToPeer(conn) {
                 self.log("🚫 Refused \(conn.endpoint) on port \(self.port): peer-to-peer connections use the nearby listener")
                 conn.cancel()

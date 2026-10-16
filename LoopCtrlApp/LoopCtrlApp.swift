@@ -5,7 +5,7 @@ struct LoopCtrlApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var permission = NetworkPermission()
     /// Clients and log of the runner on this device; shared by Settings and Logs.
-    @StateObject private var runnerAdmin = RunnerAdmin(port: 8200)
+    @StateObject private var runnerAdmin = RunnerAdmin()
     @State private var showPermissionAlert = false
     /// Outcome of a pairing file shared to the app, shown as an alert.
     @State private var sharedPairing: SharedPairingResult?

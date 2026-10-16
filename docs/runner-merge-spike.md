@@ -179,7 +179,7 @@ delegate，所以不冲突；但以后如果 App 要处理通知，需要统一�
 4. **自举与密码弹窗**：第一次启动时应该弹出 "Enable UI Automation" 并要求输入密码。输完后，
    日志（`Library/Logs/LoopCtrl/loopctrl-*.log`）里应该依次出现
    `🟩 +load reached in-process`、`🧩 setUpWithError begin`、`✅ testStartServer began`。
-5. **服务器**：用另一台设备或手机上的客户端访问 `127.0.0.1:8200` / 局域网地址，执行截图和点击。
+5. **服务器**：用另一台设备或手机上的客户端访问 `127.0.0.1:8300` / 局域网地址，执行截图和点击。
    同时确认 LoopCtrl 界面没有被自动切走，并且能正常滚动和点击。
 6. **后台**：按 Home 键离开 LoopCtrl，等 5 分钟以上，再从另一台机器调用 RPC。预期：仍然能响应。
    **这是风险最大的一项。**

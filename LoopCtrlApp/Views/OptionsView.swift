@@ -14,6 +14,7 @@ struct OptionsView: View {
     @State private var hasPairingFile = PairingFileStore.exists
     @State private var showMountSheet = false
     @State private var logCount = AppLog.allFiles().count
+    @State private var portText = String(ServerPort.stored)
 
     /// Provides the local loopback tunnel the mount needs to reach lockdownd.
     /// An App Store link: LocalDevVPN registers no URL scheme of its own.
@@ -31,6 +32,7 @@ struct OptionsView: View {
         NavigationStack {
             List {
                 setupSection
+                portSection
 
                 if case .running(let info) = runner.state {
                     serverSection(info)
@@ -69,6 +71,50 @@ struct OptionsView: View {
     }
 
     // MARK: - Sections
+
+    private var portIsValid: Bool {
+        Int(portText).map(ServerPort.allowed.contains) ?? false
+    }
+
+    /// The server's port. Saved as soon as it is valid; the runner picks it up
+    /// on the next start, so it can't change while the service is running.
+    private var portSection: some View {
+        Section {
+            HStack {
+                Text(L10n.ui(.portLabel))
+                Spacer()
+                TextField(String(ServerPort.defaultPort), text: $portText)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundColor(portIsValid ? .primary : .orange)
+                    .frame(maxWidth: 120)
+                    .disabled(runner.isRunning)
+                    .onChange(of: portText) { text in
+                        let digits = String(text.filter(\.isNumber).prefix(5))
+                        if digits != text { portText = digits; return }
+                        if let value = Int(digits), ServerPort.allowed.contains(value) {
+                            appState.serverPort = value
+                        }
+                    }
+            }
+            if portText != String(ServerPort.defaultPort) && !runner.isRunning {
+                Button(L10n.ui(.portReset)) {
+                    portText = String(ServerPort.defaultPort)
+                }
+            }
+        } footer: {
+            if runner.isRunning {
+                Text(L10n.ui(.portRunningFooter))
+            } else if !portIsValid {
+                Text(String(format: L10n.ui(.portInvalid),
+                            ServerPort.allowed.lowerBound, ServerPort.allowed.upperBound))
+                    .foregroundColor(.orange)
+            } else {
+                Text(String(format: L10n.ui(.portFooter), Int(ServerPort.defaultPort)))
+            }
+        }
+    }
 
     /// Pairing, image download, Wi-Fi, tunnel app and the mount all live in
     /// DDIMountView; here it is one row that says where things stand.

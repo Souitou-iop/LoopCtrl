@@ -28,7 +28,7 @@ home_dir="${HOME:-/root}/.loopctrl/bin"
 # place — sh reads this script while running it, so overwriting it in place
 # would corrupt the run doing the update.
 if [ "$1" = "update" ]; then
-    base="http://${LOOPCTRL_HOST:-127.0.0.1:8200}"
+    base="http://${LOOPCTRL_HOST:-127.0.0.1:8300}"
     fetch() { wget -qO "$2.new" "$base$1" && [ -s "$2.new" ] && mv "$2.new" "$2" || { rm -f "$2.new"; echo "loopctrl.sh: could not fetch $base$1" >&2; exit 1; }; }
     if [ -n "$2" ] && [ ! -d "$2" ]; then echo "loopctrl.sh: $2 is not a directory" >&2; exit 1; fi
     mkdir -p "$home_dir" || exit 1
@@ -46,7 +46,7 @@ if [ "$1" = "update" ]; then
 fi
 
 if [ ! -f "$bin" ]; then
-    echo "loopctrl.sh: $bin not found — download it: wget -qO $bin http://127.0.0.1:8200/skill/clients/cli" >&2
+    echo "loopctrl.sh: $bin not found — download it: wget -qO $bin http://127.0.0.1:8300/skill/clients/cli" >&2
     exit 1
 fi
 

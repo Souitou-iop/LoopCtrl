@@ -49,8 +49,8 @@ final class RunnerAdmin: ObservableObject {
     /// The runner keeps 500 lines at most per `logs` call.
     static let logLineLimit = 500
 
-    init(port: Int) {
-        client = RunnerClient(port: port)
+    init() {
+        client = RunnerClient()
         isPaired = client.isPaired
     }
 

@@ -61,6 +61,27 @@ final class URLSchemeHandler {
         return urls
     }
 
+    /// The `port` of the newest pending `loopctrl://start?port=…`, left queued.
+    /// Read before the listener opens, so a cold start already binds the port
+    /// the LoopCtrl app asked for (the two-IPA runner can't read its setting).
+    func pendingStartPort() -> UInt16? {
+        for u in EarlyURLHook.drainURLs() { record(u) }
+        lock.lock()
+        defer { lock.unlock() }
+        for url in pendingURLs.reversed() where url.host?.lowercased() == "start" {
+            if let port = Self.port(in: url) { return port }
+        }
+        return nil
+    }
+
+    /// A valid `port` query item, if the URL carries one.
+    static func port(in url: URL) -> UInt16? {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        guard let raw = items.first(where: { $0.name == "port" })?.value,
+              let value = Int(raw), ServerPort.allowed.contains(value) else { return nil }
+        return UInt16(value)
+    }
+
     /// Back-compat single-URL drain (returns the oldest pending, if any).
     func takePendingURL() -> URL? {
         lock.lock()

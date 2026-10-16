@@ -16,6 +16,7 @@ extension L10n {
         case runnerOpenFailed, runnerStartFailed
         case localAddress, lanAddress, noWiFi, copied
         case remoteAccess, remoteAccessOnFooter, remoteAccessOffFooter, remoteAccessApproveFooter
+        case portLabel, portFooter, portRunningFooter, portInvalid, portReset
     }
 
     static func ui(_ key: UI) -> String {
@@ -29,6 +30,17 @@ extension L10n {
         .lanAddress: [.en: "Wi-Fi", .zhHans: "局域网", .zhHant: "區域網路"],
         .noWiFi: [.en: "Not on Wi-Fi", .zhHans: "未连接 Wi-Fi", .zhHant: "未連接 Wi-Fi"],
         .copied: [.en: "Copied", .zhHans: "已复制", .zhHant: "已複製"],
+        .portLabel: [.en: "Port", .zhHans: "端口", .zhHant: "連接埠"],
+        .portFooter: [.en: "The port automation clients connect to. Default %d. Don't share it with another automation app such as iCTRL.",
+                      .zhHans: "自动化客户端连接的端口，默认 %d。不要和 iCTRL 等其他自动化 App 使用同一个端口。",
+                      .zhHant: "自動化用戶端連線的連接埠，預設 %d。不要和 iCTRL 等其他自動化 App 使用同一個連接埠。"],
+        .portRunningFooter: [.en: "Stop the service to change the port.",
+                             .zhHans: "停止服务后才能修改端口。",
+                             .zhHant: "停止服務後才能修改連接埠。"],
+        .portInvalid: [.en: "Use a port from %d to %d.",
+                       .zhHans: "端口需在 %d 到 %d 之间。",
+                       .zhHant: "連接埠需在 %d 到 %d 之間。"],
+        .portReset: [.en: "Restore Default", .zhHans: "恢复默认", .zhHant: "恢復預設"],
         .remoteAccess: [.en: "Remote Access", .zhHans: "远程访问", .zhHant: "遠端存取"],
         .remoteAccessOnFooter: [.en: "Devices on the same Wi-Fi can reach the address above; each one still has to be approved before it can pair.",
                                 .zhHans: "同一 Wi-Fi 下的设备可以访问上面的地址，每台设备仍需你批准才能配对。",

@@ -60,7 +60,7 @@ import urllib.request
 import urllib.error
 
 # Generic default — not a specific device. Override with --host or the UI field.
-DEFAULT_HOST = "127.0.0.1:8200"
+DEFAULT_HOST = "127.0.0.1:8300"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

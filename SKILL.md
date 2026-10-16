@@ -1,19 +1,19 @@
 ---
 name: loopctrl-phone-control
-description: Control an iPhone over HTTP to automate real apps — tap, type, swipe, read the screen's view tree, launch apps, take screenshots. Use when the user asks to operate a phone, drive an iOS app, automate a mobile task (search a product, check an order, fill a form), or inspect what's on a device's screen. The service is LoopCtrl, JSON-RPC 2.0 on port 8200; requests are encrypted, so drive it with a client downloaded from the device (a static CLI needing no interpreter, or a Python one) rather than hand-written HTTP.
+description: Control an iPhone over HTTP to automate real apps — tap, type, swipe, read the screen's view tree, launch apps, take screenshots. Use when the user asks to operate a phone, drive an iOS app, automate a mobile task (search a product, check an order, fill a form), or inspect what's on a device's screen. The service is LoopCtrl, JSON-RPC 2.0 on port 8300; requests are encrypted, so drive it with a client downloaded from the device (a static CLI needing no interpreter, or a Python one) rather than hand-written HTTP.
 skill_version: "1.98.12"
 ---
 
 # LoopCtrl — control an iPhone over HTTP
 
-LoopCtrl runs on the iPhone and serves UI automation as **JSON-RPC 2.0 over HTTP, port 8200**, encrypted. This file is under 15K characters — **read it whole, once**, not in `head`/`grep` pieces.
+LoopCtrl runs on the iPhone and serves UI automation as **JSON-RPC 2.0 over HTTP, port 8300** (default; set in the app), encrypted. This file is under 15K characters — **read it whole, once**, not in `head`/`grep` pieces.
 
 ## Quick start
 
 On the phone (e.g. Minis) — the device is `127.0.0.1`:
 ```bash
 C=~/.loopctrl/bin; I="sh $C/loopctrl.sh"
-[ -f $C/loopctrl ] || { mkdir -p $C && wget -qO $C/loopctrl http://127.0.0.1:8200/skill/clients/cli && wget -qO $C/loopctrl.sh http://127.0.0.1:8200/skill/clients/cli.sh; }
+[ -f $C/loopctrl ] || { mkdir -p $C && wget -qO $C/loopctrl http://127.0.0.1:8300/skill/clients/cli && wget -qO $C/loopctrl.sh http://127.0.0.1:8300/skill/clients/cli.sh; }
 $I call device_info                       # 401 → $I pair (user taps Allow)
 $I call resolve_app '{"text":"<brand>|<store name>|<alias>"}'  # every name it may go by
 $I call launch_app '{"bundle_id":"<id>"}'
@@ -23,7 +23,7 @@ $I call tap '{"ref":"<ref>"}'
 ```
 - `device_info.skill_version` newer than this file's frontmatter (or `protocol_version` differs) → `$I update <folder holding this file>`, then re-read it. Device older: don't downgrade; use only its `capabilities[]`.
 - Keep the client in `~/.loopctrl/bin` — **not** `/var/minis/workspace`, which ignores the exec bit ("Permission denied").
-- Elsewhere: `curl -o loopctrl_rpc.py http://<host>:8200/skill/clients/python`, then `python3 loopctrl_rpc.py --host <host>:8200 call …`. The CLI takes `--host`/`LOOPCTRL_HOST`.
+- Elsewhere: `curl -o loopctrl_rpc.py http://<host>:8300/skill/clients/python`, then `python3 loopctrl_rpc.py --host <host>:8300 call …`. The CLI takes `--host`/`LOOPCTRL_HOST`.
 - **No address?** Have the user turn on *Nearby Discovery* (needs Remote Access, Wi-Fi on). `loopctrl_rpc.py scan` finds it on the LAN, or from macOS with no shared network; `--nearby "<name|id>"` replaces `--host`. First use pairs (one Allow).
 - Keys: `~/.loopctrl/token.json`, one per device (`/whoami` id) for USB, LAN, nearby; reuse (30-day idle expiry). Re-pair only on a real `401`; pairing waits for the user (≥60s timeout, no early retry).
 

@@ -478,7 +478,7 @@ static void split_host(const char *hostport, char *host, size_t hn, char *port, 
         if (hl >= hn) hl = hn - 1;
         memcpy(host, hostport + 1, hl);
         host[hl] = 0;
-        snprintf(port, pn, "%s", end && end[1] == ':' ? end + 2 : "8200");
+        snprintf(port, pn, "%s", end && end[1] == ':' ? end + 2 : "8300");
         return;
     }
     const char *colon = strrchr(hostport, ':');
@@ -490,7 +490,7 @@ static void split_host(const char *hostport, char *host, size_t hn, char *port, 
         snprintf(port, pn, "%s", colon + 1);
     } else {
         snprintf(host, hn, "%s", hostport);
-        snprintf(port, pn, "8200");
+        snprintf(port, pn, "8300");
     }
 }
 
@@ -704,7 +704,7 @@ static void usage(void) {
         "  loopctrl scan                                    list nearby devices (peer-to-peer Wi-Fi)\n"
         "  loopctrl --nearby NAME|ID call|shot|pair ...     use a nearby device; pairs on first use\n"
 #endif
-        "\nDefault host is 127.0.0.1:8200 (inside Minis this is the device itself).\n"
+        "\nDefault host is 127.0.0.1:8300 (inside Minis this is the device itself).\n"
         "Env: LOOPCTRL_HOST overrides the default host.\n");
 }
 
@@ -854,7 +854,7 @@ static void use_device_key(const char *hostport, const char *known_id, int pairi
 
 int main(int argc, char **argv) {
     const char *hostport = getenv("LOOPCTRL_HOST");
-    if (!hostport) hostport = "127.0.0.1:8200";
+    if (!hostport) hostport = "127.0.0.1:8300";
 
     int i = 1;
     const char *nearby = NULL;

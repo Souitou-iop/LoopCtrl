@@ -27,9 +27,8 @@ final class RunnerStatus: ObservableObject {
     @Published private(set) var lastChecked: Date?
 
     private var pollTask: Task<Void, Never>?
-    private let port: Int
-
-    init(port: Int) { self.port = port }
+    /// Read on every probe: the port can be changed in Settings.
+    private var port: Int { Int(ServerPort.stored) }
 
     var isRunning: Bool { if case .running = state { return true }; return false }
 

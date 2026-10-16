@@ -5,10 +5,10 @@ All request-path crypto is HMAC-SHA256 only, so this is portable to any language
 with an HMAC primitive. X25519 appears only in LAN pairing (mode A).
 
 Usage:
-    ./loopctrl_rpc.py --host 10.0.0.5:8200 pair --name my-laptop
-    ./loopctrl_rpc.py --host 10.0.0.5:8200 call device_info
-    ./loopctrl_rpc.py --host 10.0.0.5:8200 call tap '{"x":100,"y":200}'
-    ./loopctrl_rpc.py --host 10.0.0.5:8200 shot out.jpg          # JPEG by default
+    ./loopctrl_rpc.py --host 10.0.0.5:8300 pair --name my-laptop
+    ./loopctrl_rpc.py --host 10.0.0.5:8300 call device_info
+    ./loopctrl_rpc.py --host 10.0.0.5:8300 call tap '{"x":100,"y":200}'
+    ./loopctrl_rpc.py --host 10.0.0.5:8300 shot out.jpg          # JPEG by default
 
 Discovery (the phone has Nearby Discovery on): found on the LAN from any OS,
 and over Apple peer-to-peer Wi-Fi from macOS with no shared network needed:
@@ -364,7 +364,7 @@ def _remember_address(device_id: str, record: dict, host: str, name: str | None 
     """Save `record` as this device's key, noting the address it was used at.
 
     Addresses are stored with an "@" prefix: older clients find a record by
-    searching the file for the quoted address ("10.0.0.5:8200"), and a bare
+    searching the file for the quoted address ("10.0.0.5:8300"), and a bare
     copy inside this list would lead them to the wrong record's key."""
     rec = dict(record)
     rec.pop("hosts", None)
@@ -851,7 +851,7 @@ def device_call(host: str, method: str, params: dict | None = None, *,
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--host", default="127.0.0.1:8200")
+    ap.add_argument("--host", default="127.0.0.1:8300")
     ap.add_argument("--nearby", metavar="NAME_OR_ID",
                     help="reach a discovered device by name or id instead of --host "
                          "(over the LAN, else peer-to-peer Wi-Fi on macOS)")

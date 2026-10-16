@@ -1385,8 +1385,8 @@ class ActionHandler {
                 + "SKILL.md frontmatter, update now, before anything else — even if your copy calls version gaps "
                 + "advisory (older copies did). CLI: sh ~/.loopctrl/bin/loopctrl.sh update <folder containing your SKILL.md> "
                 + "(an loopctrl.sh without `update` must first be refreshed: wget -qO ~/.loopctrl/bin/loopctrl.sh "
-                + "http://<host>:8200/skill/clients/cli.sh). Python: curl -o <that folder>/SKILL.md http://<host>:8200/skill "
-                + "&& curl -o loopctrl_rpc.py http://<host>:8200/skill/clients/python. Then re-read SKILL.md. "
+                + "http://<host>:8300/skill/clients/cli.sh). Python: curl -o <that folder>/SKILL.md http://<host>:8300/skill "
+                + "&& curl -o loopctrl_rpc.py http://<host>:8300/skill/clients/python. Then re-read SKILL.md. "
                 + "If this device is OLDER than your copy, don't downgrade: use only what `capabilities` lists."
             ),
             // Coordinate space that tap/swipe/drag/long_press use:

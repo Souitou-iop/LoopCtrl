@@ -48,11 +48,12 @@ final class RunnerClient {
         var tok: String   // hex, 4 bytes: the session id on the runner
     }
 
-    let port: Int
+    /// Read on every call: the port can be changed in Settings. The key is
+    /// the runner's, not the port's, so pairing survives a port change.
+    var port: Int { Int(ServerPort.stored) }
     private var record: Record?
 
-    init(port: Int) {
-        self.port = port
+    init() {
         if let data = KeychainStore.load(account: Self.keychainAccount) {
             record = try? JSONDecoder().decode(Record.self, from: data)
         }

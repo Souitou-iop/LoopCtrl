@@ -20,7 +20,7 @@
 
 LoopCtrl turns an iPhone into a controllable automation endpoint. It runs a
 long-lived XCUITest runner that exposes a **JSON-RPC 2.0 API over HTTP** (default
-port `8200`), so an AI agent — or any HTTP client — can drive the device: tap,
+port `8300`), so an AI agent — or any HTTP client — can drive the device: tap,
 swipe, type, read the UI tree, take screenshots, launch apps, open URLs, and more.
 
 Unlike a raw XCUITest script, LoopCtrl is designed to be **discovered and driven by a
@@ -40,7 +40,7 @@ faster.
 **Hand it to your agent in one sentence.** Once the runner is up (with remote
 access enabled, if the agent isn't on the phone), tell your agent:
 
-> *"My iPhone is running LoopCtrl at 192.168.1.20:8200 — figure out how to drive it."*
+> *"My iPhone is running LoopCtrl at 192.168.1.20:8300 — figure out how to drive it."*
 
 It finds the manual at `GET /skill` and the method list at `GET /schema`,
 downloads a client from the device, and asks to pair. Approve the pairing
@@ -58,7 +58,7 @@ flowchart LR
 
   subgraph phone["iPhone"]
     direction TB
-    R["LoopCtrl runner :8200<br/>127.0.0.1 only by default"]
+    R["LoopCtrl runner :8300<br/>127.0.0.1 only by default"]
     N["🔔 Runner notifications<br/>✅ Allow pairing · 🌐 Remote Access · 📡 Nearby · 🛑 Stop"]
     N -. "🌐 Remote Access opens it to the LAN" .-> R
   end
@@ -77,7 +77,7 @@ An agent on the phone itself, such as Minis, reaches the runner on
 and the same Wi-Fi network.
 
 - **Bundle ID:** `com.openminis.loopctrl`
-- **Transport:** JSON-RPC 2.0 over HTTP, port `8200`
+- **Transport:** JSON-RPC 2.0 over HTTP, port `8300` by default (Settings → Port in the app; not iCTRL's 8200, so both can be installed)
 - **Auth:** encrypted envelope (X25519 pairing → HMAC-SHA256 sealed requests)
 - **Shipped as two IPAs:** `LoopCtrlUITests-Runner.ipa` (the automation engine —
   **required, and the one that must be running**) + `LoopCtrl.ipa` (the
@@ -504,7 +504,7 @@ python3 loopctrl_rpc.py --nearby "iPhone 15 (7f3a)" call device_info   # or an i
 With remote access enabled, from another machine on the same Wi-Fi:
 
 ```bash
-curl http://<device-ip>:8200/schema
+curl http://<device-ip>:8300/schema
 ```
 
 If that returns a JSON document, the runner is up.
@@ -530,15 +530,15 @@ hand-roll the crypto — download a client from the device itself:
 
 ```bash
 # Fetch the reference client (unauthenticated)
-curl -o loopctrl_rpc.py http://<device-ip>:8200/skill/clients/python
+curl -o loopctrl_rpc.py http://<device-ip>:8300/skill/clients/python
 
 # Pair once — long-press the pairing notification on the phone → ✅ Allow
 # (blocks up to 60s). Standard library only, no packages to install.
-python3 loopctrl_rpc.py --host <device-ip>:8200 pair
+python3 loopctrl_rpc.py --host <device-ip>:8300 pair
 
 # Drive it
-python3 loopctrl_rpc.py --host <device-ip>:8200 call device_info
-python3 loopctrl_rpc.py --host <device-ip>:8200 call tap '{"x":100,"y":200}'
+python3 loopctrl_rpc.py --host <device-ip>:8300 call device_info
+python3 loopctrl_rpc.py --host <device-ip>:8300 call tap '{"x":100,"y":200}'
 ```
 
 No address at hand? Turn on nearby discovery and use `scan` / `--nearby`
@@ -551,7 +551,7 @@ with no Python.
 
 **`GET /skill`** returns the full operating manual in Markdown, so you don't need
 to brief an agent yourself. Give it the address ("*My iPhone is running LoopCtrl at
-192.168.1.20:8200 — figure out how to drive it.*") and it will read the manual
+192.168.1.20:8300 — figure out how to drive it.*") and it will read the manual
 and drive the device from there.
 
 ## API surface

@@ -55,13 +55,10 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     }
     private var nearbyEnabled = false
 
-    /// Persisted listen port. Absent key → 8200.
+    /// Persisted listen port, as chosen in the LoopCtrl app (ServerPort).
     private static var persistedPort: UInt16 {
-        get {
-            let v = UserDefaults.standard.integer(forKey: "serverPort")
-            return (v > 0 && v <= 65535) ? UInt16(v) : 8200
-        }
-        set { UserDefaults.standard.set(Int(newValue), forKey: "serverPort") }
+        get { ServerPort.stored }
+        set { ServerPort.stored = newValue }
     }
 
     override func setUpWithError() throws {
@@ -543,8 +540,12 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     /// each start after a stop.
     @discardableResult
     private func startService() -> Bool {
-        // Restore persisted preferences (fresh install → local only, port 8200)
+        // Restore persisted preferences (fresh install → local only, ServerPort.defaultPort)
         remoteAccessEnabled = Self.persistedRemoteAccess
+        if let asked = URLSchemeHandler.shared.pendingStartPort(), asked != Self.persistedPort {
+            Self.logBuffer.append("🔢 Port \(asked) from loopctrl://start")
+            Self.persistedPort = asked
+        }
         let port = Self.persistedPort
         let newServer = JSONRPCServer(port: port, localOnly: !remoteAccessEnabled)
         server = newServer
@@ -562,7 +563,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             } else {
                 Self.persistedNearby = false
                 Self.logBuffer.append("🔒 Server started on 127.0.0.1:\(port) (local only)")
-                postStatusNotification(detail: L10n.t(.localOnlyBody))
+                postStatusNotification(detail: String(format: L10n.t(.localOnlyBody), "127.0.0.1:\(port)"))
             }
             return true
         } catch {
@@ -753,6 +754,25 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             return
         }
 
+        // The LoopCtrl app's port setting. Stored either way; a server already
+        // listening on another port moves over (startService reads it below).
+        if let asked = URLSchemeHandler.port(in: url), asked != Self.persistedPort {
+            Self.persistedPort = asked
+            if let current = server, current.port != asked {
+                Self.logBuffer.append("🔢 loopctrl://start asks for port \(asked) — moving from \(current.port)")
+                current.onStateChange = nil
+                current.stop()
+                let moved = JSONRPCServer(port: asked, localOnly: !remoteAccessEnabled)
+                wireNewServer(moved)
+                do {
+                    try moved.start()
+                    if remoteAccessEnabled && nearbyEnabled { moved.startNearby() }
+                } catch {
+                    Self.logBuffer.append("🔴 Failed to listen on port \(asked): \(error)")
+                }
+            }
+        }
+
         // All-in-one build, service stopped earlier: start it again on this
         // same test (a second XCTest bootstrap in one process would abort).
         if parksWhenStopped && server == nil {
@@ -777,8 +797,8 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
 
         let running = server?.isRunning ?? false
         Self.logBuffer.append("🔙 server running=\(running) after wait")
-        let address = remoteAccessEnabled ? "\(getDeviceAddress()):\(server?.port ?? 8200)"
-                                          : "127.0.0.1:\(server?.port ?? 8200)"
+        let address = remoteAccessEnabled ? "\(getDeviceAddress()):\(server?.port ?? Self.persistedPort)"
+                                          : "127.0.0.1:\(server?.port ?? Self.persistedPort)"
         let status = running ? "ready" : "failed"
 
         // Append status + address to the callback URL.
@@ -1521,12 +1541,14 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                                       message: "device_name must be at most \(NearbyIdentity.maxNameBytes) bytes of UTF-8",
                                       data: nil))
         }
-        if let portValue = params?["listen_port"]?.intValue, !(1...65535).contains(portValue) {
-            return (nil, JSONRPCError(code: -32602, message: "listen_port must be 1..65535", data: nil))
+        if let portValue = params?["listen_port"]?.intValue, !ServerPort.allowed.contains(portValue) {
+            return (nil, JSONRPCError(code: -32602,
+                                      message: "listen_port must be \(ServerPort.allowed.lowerBound)..\(ServerPort.allowed.upperBound)",
+                                      data: nil))
         }
 
         var restartNeeded = false
-        var newPort = UInt16(server?.port ?? 8200)
+        var newPort = UInt16(server?.port ?? Self.persistedPort)
         var clearedSessions = 0
         var revokedSession: String?
 
@@ -1591,7 +1613,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         if let portValue = params?["listen_port"]?.intValue {    // range checked above
             if UInt16(portValue) != newPort {
                 newPort = UInt16(portValue)
-                UserDefaults.standard.set(portValue, forKey: "serverPort")
+                Self.persistedPort = UInt16(portValue)
                 restartNeeded = true
             }
         }
@@ -1603,7 +1625,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             Self.logBuffer.append(on ? "📡 Nearby discovery enabled via config" : "📴 Nearby discovery disabled via config")
             if !restartNeeded {
                 if on { server?.startNearby() } else { server?.stopNearby() }
-                let port = UInt16(server?.port ?? 8200)
+                let port = UInt16(server?.port ?? Self.persistedPort)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     guard let self = self else { return }
                     self.postStatusNotification(detail: self.addressLines(port: port))
@@ -1625,7 +1647,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                     try newServer.start()
                     if self.remoteAccessEnabled && self.nearbyEnabled { newServer.startNearby() }
                     Self.logBuffer.append("⚙️ Config applied, server restarted on port \(port)")
-                    let detail = self.remoteAccessEnabled ? self.addressLines(port: port) : L10n.t(.localOnlyBody)
+                    let detail = self.remoteAccessEnabled ? self.addressLines(port: port) : String(format: L10n.t(.localOnlyBody), "127.0.0.1:\(port)")
                     self.postStatusNotification(detail: detail)
                 } catch {
                     Self.logBuffer.append("🔴 Config restart failed: \(error)")
@@ -2004,7 +2026,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         let mins = Int(ProcessInfo.processInfo.systemUptime - Self.serverStartedAt) / 60
         let human = mins < 60 ? "\(mins)m" : "\(mins / 60)h\(mins % 60)m"
         postStatusNotification(
-            detail: "\(addr):\(server?.port ?? 8200) · \(sessions) client\(sessions == 1 ? "" : "s") · up \(human)",
+            detail: "\(addr):\(server?.port ?? Self.persistedPort) · \(sessions) client\(sessions == 1 ? "" : "s") · up \(human)",
             silent: true
         )
     }
@@ -2065,7 +2087,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         // posts again when it does. Refresh now so the menu flips immediately.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self else { return }
-            self.postStatusNotification(detail: self.addressLines(port: self.server?.port ?? 8200))
+            self.postStatusNotification(detail: self.addressLines(port: self.server?.port ?? Self.persistedPort))
         }
     }
 
@@ -2083,7 +2105,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         remoteAccessEnabled = true
         Self.persistedRemoteAccess = true  // remember for next launch
 
-        let newServer = JSONRPCServer(port: 8200, localOnly: false)
+        let newServer = JSONRPCServer(port: Self.persistedPort, localOnly: false)
         wireNewServer(newServer)
 
         do {
@@ -2105,16 +2127,16 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     private func announceRemoteReady(address: String) {
         let net = NetworkTypeMonitor.shared.current
         if lanAddress() != nil {
-            Self.logBuffer.append("🌐 Server started on \(address):8200 (remote, \(net.rawValue)) — verifying reachability")
+            Self.logBuffer.append("🌐 Server started on \(address):\(server?.port ?? Self.persistedPort) (remote, \(net.rawValue)) — verifying reachability")
             verifyRemoteReachableThenNotify(address: address)
         } else {
             // Cellular / undetermined: no LAN, so no self-check and no failure.
-            Self.logBuffer.append("📶 Server started on \(address):8200 (\(net.rawValue) — on-device only, skipping remote self-check)")
+            Self.logBuffer.append("📶 Server started on \(address):\(server?.port ?? Self.persistedPort) (\(net.rawValue) — on-device only, skipping remote self-check)")
             // Clear any stale failure notice from a previous Wi-Fi session.
             reportedRemoteFailure = false
             clearRemoteFailedNotification()
             postStatusNotification(
-                detail: addressLines(port: server?.port ?? 8200) + " — " + L10n.t(.onDeviceOnlySuffix)
+                detail: addressLines(port: server?.port ?? Self.persistedPort) + " — " + L10n.t(.onDeviceOnlySuffix)
             )
         }
     }
@@ -2128,13 +2150,13 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         nearbyEnabled = false               // nearby needs remote access
         Self.persistedNearby = false
 
-        let newServer = JSONRPCServer(port: 8200, localOnly: true)
+        let newServer = JSONRPCServer(port: Self.persistedPort, localOnly: true)
         wireNewServer(newServer)
 
         do {
             try newServer.start()
             Self.logBuffer.append("🔒 Remote access disabled, local only")
-            postStatusNotification(title: L10n.t(.remoteDisabledTitle), detail: L10n.t(.remoteDisabledBody))
+            postStatusNotification(title: L10n.t(.remoteDisabledTitle), detail: String(format: L10n.t(.remoteDisabledBody), "127.0.0.1:\(newServer.port)"))
         } catch {
             Self.logBuffer.append("🔴 Failed to disable remote access: \(error)")
         }
@@ -2284,7 +2306,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             return
         }
         verifyInFlight = true
-        let portNum = UInt16(server?.port ?? 8200)
+        let portNum = UInt16(server?.port ?? Self.persistedPort)
         let wasFailed = reportedRemoteFailure
         selfConnectCheck(host: address, port: portNum, timeout: 1.0) { [weak self] ok in
             guard let self = self else { return }

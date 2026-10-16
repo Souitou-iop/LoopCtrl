@@ -21,7 +21,7 @@ struct RPCMethodRegistry {
             description: "Read or update server settings and manage authorized sessions. With no params: returns current config plus the list of authorized sessions (client name, masked token prefix, granted/expiry times). Pass allow_remote_access and/or listen_port to change settings (persisted; server restarts, dropping the connection — reconnect at the returned address). Pass revoke_session_id to remove one session, or clear_sessions=true to revoke ALL tokens (including your own). Pass stop_server=true to SHUT DOWN the service (stops listening after replying; re-launch the runner to restart — tokens are preserved so no re-auth is needed).",
             params: [
                 RPCParamDef(name: "allow_remote_access", type: "boolean", required: false, description: "true = listen on all interfaces (LAN reachable); false = 127.0.0.1 only"),
-                RPCParamDef(name: "listen_port", type: "number", required: false, description: "TCP port to listen on (1..65535, default 8200)"),
+                RPCParamDef(name: "listen_port", type: "number", required: false, description: "TCP port to listen on (1024..65534, default 8300; the LoopCtrl app's Port setting)"),
                 RPCParamDef(name: "revoke_session_id", type: "string", required: false, description: "session_id of a single authorization to revoke"),
                 RPCParamDef(name: "clear_sessions", type: "boolean", required: false, description: "true = revoke all authorized tokens immediately"),
                 RPCParamDef(name: "nearby_discovery", type: "boolean", required: false, description: "Advertise to nearby Apple devices over peer-to-peer Wi-Fi (needs allow_remote_access). Switching it on is accepted only from this device (the LoopCtrl app or USB); switching it off from anyone"),
@@ -442,7 +442,7 @@ struct RPCMethodRegistry {
                 "logs": "GET /logs?ticket=<t>   plain-text recent logs (current process, in-memory). Browser-issued GET, so it uses the same single-use ticket as /stream. Sensitive values are redacted",
                 "logs_files": "GET /logs/files?ticket=<t>   list persisted daily log files (survive crashes/restarts)",
                 "logs_history": "GET /logs/history?date=YYYY-MM-DD&ticket=<t>   dump a persisted day's log (redacted). Use this to recover logs from BEFORE a crash — /logs only holds the current process's memory",
-                "client": "Download a client instead of hand-writing the crypto — both are served off the device, so they always match this build. GET /skill/clients/cli → a static aarch64-musl binary needing no interpreter (use this in Alpine/musl sandboxes such as Minis, where python3 is absent and installing it costs a network round-trip); fetch /skill/clients/cli.sh too and invoke it as `sh loopctrl.sh call device_info`, since skill installers write files without an exec bit. GET /skill/clients/python → a stdlib-only reference client (X25519 LAN pairing additionally wants `pip install cryptography`): `curl -O http://<host>:8200/skill/clients/python`, then `python3 loopctrl_rpc.py --host <host>:8200 pair`. Both share ~/.loopctrl/token.json and are interchangeable.",
+                "client": "Download a client instead of hand-writing the crypto — both are served off the device, so they always match this build. GET /skill/clients/cli → a static aarch64-musl binary needing no interpreter (use this in Alpine/musl sandboxes such as Minis, where python3 is absent and installing it costs a network round-trip); fetch /skill/clients/cli.sh too and invoke it as `sh loopctrl.sh call device_info`, since skill installers write files without an exec bit. GET /skill/clients/python → a stdlib-only reference client (X25519 LAN pairing additionally wants `pip install cryptography`): `curl -O http://<host>:8300/skill/clients/python`, then `python3 loopctrl_rpc.py --host <host>:8300 pair`. Both share ~/.loopctrl/token.json and are interchangeable.",
                 "schema": "GET /schema  this document",
             ],
             "guidance": [
@@ -475,7 +475,7 @@ struct RPCMethodRegistry {
                     "(e.g. a tap fires twice). Only retry if /logs shows no success and no in-flight entry.",
                 "connection_reliability":
                     "The service runs inside an XCUITest process on the phone and can occasionally drop (iOS backgrounding " +
-                    "limits, or a stuck long-running call). Treat 8200 as possibly-transient: " +
+                    "limits, or a stuck long-running call). Treat 8300 as possibly-transient: " +
                     "(1) Before a session, probe with a SHORT timeout: GET /schema (1-2s) — 200 means ready. " +
                     "(2) If the app was just woken via the loopctrl:// URL scheme, note the returned 'opened' flag is UNRELIABLE " +
                     "(it only means the URL was handed to the system, NOT that the server is up) — always confirm by polling " +
@@ -625,7 +625,7 @@ struct RPCMethodRegistry {
         <ul style="margin:6px 0 0 18px;color:#6e6e73;font-size:14px;line-height:1.6">
         <li><strong>Use long <code>/rpc</code> timeouts (≥30s, ideally 60–120s).</strong> <code>/schema</code> and <code>/logs</code> reply instantly, but <code>/rpc</code> drives the real device and a call can take seconds.</li>
         <li><strong>A client timeout ≠ failure.</strong> The device keeps executing. Before retrying, <code>GET /logs</code> and look for <code>⏱ ✓ &lt;method&gt;</code> — if present, it already succeeded and retrying would double the action.</li>
-        <li><strong>Probe readiness with <code>GET /schema</code> (short timeout).</strong> If you woke the service via the <code>loopctrl://</code> URL scheme, the <code>opened</code> flag is NOT proof the server is up — the runner cold-starts and needs a few seconds to bind :8200. Poll <code>/schema</code> until it returns 200.</li>
+        <li><strong>Probe readiness with <code>GET /schema</code> (short timeout).</strong> If you woke the service via the <code>loopctrl://</code> URL scheme, the <code>opened</code> flag is NOT proof the server is up — the runner cold-starts and needs a few seconds to bind :8300. Poll <code>/schema</code> until it returns 200.</li>
         <li><strong>If <code>/rpc</code> and <code>/logs</code> both go unreachable</strong>, the runner process died — re-wake via <code>loopctrl://</code> and poll <code>/schema</code> until ready. Your cached key survives; only re-pair on a 401.</li>
         </ul>
         </div>

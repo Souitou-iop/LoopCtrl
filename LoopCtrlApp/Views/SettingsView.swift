@@ -18,7 +18,7 @@ struct SettingsView: View {
     @State private var launchFailed = false
     @State private var showMountSheet = false
     @State private var showOptions = false
-    @StateObject private var runner = RunnerStatus(port: 8200)
+    @StateObject private var runner = RunnerStatus()
     @EnvironmentObject private var runnerAdmin: RunnerAdmin
 
     /// The runner registers this scheme; opening it starts the automation server.
@@ -26,8 +26,11 @@ struct SettingsView: View {
     /// `callback` asks the runner to bounce back to us once it has decided
     /// whether the server came up, appending `status` and `address`. Without it
     /// the user is left in the runner — a blank XCTest app with nothing to show
-    /// — wondering whether anything happened.
-    private static let runnerURL = URL(string: "loopctrl://start?callback=loopctrl-app://started")!
+    /// — wondering whether anything happened. `port` is the Settings choice: the
+    /// two-IPA runner has its own container and can't read it.
+    private var runnerURL: URL {
+        URL(string: "loopctrl://start?port=\(ServerPort.stored)&callback=loopctrl-app://started")!
+    }
 
     /// Stopping goes through the URL scheme too. The only other route is
     /// `config{stop_server:true}` over /rpc, which needs an encrypted envelope —
@@ -333,7 +336,7 @@ struct SettingsView: View {
         }
         return
         #endif
-        UIApplication.shared.open(Self.runnerURL) { ok in
+        UIApplication.shared.open(runnerURL) { ok in
             // The usual cause is the runner simply not being installed — the two
             // IPAs ship separately, so having this app is no guarantee.
             launchFailed = !ok
