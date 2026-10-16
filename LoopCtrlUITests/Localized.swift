@@ -178,8 +178,9 @@ enum L10n {
                        .es: "Clave %@ — permite solo si tu ordenador muestra la misma",
                        .de: "Schlüssel %@ — nur erlauben, wenn dein Computer denselben zeigt",
                        .ru: "Ключ %@ — разрешайте, только если компьютер показывает такой же"],
-        .authRequestBody: [.en: "Wants to control this device.", .zhHans: "请求控制此设备。", .zhHant: "請求控制此裝置。", .ja: "このデバイスの操作を求めています。",
-                           .ko: "이 기기의 제어를 요청합니다.", .es: "Quiere controlar este dispositivo.", .de: "Möchte dieses Gerät steuern.", .ru: "Хочет управлять этим устройством."],
+        // Tapping the banner approves (the default action), so say so.
+        .authRequestBody: [.en: "Wants to control this device. Tap to allow · long-press to deny.", .zhHans: "请求控制此设备。轻点即允许 · 长按可拒绝。", .zhHant: "請求控制此裝置。輕點即允許 · 長按可拒絕。", .ja: "このデバイスの操作を求めています。タップで許可 · 長押しで拒否。",
+                           .ko: "이 기기의 제어를 요청합니다. 탭하면 허용 · 길게 눌러 거부.", .es: "Quiere controlar este dispositivo. Toca para permitir · mantén pulsado para denegar.", .de: "Möchte dieses Gerät steuern. Tippen zum Erlauben · lang drücken zum Ablehnen.", .ru: "Хочет управлять этим устройством. Нажмите, чтобы разрешить · удерживайте, чтобы отклонить."],
 
         // ── Host app UI (English base, Chinese translations) ──
         .runtimeRequirements: [.en: "Runtime Requirements", .zhHans: "运行环境要求", .zhHant: "執行環境需求"],
