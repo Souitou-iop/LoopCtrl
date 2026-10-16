@@ -3,8 +3,8 @@ import Foundation
 /// Lightweight, dependency-free localization for the on-device notifications and
 /// their action buttons. LoopCtrl ships as a re-signed IPA without a .lproj bundle,
 /// so instead of NSLocalizedString we key a small in-code table by the system
-/// language and fall back to English. Action titles carry an emoji so Allow/Deny
-/// etc. are visually distinguishable at a glance.
+/// language and fall back to English. Notification action titles are plain text;
+/// their SF Symbols are set where the actions are registered.
 ///
 /// Supported: English, 简体中文, 繁體中文, 日本語, 한국어, Español, Deutsch, Русский.
 enum L10n {
@@ -34,21 +34,28 @@ enum L10n {
     }
 
     enum Key {
-        case allow, deny, enableRemote, disableRemote, stopServer, copyLogs
-        case serverReadyTitle, serverFailedTitle, serverStoppedTitle
-        case remoteDisabledTitle, remoteFailedTitle, enableLocalNetworkTitle
-        case authRequestTitle
-        case localOnlyBody, longPressRemoteOrStop
-        case longPressCopyLogs, serverStoppedBody
-        case remoteFailedBody, remoteDisabledBody
-        case authRequestBody       // %@ = client name
-        case authRequestNearbyBody // %@ = client name; the request came over peer-to-peer Wi-Fi
-        case authKeyLine           // %@ = key fingerprint the client also prints
-        case onDeviceOnlySuffix
-        // Reachability marker shown on the status notification (one of three).
-        case statusNearby, statusLAN, statusLocal, statusNoLAN
+        // ── Notifications (posted by the runner) ──
+        //
+        // Title "LoopCtrl"; state and address in the subtitle; the body only for
+        // what matters next. Words match the app's (服务, 远程访问, 本机, 局域网, 近场).
+        case allow, deny, enableRemote, disableRemote, enableNearby, disableNearby, stopServer, copyLogs
+        // Status notification: subtitle, then body lines.
+        case statusRunning          // %@ = address:port
+        case statusLocal, statusLAN, statusNoLAN
+        case statusNearby           // %@ = the name nearby clients see
         case nearbyStarting, nearbyNeedsWiFi, nearbyNeedsPermission, nearbyNotReady
-        case enableNearby, disableNearby, longPressNearbyOrStop
+        case statusUptime           // %d = connected clients, %@ = uptime
+        case remoteDisabledNote
+        // The other server notifications.
+        case serverFailedSubtitle   // %@ = port
+        case serverStoppedSubtitle, longPressCopyLogs
+        case remoteFailedSubtitle   // %@ = address:port
+        case remoteFailedBody
+        // Pairing request.
+        case authRequestTitle
+        case authFromLAN, authFromNearby, authFromLocal   // %@ = client name
+        case authKeyLine            // %@ = key fingerprint the client also prints
+        case authRequestBody
 
         // ── Host app UI ──
         //
@@ -94,55 +101,75 @@ enum L10n {
 
     // key → (lang → text). English is the required fallback for every key.
     private static let table: [Key: [Lang: String]] = [
-        // ── Action buttons (distinguishing emoji) ──
-        .allow: [.en: "✅ Allow", .zhHans: "✅ 允许", .zhHant: "✅ 允許", .ja: "✅ 許可",
-                 .ko: "✅ 허용", .es: "✅ Permitir", .de: "✅ Zulassen", .ru: "✅ Разрешить"],
-        .deny: [.en: "⛔️ Deny", .zhHans: "⛔️ 拒绝", .zhHant: "⛔️ 拒絕", .ja: "⛔️ 拒否",
-                .ko: "⛔️ 거부", .es: "⛔️ Denegar", .de: "⛔️ Ablehnen", .ru: "⛔️ Отклонить"],
-        .enableRemote: [.en: "🌐 Enable Remote Access", .zhHans: "🌐 开启远程访问", .zhHant: "🌐 開啟遠端存取", .ja: "🌐 リモートを有効化",
-                        .ko: "🌐 원격 접속 켜기", .es: "🌐 Activar acceso remoto", .de: "🌐 Fernzugriff aktivieren", .ru: "🌐 Включить удалённый доступ"],
-        .disableRemote: [.en: "🔒 Disable Remote Access", .zhHans: "🔒 关闭远程访问", .zhHant: "🔒 關閉遠端存取", .ja: "🔒 リモートを無効化",
-                         .ko: "🔒 원격 접속 끄기", .es: "🔒 Desactivar acceso remoto", .de: "🔒 Fernzugriff deaktivieren", .ru: "🔒 Выключить удалённый доступ"],
-        .stopServer: [.en: "🛑 Stop Server", .zhHans: "🛑 停止服务", .zhHant: "🛑 停止服務", .ja: "🛑 サーバー停止",
-                      .ko: "🛑 서버 중지", .es: "🛑 Detener servidor", .de: "🛑 Server stoppen", .ru: "🛑 Остановить сервер"],
-        .copyLogs: [.en: "📋 Copy Logs", .zhHans: "📋 复制日志", .zhHant: "📋 複製日誌", .ja: "📋 ログをコピー",
-                    .ko: "📋 로그 복사", .es: "📋 Copiar registros", .de: "📋 Logs kopieren", .ru: "📋 Копировать логи"],
+        // ── Notification actions (each has an SF Symbol, set in setupNotifications) ──
+        .allow: [.en: "Allow", .zhHans: "允许", .zhHant: "允許", .ja: "許可",
+                 .ko: "허용", .es: "Permitir", .de: "Zulassen", .ru: "Разрешить"],
+        .deny: [.en: "Deny", .zhHans: "拒绝", .zhHant: "拒絕", .ja: "拒否",
+                .ko: "거부", .es: "Denegar", .de: "Ablehnen", .ru: "Отклонить"],
+        .enableRemote: [.en: "Turn On Remote Access", .zhHans: "开启远程访问", .zhHant: "開啟遠端存取", .ja: "リモートアクセスをオン",
+                        .ko: "원격 접속 켜기", .es: "Activar acceso remoto", .de: "Fernzugriff einschalten", .ru: "Включить удалённый доступ"],
+        .disableRemote: [.en: "Turn Off Remote Access", .zhHans: "关闭远程访问", .zhHant: "關閉遠端存取", .ja: "リモートアクセスをオフ",
+                         .ko: "원격 접속 끄기", .es: "Desactivar acceso remoto", .de: "Fernzugriff ausschalten", .ru: "Выключить удалённый доступ"],
+        .enableNearby: [.en: "Turn On Nearby", .zhHans: "开启近场发现", .zhHant: "開啟近場探索", .ja: "近距離検出をオン",
+                        .ko: "근거리 검색 켜기", .es: "Activar detección cercana", .de: "Nahbereich einschalten", .ru: "Включить поиск поблизости"],
+        .disableNearby: [.en: "Turn Off Nearby", .zhHans: "关闭近场发现", .zhHant: "關閉近場探索", .ja: "近距離検出をオフ",
+                         .ko: "근거리 검색 끄기", .es: "Desactivar detección cercana", .de: "Nahbereich ausschalten", .ru: "Выключить поиск поблизости"],
+        .stopServer: [.en: "Stop Service", .zhHans: "停止服务", .zhHant: "停止服務", .ja: "サービスを停止",
+                      .ko: "서비스 중지", .es: "Detener servicio", .de: "Dienst stoppen", .ru: "Остановить сервис"],
+        .copyLogs: [.en: "Copy Logs", .zhHans: "复制日志", .zhHant: "複製日誌", .ja: "ログをコピー",
+                    .ko: "로그 복사", .es: "Copiar registros", .de: "Logs kopieren", .ru: "Копировать логи"],
 
-        // ── Notification titles ──
-        .serverReadyTitle: [.en: "🟢 LoopCtrl Server Ready", .zhHans: "🟢 LoopCtrl 服务已就绪", .zhHant: "🟢 LoopCtrl 服務已就緒", .ja: "🟢 LoopCtrl サーバー準備完了",
-                            .ko: "🟢 LoopCtrl 서버 준비됨", .es: "🟢 Servidor LoopCtrl listo", .de: "🟢 LoopCtrl-Server bereit", .ru: "🟢 Сервер LoopCtrl готов"],
-        .serverFailedTitle: [.en: "🔴 LoopCtrl Server Failed", .zhHans: "🔴 LoopCtrl 服务启动失败", .zhHant: "🔴 LoopCtrl 服務啟動失敗", .ja: "🔴 LoopCtrl サーバー起動失敗",
-                             .ko: "🔴 LoopCtrl 서버 시작 실패", .es: "🔴 Error del servidor LoopCtrl", .de: "🔴 LoopCtrl-Server fehlgeschlagen", .ru: "🔴 Сбой сервера LoopCtrl"],
-        .serverStoppedTitle: [.en: "⏹️ LoopCtrl Server Stopped", .zhHans: "⏹️ LoopCtrl 服务已停止", .zhHant: "⏹️ LoopCtrl 服務已停止", .ja: "⏹️ LoopCtrl サーバー停止",
-                              .ko: "⏹️ LoopCtrl 서버 중지됨", .es: "⏹️ Servidor LoopCtrl detenido", .de: "⏹️ LoopCtrl-Server gestoppt", .ru: "⏹️ Сервер LoopCtrl остановлен"],
-        .remoteDisabledTitle: [.en: "🔒 Remote Access Disabled", .zhHans: "🔒 远程访问已关闭", .zhHant: "🔒 遠端存取已關閉", .ja: "🔒 リモートアクセス無効",
-                               .ko: "🔒 원격 접속 꺼짐", .es: "🔒 Acceso remoto desactivado", .de: "🔒 Fernzugriff deaktiviert", .ru: "🔒 Удалённый доступ выключен"],
-        .remoteFailedTitle: [.en: "🔴 Remote Access Failed", .zhHans: "🔴 远程访问失败", .zhHant: "🔴 遠端存取失敗", .ja: "🔴 リモートアクセス失敗",
-                             .ko: "🔴 원격 접속 실패", .es: "🔴 Acceso remoto fallido", .de: "🔴 Fernzugriff fehlgeschlagen", .ru: "🔴 Сбой удалённого доступа"],
-        .enableLocalNetworkTitle: [.en: "⚠️ Enable Local Network for LoopCtrl", .zhHans: "⚠️ 请为 LoopCtrl 开启本地网络", .zhHant: "⚠️ 請為 LoopCtrl 開啟區域網路", .ja: "⚠️ LoopCtrl のローカルネットワークを許可",
-                                   .ko: "⚠️ LoopCtrl 로컬 네트워크 허용", .es: "⚠️ Activa la red local para LoopCtrl", .de: "⚠️ Lokales Netzwerk für LoopCtrl aktivieren", .ru: "⚠️ Разрешите локальную сеть для LoopCtrl"],
-        .authRequestTitle: [.en: "🔐 Authorization Request", .zhHans: "🔐 授权请求", .zhHant: "🔐 授權請求", .ja: "🔐 認証リクエスト",
-                            .ko: "🔐 인증 요청", .es: "🔐 Solicitud de autorización", .de: "🔐 Autorisierungsanfrage", .ru: "🔐 Запрос авторизации"],
+        // ── Status notification ──
+        .statusRunning: [.en: "Running · %@", .zhHans: "运行中 · %@", .zhHant: "執行中 · %@", .ja: "稼働中 · %@",
+                         .ko: "실행 중 · %@", .es: "En ejecución · %@", .de: "Läuft · %@", .ru: "Работает · %@"],
+        .statusLocal: [.en: "Only this device can connect", .zhHans: "仅本机可连接", .zhHant: "僅本機可連線", .ja: "この端末からのみ接続可能",
+                       .ko: "이 기기에서만 연결 가능", .es: "Solo este dispositivo puede conectarse", .de: "Nur dieses Gerät kann sich verbinden", .ru: "Подключиться можно только с этого устройства"],
+        .statusLAN: [.en: "Devices on this Wi-Fi can connect", .zhHans: "同一 Wi-Fi 下的设备可连接", .zhHant: "同一 Wi-Fi 下的裝置可連線", .ja: "同じ Wi-Fi の端末から接続可能",
+                     .ko: "같은 Wi-Fi의 기기에서 연결 가능", .es: "Los dispositivos de esta Wi-Fi pueden conectarse", .de: "Geräte in diesem WLAN können sich verbinden", .ru: "Подключиться можно из этой сети Wi-Fi"],
+        .statusNoLAN: [.en: "Not on Wi-Fi · only this device can connect", .zhHans: "未连接 Wi-Fi · 仅本机可连接", .zhHant: "未連接 Wi-Fi · 僅本機可連線", .ja: "Wi-Fi 未接続 · この端末からのみ接続可能",
+                       .ko: "Wi-Fi 미연결 · 이 기기에서만 연결 가능", .es: "Sin Wi-Fi · solo este dispositivo puede conectarse", .de: "Kein WLAN · nur dieses Gerät kann sich verbinden", .ru: "Нет Wi-Fi · подключиться можно только с этого устройства"],
+        .statusNearby: [.en: "Nearby as “%@”", .zhHans: "近场可发现：“%@”", .zhHant: "近場可探索：「%@」", .ja: "近距離で「%@」として検出可能",
+                        .ko: "근거리에서 “%@”(으)로 표시", .es: "Visible cerca como «%@»", .de: "In der Nähe sichtbar als „%@“", .ru: "Виден поблизости как «%@»"],
+        .nearbyStarting: [.en: "Nearby starting…", .zhHans: "近场发现启动中…", .zhHant: "近場探索啟動中…", .ja: "近距離検出を開始中…",
+                          .ko: "근거리 검색 시작 중…", .es: "Iniciando detección cercana…", .de: "Nahbereich startet…", .ru: "Запуск поиска поблизости…"],
+        .nearbyNeedsWiFi: [.en: "Nearby needs Wi-Fi turned on", .zhHans: "近场发现需要打开 Wi-Fi", .zhHant: "近場探索需要開啟 Wi-Fi", .ja: "近距離検出には Wi-Fi をオンにしてください",
+                           .ko: "근거리 검색에는 Wi-Fi가 켜져 있어야 함", .es: "La detección cercana necesita el Wi-Fi activado", .de: "Nahbereich braucht eingeschaltetes WLAN", .ru: "Для поиска поблизости включите Wi-Fi"],
+        .nearbyNeedsPermission: [.en: "Nearby needs Local Network access", .zhHans: "近场发现需要允许本地网络", .zhHant: "近場探索需要允許區域網路", .ja: "近距離検出にはローカルネットワークの許可が必要",
+                                 .ko: "근거리 검색에는 로컬 네트워크 허용이 필요", .es: "La detección cercana necesita permiso de Red local", .de: "Nahbereich braucht Zugriff auf das lokale Netzwerk", .ru: "Для поиска поблизости разрешите локальную сеть"],
+        .nearbyNotReady: [.en: "Nearby not ready · retrying", .zhHans: "近场发现未就绪 · 正在重试", .zhHant: "近場探索未就緒 · 正在重試", .ja: "近距離検出は準備中 · 再試行中",
+                          .ko: "근거리 검색 준비 안 됨 · 재시도 중", .es: "Detección cercana no lista · reintentando", .de: "Nahbereich nicht bereit · neuer Versuch", .ru: "Поиск поблизости не готов · повтор"],
+        .statusUptime: [.en: "%d connected · up %@", .zhHans: "已连接 %d 个 · 已运行 %@", .zhHant: "已連線 %d 個 · 已執行 %@", .ja: "接続 %d 件 · 稼働 %@",
+                        .ko: "연결 %d개 · 실행 %@", .es: "%d conectados · activo %@", .de: "%d verbunden · läuft seit %@", .ru: "Подключено: %d · работает %@"],
+        .remoteDisabledNote: [.en: "Remote access turned off", .zhHans: "远程访问已关闭", .zhHant: "遠端存取已關閉", .ja: "リモートアクセスをオフにしました",
+                              .ko: "원격 접속을 껐습니다", .es: "Acceso remoto desactivado", .de: "Fernzugriff ausgeschaltet", .ru: "Удалённый доступ выключен"],
 
-        // ── Bodies / fragments ──
-        .localOnlyBody: [.en: "Running on %@ (local only)", .zhHans: "运行于 %@(仅本机)", .zhHant: "執行於 %@(僅本機)", .ja: "%@ で稼働中(ローカルのみ)",
-                         .ko: "%@ 에서 실행 중(로컬 전용)", .es: "En ejecución en %@ (solo local)", .de: "Läuft auf %@ (nur lokal)", .ru: "Работает на %@ (только локально)"],
-        .longPressRemoteOrStop: [.en: "Long press for Remote Access or Stop Server", .zhHans: "长按可开启远程访问或停止服务", .zhHant: "長按可開啟遠端存取或停止服務", .ja: "長押しでリモート有効化／サーバー停止",
-                                 .ko: "길게 눌러 원격 접속 또는 서버 중지", .es: "Mantén pulsado para acceso remoto o detener servidor", .de: "Lang drücken für Fernzugriff oder Server stoppen", .ru: "Удерживайте для удалённого доступа или остановки сервера"],
-        .longPressCopyLogs: [.en: "Long press to Copy Logs", .zhHans: "长按可复制日志", .zhHant: "長按可複製日誌", .ja: "長押しでログをコピー",
-                             .ko: "길게 눌러 로그 복사", .es: "Mantén pulsado para copiar registros", .de: "Lang drücken zum Kopieren der Logs", .ru: "Удерживайте, чтобы скопировать логи"],
-        .serverStoppedBody: [.en: "The automation server has stopped.", .zhHans: "自动化服务已停止。", .zhHant: "自動化服務已停止。", .ja: "オートメーションサーバーが停止しました。",
-                             .ko: "자동화 서버가 중지되었습니다.", .es: "El servidor de automatización se ha detenido.", .de: "Der Automatisierungsserver wurde gestoppt.", .ru: "Сервер автоматизации остановлен."],
-        .remoteDisabledBody: [.en: "Now local only at %@", .zhHans: "现在仅本机可访问 %@", .zhHant: "現在僅本機可存取 %@", .ja: "現在は %@ のローカルのみ",
-                              .ko: "이제 %@ 로컬 전용", .es: "Ahora solo local en %@", .de: "Jetzt nur lokal unter %@", .ru: "Теперь только локально на %@"],
-        .remoteFailedBody: [.en: "LoopCtrl is listening but %@ can't be reached — likely the Local Network permission. Open the LoopCtrl app once and allow Local Network, then reconnect. (localhost still works.)",
-                            .zhHans: "LoopCtrl 已在监听,但无法访问 %@ —— 可能是本地网络权限未开启。请打开 LoopCtrl App 允许本地网络后重连。(localhost 仍可用)",
-                            .zhHant: "LoopCtrl 已在監聽,但無法存取 %@ —— 可能是區域網路權限未開啟。請開啟 LoopCtrl App 允許區域網路後重連。(localhost 仍可用)",
-                            .ja: "LoopCtrl は待受中ですが %@ に到達できません — ローカルネットワーク権限が原因の可能性。LoopCtrl アプリを開いて許可し、再接続してください。(localhost は利用可)",
-                            .ko: "LoopCtrl 가 수신 중이지만 %@ 에 연결할 수 없습니다 — 로컬 네트워크 권한 문제일 수 있습니다. LoopCtrl 앱을 열어 로컬 네트워크를 허용한 뒤 다시 연결하세요. (localhost 는 사용 가능)",
-                            .es: "LoopCtrl está escuchando pero no se puede acceder a %@ — probablemente el permiso de Red local. Abre la app LoopCtrl, permite la Red local y vuelve a conectar. (localhost sigue funcionando)",
-                            .de: "LoopCtrl lauscht, aber %@ ist nicht erreichbar — vermutlich die Berechtigung „Lokales Netzwerk“. Öffne die LoopCtrl-App, erlaube das lokale Netzwerk und verbinde dich neu. (localhost funktioniert weiterhin)",
-                            .ru: "LoopCtrl слушает, но %@ недоступен — вероятно, нет разрешения на локальную сеть. Откройте приложение LoopCtrl, разрешите локальную сеть и переподключитесь. (localhost по-прежнему работает)"],
+        // ── Server failed / stopped, remote access failed ──
+        .serverFailedSubtitle: [.en: "Couldn't start · port %@", .zhHans: "服务启动失败 · 端口 %@", .zhHant: "服務啟動失敗 · 連接埠 %@", .ja: "起動できません · ポート %@",
+                                .ko: "시작할 수 없음 · 포트 %@", .es: "No se pudo iniciar · puerto %@", .de: "Start fehlgeschlagen · Port %@", .ru: "Не удалось запустить · порт %@"],
+        .serverStoppedSubtitle: [.en: "Service stopped", .zhHans: "服务已停止", .zhHant: "服務已停止", .ja: "サービスを停止しました",
+                                 .ko: "서비스가 중지됨", .es: "Servicio detenido", .de: "Dienst gestoppt", .ru: "Сервис остановлен"],
+        .longPressCopyLogs: [.en: "Long-press to copy the logs.", .zhHans: "长按可复制日志。", .zhHant: "長按可複製日誌。", .ja: "長押しでログをコピーできます。",
+                             .ko: "길게 눌러 로그를 복사할 수 있습니다.", .es: "Mantén pulsado para copiar los registros.", .de: "Lang drücken, um die Logs zu kopieren.", .ru: "Удерживайте, чтобы скопировать логи."],
+        .remoteFailedSubtitle: [.en: "Remote access unreachable · %@", .zhHans: "远程访问不可用 · %@", .zhHant: "遠端存取無法使用 · %@", .ja: "リモートアクセス不可 · %@",
+                                .ko: "원격 접속 불가 · %@", .es: "Acceso remoto inaccesible · %@", .de: "Fernzugriff nicht erreichbar · %@", .ru: "Удалённый доступ недоступен · %@"],
+        .remoteFailedBody: [.en: "Allow Local Network: open LoopCtrl, accept the prompt, then reconnect. 127.0.0.1 still works.",
+                            .zhHans: "请允许本地网络：打开 LoopCtrl，在弹出的提示中允许，然后重新连接。本机 127.0.0.1 仍可用。",
+                            .zhHant: "請允許區域網路：開啟 LoopCtrl，在跳出的提示中允許，然後重新連線。本機 127.0.0.1 仍可使用。",
+                            .ja: "ローカルネットワークを許可してください：LoopCtrl を開いて許可し、再接続します。127.0.0.1 は引き続き使えます。",
+                            .ko: "로컬 네트워크를 허용하세요: LoopCtrl을 열어 허용한 뒤 다시 연결합니다. 127.0.0.1은 계속 사용할 수 있습니다.",
+                            .es: "Permite la Red local: abre LoopCtrl, acepta el aviso y vuelve a conectar. 127.0.0.1 sigue funcionando.",
+                            .de: "Lokales Netzwerk erlauben: LoopCtrl öffnen, die Abfrage bestätigen, dann neu verbinden. 127.0.0.1 funktioniert weiterhin.",
+                            .ru: "Разрешите локальную сеть: откройте LoopCtrl, подтвердите запрос и переподключитесь. 127.0.0.1 по-прежнему работает."],
+
+        // ── Pairing request ──
+        .authRequestTitle: [.en: "New connection request", .zhHans: "新的连接请求", .zhHant: "新的連線請求", .ja: "新しい接続リクエスト",
+                            .ko: "새 연결 요청", .es: "Nueva solicitud de conexión", .de: "Neue Verbindungsanfrage", .ru: "Новый запрос на подключение"],
+        .authFromLAN: [.en: "“%@” · LAN", .zhHans: "“%@” · 局域网", .zhHant: "「%@」 · 區域網路", .ja: "「%@」 · LAN",
+                       .ko: "“%@” · LAN", .es: "«%@» · LAN", .de: "„%@“ · LAN", .ru: "«%@» · LAN"],
+        .authFromNearby: [.en: "“%@” · nearby", .zhHans: "“%@” · 近场", .zhHant: "「%@」 · 近場", .ja: "「%@」 · 近距離",
+                          .ko: "“%@” · 근거리", .es: "«%@» · cercano", .de: "„%@“ · in der Nähe", .ru: "«%@» · поблизости"],
+        .authFromLocal: [.en: "“%@” · this device", .zhHans: "“%@” · 本机", .zhHant: "「%@」 · 本機", .ja: "「%@」 · この端末",
+                         .ko: "“%@” · 이 기기", .es: "«%@» · este dispositivo", .de: "„%@“ · dieses Gerät", .ru: "«%@» · это устройство"],
         .authKeyLine: [.en: "Key %@ — allow only if your computer shows the same",
                        .zhHans: "密钥 %@ — 与电脑上显示的一致才允许",
                        .zhHant: "金鑰 %@ — 與電腦上顯示的一致才允許",
@@ -151,56 +178,8 @@ enum L10n {
                        .es: "Clave %@ — permite solo si tu ordenador muestra la misma",
                        .de: "Schlüssel %@ — nur erlauben, wenn dein Computer denselben zeigt",
                        .ru: "Ключ %@ — разрешайте, только если компьютер показывает такой же"],
-        .authRequestBody: [.en: "\"%@\" wants to control this device.\nLong press to Allow or Deny",
-                           .zhHans: "“%@” 请求控制此设备。\n长按以允许或拒绝",
-                           .zhHant: "「%@」請求控制此裝置。\n長按以允許或拒絕",
-                           .ja: "「%@」がこのデバイスの操作を要求しています。\n長押しで許可または拒否",
-                           .ko: "\"%@\"이(가) 이 기기의 제어를 요청합니다.\n길게 눌러 허용 또는 거부",
-                           .es: "\"%@\" quiere controlar este dispositivo.\nMantén pulsado para permitir o denegar",
-                           .de: "„%@“ möchte dieses Gerät steuern.\nLang drücken zum Zulassen oder Ablehnen",
-                           .ru: "«%@» хочет управлять этим устройством.\nУдерживайте, чтобы разрешить или отклонить"],
-        .authRequestNearbyBody: [.en: "\"%@\" (nearby device) wants to control this device.\nLong press to Allow or Deny",
-                                 .zhHans: "“%@”（附近设备）请求控制此设备。\n长按以允许或拒绝",
-                                 .zhHant: "「%@」（附近裝置）請求控制此裝置。\n長按以允許或拒絕",
-                                 .ja: "「%@」（近くのデバイス）がこのデバイスの操作を要求しています。\n長押しで許可または拒否",
-                                 .ko: "\"%@\"(근처 기기)이(가) 이 기기의 제어를 요청합니다.\n길게 눌러 허용 또는 거부",
-                                 .es: "\"%@\" (dispositivo cercano) quiere controlar este dispositivo.\nMantén pulsado para permitir o denegar",
-                                 .de: "„%@“ (Gerät in der Nähe) möchte dieses Gerät steuern.\nLang drücken zum Zulassen oder Ablehnen",
-                                 .ru: "«%@» (устройство поблизости) хочет управлять этим устройством.\nУдерживайте, чтобы разрешить или отклонить"],
-        .statusNearby: [.en: "📡 Nearby discoverable", .zhHans: "📡 附近可发现", .zhHant: "📡 附近可發現", .ja: "📡 近くから検出可能",
-                        .ko: "📡 근처에서 검색 가능", .es: "📡 Visible cerca", .de: "📡 In der Nähe sichtbar", .ru: "📡 Виден поблизости"],
-        .statusLAN: [.en: "🌐 LAN reachable", .zhHans: "🌐 局域网可访问", .zhHant: "🌐 區域網路可存取", .ja: "🌐 LAN から接続可能",
-                     .ko: "🌐 LAN 접속 가능", .es: "🌐 Accesible en la LAN", .de: "🌐 Im LAN erreichbar", .ru: "🌐 Доступен в LAN"],
-        .statusLocal: [.en: "🔒 This device only", .zhHans: "🔒 仅本机", .zhHant: "🔒 僅本機", .ja: "🔒 この端末のみ",
-                       .ko: "🔒 이 기기만", .es: "🔒 Solo este dispositivo", .de: "🔒 Nur dieses Gerät", .ru: "🔒 Только это устройство"],
-        .statusNoLAN: [.en: "🌐 No LAN · connect to Wi-Fi", .zhHans: "🌐 无局域网 · 需连接 Wi-Fi", .zhHant: "🌐 無區域網路 · 需連接 Wi-Fi", .ja: "🌐 LAN なし · Wi-Fi に接続",
-                       .ko: "🌐 LAN 없음 · Wi-Fi 연결 필요", .es: "🌐 Sin LAN · conéctate a Wi-Fi", .de: "🌐 Kein LAN · mit WLAN verbinden", .ru: "🌐 Нет LAN · подключитесь к Wi-Fi"],
-        .nearbyStarting: [.en: "📡 Nearby starting…", .zhHans: "📡 近场启动中…", .zhHant: "📡 近場啟動中…", .ja: "📡 近距離検出を開始中…",
-                          .ko: "📡 근거리 검색 시작 중…", .es: "📡 Iniciando detección cercana…", .de: "📡 Nahbereich startet…", .ru: "📡 Запуск обнаружения…"],
-        .nearbyNeedsWiFi: [.en: "📡 Nearby not ready · turn on Wi-Fi", .zhHans: "📡 近场未就绪 · 需打开 Wi-Fi", .zhHant: "📡 近場未就緒 · 需開啟 Wi-Fi", .ja: "📡 近距離検出は待機中 · Wi-Fi をオン",
-                           .ko: "📡 근거리 검색 대기 · Wi-Fi 켜기 필요", .es: "📡 Cercanía no lista · activa el Wi-Fi", .de: "📡 Nahbereich nicht bereit · WLAN einschalten", .ru: "📡 Поблизости не готово · включите Wi-Fi"],
-        .nearbyNeedsPermission: [.en: "📡 Nearby not ready · allow Local Network", .zhHans: "📡 近场未就绪 · 需允许本地网络", .zhHant: "📡 近場未就緒 · 需允許區域網路", .ja: "📡 近距離検出は待機中 · ローカルネットワークを許可",
-                                 .ko: "📡 근거리 검색 대기 · 로컬 네트워크 허용 필요", .es: "📡 Cercanía no lista · permite Red local", .de: "📡 Nahbereich nicht bereit · Lokales Netzwerk erlauben", .ru: "📡 Поблизости не готово · разрешите локальную сеть"],
-        .nearbyNotReady: [.en: "📡 Nearby not ready · retrying", .zhHans: "📡 近场未就绪 · 正在重试", .zhHant: "📡 近場未就緒 · 正在重試", .ja: "📡 近距離検出は待機中 · 再試行中",
-                          .ko: "📡 근거리 검색 대기 · 재시도 중", .es: "📡 Cercanía no lista · reintentando", .de: "📡 Nahbereich nicht bereit · neuer Versuch", .ru: "📡 Поблизости не готово · повтор"],
-        .enableNearby: [.en: "📡 Enable Nearby Discovery", .zhHans: "📡 开启近场发现", .zhHant: "📡 開啟近場探索", .ja: "📡 近距離検出を有効化",
-                        .ko: "📡 근거리 검색 켜기", .es: "📡 Activar detección cercana", .de: "📡 Nahbereichserkennung ein", .ru: "📡 Включить обнаружение поблизости"],
-        .disableNearby: [.en: "📴 Disable Nearby Discovery", .zhHans: "📴 关闭近场发现", .zhHant: "📴 關閉近場探索", .ja: "📴 近距離検出を無効化",
-                         .ko: "📴 근거리 검색 끄기", .es: "📴 Desactivar detección cercana", .de: "📴 Nahbereichserkennung aus", .ru: "📴 Выключить обнаружение поблизости"],
-        .longPressNearbyOrStop: [.en: "Long press for Nearby Discovery, Remote Access or Stop Server",
-                                 .zhHans: "长按可设置近场发现、远程访问或停止服务", .zhHant: "長按可設定近場探索、遠端存取或停止服務",
-                                 .ja: "長押しで近距離検出・リモート・サーバー停止", .ko: "길게 눌러 근거리 검색, 원격 접속 또는 서버 중지",
-                                 .es: "Mantén pulsado para detección cercana, acceso remoto o detener servidor",
-                                 .de: "Lang drücken für Nahbereich, Fernzugriff oder Server stoppen",
-                                 .ru: "Удерживайте для обнаружения поблизости, удалённого доступа или остановки"],
-        .onDeviceOnlySuffix: [.en: "reachable on-device only; connect over Wi-Fi for LAN access",
-                              .zhHans: "仅本机可访问;请连接 Wi-Fi 以支持局域网访问",
-                              .zhHant: "僅本機可存取;請連接 Wi-Fi 以支援區域網路存取",
-                              .ja: "端末上のみ到達可能;LAN 利用には Wi-Fi 接続が必要",
-                              .ko: "기기에서만 접근 가능; LAN 접속은 Wi-Fi 연결 필요",
-                              .es: "accesible solo en el dispositivo; conéctate por Wi-Fi para acceso LAN",
-                              .de: "nur auf dem Gerät erreichbar; für LAN-Zugriff mit WLAN verbinden",
-                              .ru: "доступно только на устройстве; для доступа по LAN подключитесь к Wi-Fi"],
+        .authRequestBody: [.en: "Wants to control this device.", .zhHans: "请求控制此设备。", .zhHant: "請求控制此裝置。", .ja: "このデバイスの操作を求めています。",
+                           .ko: "이 기기의 제어를 요청합니다.", .es: "Quiere controlar este dispositivo.", .de: "Möchte dieses Gerät steuern.", .ru: "Хочет управлять этим устройством."],
 
         // ── Host app UI (English base, Chinese translations) ──
         .runtimeRequirements: [.en: "Runtime Requirements", .zhHans: "运行环境要求", .zhHant: "執行環境需求"],
