@@ -1,49 +1,64 @@
 #!/usr/bin/env python3
-"""Render the LoopCtrl app icon from AppIcon.svg.
+"""Write the PNG icons derived from the LoopCtrl app icon.
 
-AppIcon.svg is the source art: a loop-arrow (the phone looping back to itself
-over 10.7.0.1) around a pointer tapping the screen (the phone controlling
-itself). It is a full-bleed square; iOS applies the corner mask.
+The app icon itself is LoopCtrlApp/AppIcon.icon, an Icon Composer document
+(Xcode 26+ compiles it into Assets.car, including the fallback images for
+older iOS). Edit it in Icon Composer, then export the iOS "Default" rendition
+at 1024 px over Config/AppIcon-iOS-1024.png and run this script.
 
-Rasterises with rsvg-convert (brew install librsvg), falling back to cairosvg,
-then flattens to RGB with Pillow since App Store icons must not carry alpha.
-Afterwards regenerate the runner icons:
+The export carries the rounded-square mask as alpha. iOS composites a
+transparent icon on black and applies its own mask, so the export is
+flattened onto white (the icon's own fill) first. Writes:
 
-    python3 generate_icon.py && python3 Scripts/make-runner-icons.py
+  - Config/RunnerIcon/*.png (via Scripts/make-runner-icons.py), the XCTest
+    Runner's home-screen icons
+  - LoopCtrlKit/RemoteIcon.swift (the 180x180 runner icon, base64-inlined for
+    the /remote web app)
+
+    python3 generate_icon.py   # needs Pillow
 """
-import io
-import shutil
-import subprocess
+import base64
+import runpy
 from pathlib import Path
 
 from PIL import Image
 
 REPO = Path(__file__).resolve().parent
-SOURCE = REPO / "AppIcon.svg"
-OUTPUT = REPO / "LoopCtrlApp/Assets.xcassets/AppIcon.appiconset/icon_1024x1024.png"
-SIZE = 1024
+EXPORT = REPO / "Config/AppIcon-iOS-1024.png"
+FLAT = REPO / "Config/AppIcon-1024.png"
+BACKGROUND = (255, 255, 255)
+RUNNER_ICONS = REPO / "Scripts/make-runner-icons.py"
+REMOTE_ICON_PNG = REPO / "Config/RunnerIcon/AppIcon60x60@3x.png"
+REMOTE_ICON_SWIFT = REPO / "LoopCtrlKit/RemoteIcon.swift"
+REMOTE_ICON_TEMPLATE = """\
+import Foundation
 
+/// Home Screen icon for the /remote page (GET /remote/icon.png): the runner's
+/// own 180×180 icon, Config/RunnerIcon/AppIcon60x60@3x.png, inlined like the
+/// page itself so the server needs no bundle resources.
+enum RemoteIcon {
+    static let png: Data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) ?? Data()
 
-def render_svg(path: Path, size: int) -> bytes:
-    rsvg = shutil.which("rsvg-convert")
-    if rsvg:
-        return subprocess.run(
-            [rsvg, "-w", str(size), "-h", str(size), "-f", "png", str(path)],
-            check=True, capture_output=True,
-        ).stdout
-    try:
-        import cairosvg
-    except ImportError:
-        raise SystemExit("Need rsvg-convert (brew install librsvg) or cairosvg (pip install cairosvg)")
-    return cairosvg.svg2png(url=str(path), output_width=size, output_height=size)
+    private static let base64 = \"\"\"
+%s
+\"\"\"
+}
+"""
 
 
 def main() -> None:
-    rgba = Image.open(io.BytesIO(render_svg(SOURCE, SIZE))).convert("RGBA")
-    flat = Image.new("RGB", rgba.size, rgba.getpixel((0, 0))[:3])
+    rgba = Image.open(EXPORT).convert("RGBA").resize((1024, 1024), Image.LANCZOS)
+    flat = Image.new("RGB", rgba.size, BACKGROUND)
     flat.paste(rgba, mask=rgba.split()[3])
-    flat.save(OUTPUT, "PNG", optimize=True)
-    print(f"✅ Icon saved to {OUTPUT.relative_to(REPO)}")
+    flat.save(FLAT, "PNG", optimize=True)
+    print(f"✅ {FLAT.relative_to(REPO)}")
+
+    runpy.run_path(str(RUNNER_ICONS), run_name="__main__")
+
+    b64 = base64.b64encode(REMOTE_ICON_PNG.read_bytes()).decode()
+    lines = "\n".join(b64[i:i + 100] for i in range(0, len(b64), 100))
+    REMOTE_ICON_SWIFT.write_text(REMOTE_ICON_TEMPLATE % lines)
+    print(f"✅ {REMOTE_ICON_SWIFT.relative_to(REPO)}")
 
 
 if __name__ == "__main__":

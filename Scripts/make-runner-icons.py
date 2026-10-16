@@ -9,7 +9,7 @@ makes iOS look only in Assets.car).
 
 Output is standard PNG (not Xcode's CgBI-crushed variant) without an alpha
 channel: iOS composites a transparent icon on black. Regenerate after the app
-icon changes:
+icon changes (generate_icon.py runs this):
 
     python3 Scripts/make-runner-icons.py
 """
@@ -18,7 +18,7 @@ from pathlib import Path
 from PIL import Image
 
 REPO = Path(__file__).resolve().parent.parent
-SOURCE = REPO / "LoopCtrlApp/Assets.xcassets/AppIcon.appiconset/icon_1024x1024.png"
+SOURCE = REPO / "Config/AppIcon-1024.png"  # written by generate_icon.py
 OUT = REPO / "Config/RunnerIcon"
 
 # (base name, point size, scale, suffix): file is <base>[@<scale>x]<suffix>.png
