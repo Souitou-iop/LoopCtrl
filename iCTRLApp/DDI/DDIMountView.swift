@@ -11,6 +11,7 @@ struct DDIMountView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var mounter = DDIMounter()
     @StateObject private var images = DeveloperDiskImageStore()
+    @ObservedObject private var pairing = OnDevicePairing.shared
 
     @State private var showPairingPicker = false
     @State private var pairingError: String?
@@ -18,6 +19,7 @@ struct DDIMountView: View {
     @State private var imagesReady = DeveloperDiskImageStore.isComplete
     @State private var downloadError: String?
     @State private var vpnInstalled = false
+    @State private var tunnelApp = TunnelApp.selected
     @State private var tunnelUp = false
     /// Last connection test through the tunnel, and the interfaces seen then.
     @State private var tunnelProbe: LocalDevVPN.TunnelProbe?
@@ -107,7 +109,9 @@ struct DDIMountView: View {
         if !onWiFi { return L10n.t(.notOnWiFi) }
         if !tunnelUp {
             if tunnelProbe == .localNetworkDenied { return L10n.t(.localNetworkDeniedDetail) }
-            return vpnInstalled ? L10n.t(.vpnNotConnected) : L10n.t(.vpnNotInstalled)
+            if tunnelProbe == .notDevice { return L10n.t(.tunnelNotDeviceDetail) }
+            return String(format: vpnInstalled ? L10n.t(.vpnNotConnected) : L10n.t(.vpnNotInstalled),
+                          tunnelApp.displayName)
         }
         return "something is missing"
     }
@@ -132,7 +136,7 @@ struct DDIMountView: View {
     @MainActor private func onWiFiChanged(_ connected: Bool) { onWiFi = connected }
 
     private func refreshVPNState() {
-        vpnInstalled = LocalDevVPN.isInstalled
+        vpnInstalled = tunnelApp.isInstalled
         // Up means a connection through the tunnel worked — not that some
         // address looks right: another VPN can use the same range, and
         // LocalDevVPN's addresses are configurable. One probe at a time; the
@@ -151,44 +155,58 @@ struct DDIMountView: View {
         onWiFi = NetworkTypeMonitor.shared.current == .wifi
     }
 
-    // ① The tunnel. LocalDevVPN exposes localdevvpn://enable?scheme=…, so this
-    //    can send the user straight into connecting and get them back, instead
-    //    of just naming an app and hoping.
+    // ④ The tunnel. LocalDevVPN exposes localdevvpn://enable?scheme=…, so this
+    //    can send the user straight into connecting and get them back;
+    //    Shadowrocket has shadowrocket://connect but stays in front afterwards.
     private var tunnelSection: some View {
         Section {
+            Picker(L10n.t(.tunnelAppLabel), selection: $tunnelApp) {
+                ForEach(TunnelApp.allCases) { Text($0.displayName).tag($0) }
+            }
+            .onChange(of: tunnelApp) { app in
+                TunnelApp.selected = app
+                refreshVPNState()
+            }
+
             stepRow(4, done: tunnelUp,
-                    title: L10n.t(.startLocalDevVPN),
+                    title: String(format: L10n.t(.startLocalDevVPN), tunnelApp.displayName),
                     detail: tunnelUp
                         ? "\(L10n.t(.tunnelUpDetail)) (\(DDIMounter.tunnelAddress))"
                         : tunnelProbe == .localNetworkDenied
                           ? L10n.t(.localNetworkDeniedDetail)
-                          : vpnInstalled
-                            ? "\(L10n.t(.vpnInstalledDetail)) (\(DDIMounter.tunnelAddress))"
-                            : L10n.t(.vpnMissingDetail))
+                          : tunnelProbe == .notDevice
+                            ? L10n.t(.tunnelNotDeviceDetail)
+                            : vpnInstalled
+                              ? "\(L10n.t(.vpnInstalledDetail)) (\(DDIMounter.tunnelAddress))"
+                              : L10n.t(.vpnMissingDetail))
 
             if !tunnelUp, tunnelProbe == .localNetworkDenied {
                 actionButton(L10n.t(.openSettings)) {
                     UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
                 }
             } else if !tunnelUp {
-                actionButton(vpnInstalled ? L10n.t(.openVPNAndConnect) : L10n.t(.getVPNFromAppStore)) {
-                    // enable? starts the tunnel and bounces back to us; the bare
-                    // App Store link is the fallback when it isn't installed.
-                    UIApplication.shared.open(vpnInstalled ? LocalDevVPN.enableURL
-                                                           : LocalDevVPN.appStoreURL)
+                actionButton(String(format: vpnInstalled ? L10n.t(.openVPNAndConnect) : L10n.t(.getVPNFromAppStore),
+                                    tunnelApp.displayName)) {
+                    // The bare App Store link is the fallback when it isn't installed.
+                    UIApplication.shared.open(vpnInstalled ? tunnelApp.connectURL : tunnelApp.appStoreURL)
                 }
             }
         } header: {
             Text(L10n.t(.prerequisiteHeader))
         } footer: {
-            if tunnelUp {
-                Text(L10n.t(.tunnelDetectedFooter))
-            } else if case .unreachable? = tunnelProbe, vpnInstalled {
-                // Connected but still not found: show what is there, so a
-                // changed tunnel address is visible at a glance.
-                Text(L10n.t(.cannotStartVPNFooter) + "\n\n" + L10n.t(.interfacesSeen) + " " + interfacesSeen)
-            } else {
-                Text(L10n.t(.cannotStartVPNFooter))
+            VStack(alignment: .leading, spacing: 8) {
+                if tunnelApp == .shadowrocket {
+                    Text(L10n.t(.shadowrocketRouteHint))
+                }
+                if tunnelUp {
+                    Text(L10n.t(.tunnelDetectedFooter))
+                } else if case .unreachable? = tunnelProbe, vpnInstalled {
+                    // Connected but still not found: show what is there, so a
+                    // changed tunnel address is visible at a glance.
+                    Text(L10n.t(.cannotStartVPNFooter) + "\n\n" + L10n.t(.interfacesSeen) + " " + interfacesSeen)
+                } else {
+                    Text(L10n.t(.cannotStartVPNFooter))
+                }
             }
         }
     }
@@ -214,11 +232,17 @@ struct DDIMountView: View {
                         ? "\(L10n.t(.pairingImported))\(PairingFileStore.importedAt.map { " · " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "")"
                         : L10n.t(.pairingHint))
 
-            actionButton(hasPairingFile ? L10n.t(.replacePairingFile) : L10n.t(.choosePairingFile)) {
-                showPairingPicker = true
+            if OnDevicePairing.isSupported {
+                onDevicePairingRows
             }
 
-            if hasPairingFile {
+            actionButton(hasPairingFile ? L10n.t(.replacePairingFile)
+                         : OnDevicePairing.isSupported ? L10n.t(.pairOrImport) : L10n.t(.choosePairingFile)) {
+                showPairingPicker = true
+            }
+            .disabled(pairing.isRunning)
+
+            if hasPairingFile, !pairing.isRunning {
                 actionButton(L10n.t(.removePairingFile), role: .destructive) {
                     PairingFileStore.remove()
                     hasPairingFile = false
@@ -227,6 +251,48 @@ struct DDIMountView: View {
 
             if let pairingError {
                 Label(pairingError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+        }
+    }
+
+    /// iOS 27's device-initiated pairing: start listening, then walk the user
+    /// through Settings and show the PIN. The result lands in PairingFileStore,
+    /// whose didImport notification ticks this step off.
+    @ViewBuilder private var onDevicePairingRows: some View {
+        switch pairing.phase {
+        case .waiting:
+            Label {
+                Text(L10n.t(.pairWaitingSteps))
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                ProgressView()
+            }
+            actionButton(L10n.t(.pairStop), role: .destructive) { pairing.stop() }
+
+        case .showPin(let pin):
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L10n.t(.pairEnterPin)).font(.subheadline).foregroundColor(.secondary)
+                Text(verbatim: pin)
+                    .font(.system(size: 34, weight: .semibold, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+            actionButton(L10n.t(.pairStop), role: .destructive) { pairing.stop() }
+
+        case .idle, .paired, .failed:
+            actionButton(hasPairingFile ? L10n.t(.pairOnDevice) + " ↻" : L10n.t(.pairOnDevice)) {
+                pairingError = nil
+                pairing.start()
+            }
+            if !hasPairingFile {
+                Text(L10n.t(.pairOnDeviceHint))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            if case .failed(let message) = pairing.phase {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundColor(.orange)
             }

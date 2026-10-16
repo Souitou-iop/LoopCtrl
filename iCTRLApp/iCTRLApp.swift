@@ -20,6 +20,7 @@ struct iCTRLApp: App {
         // Touch the logger during init so every run produces a file, even one
         // that crashes before the user does anything.
         ictrlLog("App launched")
+        OnDevicePairing.registerBackgroundTask()
     }
 
     var body: some Scene {

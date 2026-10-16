@@ -62,6 +62,13 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_ictrl._tcp</string>
+		<string>_remotepairing-pairable-host._tcp</string>
+	</array>
+	<!-- Keeps the on-device pairing listener alive (BGContinuedProcessingTask)
+	     while the user is in Settings entering the PIN. -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).pairing</string>
 	</array>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
@@ -69,6 +76,7 @@
 		<string>stikdebug</string>
 		<string>stikjit</string>
 		<string>localdevvpn</string>
+		<string>shadowrocket</string>
 	</array>
 </dict>
 </plist>

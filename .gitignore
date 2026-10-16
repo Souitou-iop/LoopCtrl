@@ -13,7 +13,7 @@ iCTRL.xcodeproj/
 xcuserdata/
 *.xcuserstate
 
-# Fetched by Scripts/fetch-idevice.sh (215MB release asset, not vendored)
+# Built by Scripts/build-idevice.sh (patched idevice, not vendored)
 Frameworks/
 build-sim/
 release/

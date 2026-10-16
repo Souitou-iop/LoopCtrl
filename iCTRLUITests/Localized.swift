@@ -69,8 +69,11 @@ enum L10n {
         case mountTitle, doneButton, prerequisiteHeader
         case startLocalDevVPN, tunnelUpDetail, vpnInstalledDetail, vpnMissingDetail
         case openVPNAndConnect, getVPNFromAppStore, tunnelDetectedFooter, cannotStartVPNFooter
+        case tunnelAppLabel, shadowrocketRouteHint, tunnelNotDeviceDetail
         case importPairingFile, choosePairingFile, replacePairingFile, removePairingFile
         case pairingHint, pairingImported, pairingReceivedTitle, pairingReceivedBody, pairingRejectedTitle
+        case pairOnDevice, pairOnDeviceHint, pairWaitingSteps, pairEnterPin, pairStop, pairOrImport
+        case pairPinTitle, pairPinBody, pairDoneTitle, pairDoneBody, pairWaitingSubtitle
         case ddiComponentTitle, ddiDownloadHint, ddiDownloaded, downloadImageFiles, ddiSourceFooter
         case mountButton, mountedOK, mountFailed, mountNotPersistentFooter, firstMountNetworkFooter
         case finishStepsFirst, vpnNotConnected, vpnNotInstalled, noPairingFile, imagesNotDownloaded
@@ -252,7 +255,7 @@ enum L10n {
         .mountTitle: [.en: "Mount DDI", .zhHans: "挂载 DDI", .zhHant: "掛載 DDI"],
         .doneButton: [.en: "Done", .zhHans: "完成", .zhHant: "完成"],
         .prerequisiteHeader: [.en: "Prerequisite", .zhHans: "前置条件", .zhHant: "前置條件"],
-        .startLocalDevVPN: [.en: "Start LocalDevVPN", .zhHans: "启动 LocalDevVPN", .zhHant: "啟動 LocalDevVPN"],
+        .startLocalDevVPN: [.en: "Start %@", .zhHans: "启动 %@", .zhHant: "啟動 %@"],
         .tunnelUpDetail: [.en: "Tunnel is up — this device's debug service is reachable.",
                           .zhHans: "隧道已连接——本机调试服务可达。",
                           .zhHant: "通道已連線——本機除錯服務可達。"],
@@ -262,8 +265,15 @@ enum L10n {
         .vpnMissingDetail: [.en: "Not installed. It makes this device's debug service reachable — iCTRL then talks to it the same way Xcode on a Mac would.",
                             .zhHans: "未安装。它让本机的调试服务变得可达——iCTRL 随后以 Mac 上 Xcode 的同样方式与之通信。",
                             .zhHant: "未安裝。它讓本機的除錯服務變得可達——iCTRL 隨後以 Mac 上 Xcode 的同樣方式與之通訊。"],
-        .openVPNAndConnect: [.en: "Open LocalDevVPN & connect", .zhHans: "打开 LocalDevVPN 并连接", .zhHant: "開啟 LocalDevVPN 並連線"],
-        .getVPNFromAppStore: [.en: "Get LocalDevVPN on the App Store", .zhHans: "在 App Store 获取 LocalDevVPN", .zhHant: "在 App Store 取得 LocalDevVPN"],
+        .openVPNAndConnect: [.en: "Open %@ & connect", .zhHans: "打开 %@ 并连接", .zhHant: "開啟 %@ 並連線"],
+        .getVPNFromAppStore: [.en: "Get %@ on the App Store", .zhHans: "在 App Store 获取 %@", .zhHant: "在 App Store 取得 %@"],
+        .tunnelAppLabel: [.en: "Tunnel app", .zhHans: "隧道 App", .zhHant: "通道 App"],
+        .shadowrocketRouteHint: [.en: "In Shadowrocket, turn on Settings › Other › “Include Route 10.7.0.1/32”. Your proxy stays on; no VPN switching. Shadowrocket doesn't return here by itself — switch back after connecting. Use Wi-Fi: on cellular this route is unreliable.",
+                                 .zhHans: "在 Shadowrocket 的 设置 › 其它 中打开“包含路由 10.7.0.1/32”。代理照常使用，不用切换 VPN。Shadowrocket 连接后不会自动跳回，请手动切回 iCTRL。请使用 Wi-Fi，蜂窝网络下这条路由不稳定。",
+                                 .zhHant: "在 Shadowrocket 的 設定 › 其他 中打開「包含路由 10.7.0.1/32」。代理照常使用，不用切換 VPN。Shadowrocket 連線後不會自動跳回，請手動切回 iCTRL。請使用 Wi-Fi，行動網路下這條路由不穩定。"],
+        .tunnelNotDeviceDetail: [.en: "Something answered at 10.7.0.1, but not this device's debug service — usually a proxy capturing the address without routing it back. In Shadowrocket, turn on “Include Route 10.7.0.1/32”.",
+                                 .zhHans: "10.7.0.1 有应答，但不是本机调试服务——通常是代理接管了这个地址却没把它路由回本机。如用 Shadowrocket，请打开“包含路由 10.7.0.1/32”。",
+                                 .zhHant: "10.7.0.1 有回應，但不是本機除錯服務——通常是代理接管了這個位址卻沒把它路由回本機。如用 Shadowrocket，請打開「包含路由 10.7.0.1/32」。"],
         .tunnelDetectedFooter: [.en: "Detected by connecting to this device's debug service through the tunnel.",
                                 .zhHans: "依据能否经隧道连上本机调试服务来判断。",
                                 .zhHant: "依據能否經通道連上本機除錯服務來判斷。"],
@@ -275,9 +285,25 @@ enum L10n {
         .choosePairingFile: [.en: "Choose pairing file…", .zhHans: "选择配对文件…", .zhHant: "選擇配對檔案…"],
         .replacePairingFile: [.en: "Replace pairing file…", .zhHans: "更换配对文件…", .zhHant: "更換配對檔案…"],
         .removePairingFile: [.en: "Remove pairing file", .zhHans: "删除配对文件", .zhHant: "刪除配對檔案"],
-        .pairingHint: [.en: "Export it from iLoader on this device — no Mac needed. Otherwise generate it on a Mac with `idevicepair pair` and send it here (AirDrop, Files, iCloud). If the picker can't reach the file, share it to iCTRL from the app that has it.",
-                       .zhHans: "可直接用本机的 iLoader 导出，无需 Mac。也可以在 Mac 上用 `idevicepair pair` 生成后传过来（隔空投送、文件、iCloud）。如果选择器找不到文件，可在文件所在的 App 里直接“分享”到 iCTRL。",
-                       .zhHant: "可直接用本機的 iLoader 匯出，無需 Mac。也可以在 Mac 上用 `idevicepair pair` 產生後傳過來（AirDrop、檔案、iCloud）。如果選擇器找不到檔案，可在檔案所在的 App 裡直接「分享」到 iCTRL。"],
+        .pairingHint: [.en: "Use a pairing file from StikPair, or one iLoader exported on iOS 17.4 or later (it holds both halves). A file from `idevicepair` alone won't mount. If the picker can't reach the file, share it to iCTRL from the app that has it.",
+                       .zhHans: "可使用 StikPair 生成的配对文件，或 iOS 17.4 及以上由 iLoader 导出的配对文件（两种格式都包含）。仅由 `idevicepair` 生成的文件无法挂载。如果选择器找不到文件，可在文件所在的 App 里直接“分享”到 iCTRL。",
+                       .zhHant: "可使用 StikPair 產生的配對檔案，或 iOS 17.4 以上由 iLoader 匯出的配對檔案（兩種格式都包含）。僅由 `idevicepair` 產生的檔案無法掛載。如果選擇器找不到檔案，可在檔案所在的 App 裡直接「分享」到 iCTRL。"],
+        .pairOnDevice: [.en: "Pair on this device", .zhHans: "在本机配对", .zhHant: "在本機配對"],
+        .pairOnDeviceHint: [.en: "No computer or other app needed: iOS pairs with iCTRL from Developer Mode settings.",
+                            .zhHans: "无需电脑或其他 App：在“开发者模式”设置里让 iOS 直接与 iCTRL 配对。",
+                            .zhHant: "無需電腦或其他 App：在「開發者模式」設定裡讓 iOS 直接與 iCTRL 配對。"],
+        .pairWaitingSteps: [.en: "Open Settings › Privacy & Security › Developer Mode, scroll down and tap “Pair with iCTRL”. Enter the code iCTRL shows (also sent as a notification).",
+                            .zhHans: "打开 设置 › 隐私与安全性 › 开发者模式，下拉点“与 iCTRL 配对”，输入 iCTRL 显示的配对码（也会以通知发送）。",
+                            .zhHant: "打開 設定 › 隱私權與安全性 › 開發者模式，往下滑點「與 iCTRL 配對」，輸入 iCTRL 顯示的配對碼（也會以通知傳送）。"],
+        .pairEnterPin: [.en: "Enter this code in Settings:", .zhHans: "在设置中输入此配对码：", .zhHant: "在設定中輸入此配對碼："],
+        .pairStop: [.en: "Stop pairing", .zhHans: "停止配对", .zhHant: "停止配對"],
+        .pairOrImport: [.en: "Or import a file", .zhHans: "或导入文件", .zhHant: "或匯入檔案"],
+        .pairPinTitle: [.en: "iCTRL pairing code", .zhHans: "iCTRL 配对码", .zhHant: "iCTRL 配對碼"],
+        .pairPinBody: [.en: "Enter %@ in Settings to pair.", .zhHans: "在设置中输入 %@ 完成配对。", .zhHant: "在設定中輸入 %@ 完成配對。"],
+        .pairDoneTitle: [.en: "Pairing complete", .zhHans: "配对完成", .zhHant: "配對完成"],
+        .pairDoneBody: [.en: "Return to iCTRL to mount the Developer Disk Image.",
+                        .zhHans: "回到 iCTRL 挂载开发者磁盘镜像。", .zhHant: "回到 iCTRL 掛載開發者磁碟映像。"],
+        .pairWaitingSubtitle: [.en: "Waiting for Settings to connect…", .zhHans: "等待设置连接…", .zhHant: "等待設定連線…"],
         .pairingImported: [.en: "Imported", .zhHans: "已导入", .zhHant: "已匯入"],
         .pairingReceivedTitle: [.en: "Pairing File Received", .zhHans: "已接收配对文件", .zhHant: "已接收配對檔案"],
         .pairingReceivedBody: [.en: "“%@” has been stored. You can mount the Developer Disk Image now.",
@@ -306,8 +332,8 @@ enum L10n {
                                    .zhHant: "首次掛載會向蘋果簽名服務申請本機專屬的票據，因此需要連網。"],
 
         .finishStepsFirst: [.en: "Finish the steps above first", .zhHans: "请先完成上面的步骤", .zhHant: "請先完成上面的步驟"],
-        .vpnNotConnected: [.en: "LocalDevVPN isn't connected", .zhHans: "LocalDevVPN 未连接", .zhHant: "LocalDevVPN 未連線"],
-        .vpnNotInstalled: [.en: "LocalDevVPN isn't installed", .zhHans: "LocalDevVPN 未安装", .zhHant: "LocalDevVPN 未安裝"],
+        .vpnNotConnected: [.en: "%@ isn't connected", .zhHans: "%@ 未连接", .zhHant: "%@ 未連線"],
+        .vpnNotInstalled: [.en: "%@ isn't installed", .zhHans: "%@ 未安装", .zhHant: "%@ 未安裝"],
         .noPairingFile: [.en: "no pairing file imported", .zhHans: "尚未导入配对文件", .zhHant: "尚未匯入配對檔案"],
         .imagesNotDownloaded: [.en: "the image files aren't downloaded", .zhHans: "镜像文件尚未下载", .zhHant: "映像檔案尚未下載"],
         .wifiRequired: [.en: "Connect to Wi-Fi", .zhHans: "连接 Wi-Fi", .zhHant: "連線 Wi-Fi"],

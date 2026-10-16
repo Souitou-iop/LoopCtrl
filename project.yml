@@ -28,9 +28,8 @@ targets:
 
     dependencies:
       # idevice (MIT) — the lockdown/RSD/image-mounter client that does the
-      # actual DDI mount. Fetched by Scripts/fetch-idevice.sh rather than
-      # committed: the upstream xcframework is a 215MB release asset and is not
-      # in the repo tree, so SPM cannot resolve it by URL.
+      # actual DDI mount and on-device pairing. Built from source by
+      # Scripts/build-idevice.sh with Patches/idevice applied, not committed.
       - framework: Frameworks/IDevice.xcframework
         embed: false
     settings:

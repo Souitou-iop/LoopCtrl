@@ -632,11 +632,13 @@ a free one works):
 
 ```bash
 brew install xcodegen
+rustup target add aarch64-apple-ios   # Rust from https://rustup.rs
 make ipa          # → iCTRL.ipa + iCTRLUITests-Runner.ipa
 ```
 
 Nothing else needs to be set up. On the first run, `make`:
-- **fetches** the idevice xcframework (~215MB, once, `Scripts/fetch-idevice.sh`);
+- **builds** the idevice xcframework from source with `Patches/idevice` applied
+  (several minutes, once, `Scripts/build-idevice.sh`);
 - **writes `Config/Local.xcconfig`** (gitignored) with your team, read from the
   Apple Development certificate in your keychain, and a bundle-id prefix derived
   from it. Explicit App IDs are unique across all accounts, so the prefix has to
@@ -712,7 +714,7 @@ This project would not exist without the following work.
 
 | Project | Used for | License |
 |---|---|---|
-| [jkcoxson/idevice](https://github.com/jkcoxson/idevice) | The Rust library doing all the real protocol work behind `iCTRLApp/DDI` — RSD tunnel, lockdownd, image mounter. Fetched as an xcframework by `Scripts/fetch-idevice.sh`. | MIT |
+| [jkcoxson/idevice](https://github.com/jkcoxson/idevice) | The Rust library doing all the real protocol work behind `iCTRLApp/DDI` — RSD tunnel, lockdownd, image mounter. Built from source as an xcframework by `Scripts/build-idevice.sh`, with one patch adding on-device pairing without its own mDNS advertising. | MIT |
 | [StikDebug](https://github.com/StikDebug/StikDebug) (formerly StikJIT) | **Inspired iCTRL's DDI mounting.** Mounting the Developer Disk Image from the device itself, with no privileged entitlement, is StikDebug's idea. `DDIMounter.swift` is an independent implementation against the `idevice` API — no code is copied. | AGPL-3.0 |
 | [StosVPN](https://github.com/SideStore/StosVPN) / [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN) | Provides the local tunnel that makes the device's own `remoted` service routable at `10.7.0.1:49152`, which is what lets an on-device app reach its own lockdownd at all. LocalDevVPN is a maintained fork of StosVPN and is what ships on the App Store. | NOASSERTION — check upstream before reuse |
 | [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage) | Mirror of the personalized DDI components (`BuildManifest.plist`, `Image.dmg`, `Image.dmg.trustcache`). Apple doesn't publish these for direct download; the same files ship inside Xcode, and you can import your own copy instead. Maintained by the pymobiledevice3 author. | See upstream |

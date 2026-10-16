@@ -3,10 +3,16 @@ import UniformTypeIdentifiers
 
 /// Where the device pairing record lives.
 ///
-/// The pairing file is what `idevicepair pair` writes on a Mac: a plist holding
-/// the host certificate and keys that let a client authenticate to this device's
-/// `lockdownd`. Mounting a DDI needs one because the mount goes through the same
-/// trusted channel Xcode would use.
+/// The pairing file is a RemotePairing (RP) record: a plist with the host's
+/// Ed25519 keys (`public_key`, `private_key`) and its `identifier`, which the
+/// mount uses to open the RemotePairing tunnel to this device's `remoted`.
+///
+/// Two sources produce one without a separate lockdown step:
+///  * StikPair, or iCTRL's own on-device pairing (iOS 27+) — RP keys only.
+///  * iLoader on iOS 17.4+ — a merged plist carrying both the lockdown record
+///    (`HostID`, `HostCertificate`, …) and the RP keys.
+/// A lockdown-only record (`idevicepair pair`, iLoader below 17.4) has no RP
+/// keys and cannot open the tunnel, so it is turned away at import.
 ///
 /// Only its *path* matters to the mounting code — the plist is parsed by the
 /// idevice library, never here.
@@ -90,7 +96,12 @@ enum PairingFileStore {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
 
-        let data = try Data(contentsOf: url)
+        try store(Data(contentsOf: url))
+    }
+
+    /// Validate a pairing record and write it into place, replacing any
+    /// earlier one. Used by both import and on-device pairing.
+    static func store(_ data: Data) throws {
         try validate(data)
 
         let dest = storedURL
@@ -101,7 +112,7 @@ enum PairingFileStore {
         try data.write(to: dest, options: [.atomic, .completeFileProtection])
         try? FileManager.default.setAttributes([.posixPermissions: 0o600],
                                                ofItemAtPath: dest.path)
-        ictrlLog("Pairing file imported (\(data.count)B)")
+        ictrlLog("Pairing file stored (\(data.count)B)")
     }
 
     /// Posted after a pairing file is stored, so a screen showing the old
@@ -128,20 +139,27 @@ enum PairingFileStore {
     /// Reject anything that clearly isn't a pairing record, so the failure lands
     /// at import time with a clear message instead of surfacing later as an
     /// opaque error from deep inside the mount.
+    ///
+    /// The check mirrors what idevice's `RpPairingFile::from_bytes` requires:
+    /// 32-byte `public_key` and `private_key`, and a string `identifier`. Any
+    /// other keys (a merged iLoader file's lockdown half) are left alone.
     private static func validate(_ data: Data) throws {
         guard let plist = try? PropertyListSerialization.propertyList(
                 from: data, options: [], format: nil) as? [String: Any] else {
-            throw DDIError.invalidPairingFile("Not a property list. Expected the file "
-                + "`idevicepair pair` writes (a .plist / .mobiledevicepairing).")
+            throw DDIError.invalidPairingFile("Not a property list. Expected a "
+                + "pairing file from StikPair, or from iLoader on iOS 17.4 or later.")
         }
-        // These are the fields a lockdown pairing record always carries.
-        let required = ["HostID", "HostCertificate", "HostPrivateKey"]
-        let missing = required.filter { plist[$0] == nil }
-        guard missing.isEmpty else {
+        let hasKeys = ["public_key", "private_key"].allSatisfy { (plist[$0] as? Data)?.count == 32 }
+        guard hasKeys, plist["identifier"] is String else {
+            if plist["HostID"] != nil {
+                throw DDIError.invalidPairingFile(
+                    "This is a lockdown-only pairing record (from `idevicepair` or an "
+                    + "older iLoader). Mounting needs a RemotePairing record: pair on "
+                    + "this device (iOS 27+), or export again with iLoader on iOS 17.4+.")
+            }
             throw DDIError.invalidPairingFile(
-                "Missing \(missing.joined(separator: ", ")). This looks like a "
-                + "property list but not a pairing record — re-export it with "
-                + "`idevicepair pair` (libimobiledevice) or pymobiledevice3.")
+                "No RemotePairing keys (public_key, private_key, identifier). This "
+                + "looks like a property list but not a pairing record.")
         }
     }
 }

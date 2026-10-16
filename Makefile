@@ -226,10 +226,10 @@ help:
 	@echo "  make ipa     Build + package both IPAs"
 	@echo "  make clean   Remove build artifacts"
 
-# The idevice xcframework is a 215MB release asset, not vendored (see
-# Scripts/fetch-idevice.sh). Fetch it on demand so a fresh clone builds.
-# Phony so the script runs every build: it is a no-op when the pinned version
-# is already there, and replaces an older copy after a version bump.
+# The idevice xcframework is built from source with Patches/idevice applied
+# (see Scripts/build-idevice.sh), not vendored. Built on demand so a fresh
+# clone builds. Phony so the script runs every build: it is a no-op when the
+# pinned version and patches are already built, and rebuilds after a change.
 .PHONY: Frameworks/IDevice.xcframework
 Frameworks/IDevice.xcframework:
-	@bash Scripts/fetch-idevice.sh
+	@bash Scripts/build-idevice.sh

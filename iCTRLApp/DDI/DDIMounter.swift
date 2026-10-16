@@ -20,8 +20,10 @@ enum DDIError: LocalizedError {
         case .missingImage:
             return "Developer Disk Image files are missing — download them first."
         case .tunnelDown:
-            return "LocalDevVPN isn't connected. The tunnel doesn't survive a reboot — "
-                 + "open LocalDevVPN and connect it (step 1), then mount again."
+            let app = TunnelApp.selected.displayName
+            return "The tunnel to this device's debug service isn't up. Connect \(app) "
+                 + "(LocalDevVPN doesn't survive a reboot; Shadowrocket needs “Include Route "
+                 + "10.7.0.1/32” on), then mount again."
         case .localNetworkDenied:
             return "iOS blocked the connection to the tunnel: Local Network access is off for iCTRL. "
                  + "Turn it on in Settings → Privacy & Security → Local Network (or Settings → iCTRL), then mount again."
@@ -96,7 +98,7 @@ final class DDIMounter: ObservableObject {
             switch await LocalDevVPN.probeTunnel() {
             case .reachable: break
             case .localNetworkDenied: throw DDIError.localNetworkDenied
-            case .unreachable: throw DDIError.tunnelDown
+            case .unreachable, .notDevice: throw DDIError.tunnelDown
             }
 
             let pairingPath = PairingFileStore.storedURL.path
@@ -206,6 +208,11 @@ final class DDIMounter: ObservableObject {
     /// on it purely for that side effect. Both the connection and the session are
     /// expected to be short-lived; failures here are deliberately ignored,
     /// because the goal is the provider install, not the session.
+    ///
+    /// An RP-only pairing file (StikPair, on-device pairing) has no lockdown
+    /// half, so this returns at the read and installs nothing. That is fine
+    /// from idevice v0.1.68: its TSS request goes through idevice's own HTTP
+    /// client, which installs the provider itself before the TLS handshake.
     nonisolated static func primeCryptoProvider() {
         ictrlLog("Priming rustls crypto provider via a throwaway session")
         var pairing: OpaquePointer?
@@ -392,7 +399,7 @@ final class DDIMounter: ObservableObject {
         // string to someone with no way to look it up.
         var detail = "\(message) (code \(code))"
         if message.contains("device socket io failed") || message.contains("connect:") {
-            detail += ". The tunnel isn't reachable — LocalDevVPN is most likely disconnected "
+            detail += ". The tunnel isn't reachable — \(TunnelApp.selected.displayName) is most likely disconnected "
                     + "(it doesn't survive a reboot). Connect it and try again."
         }
         if message.contains("ImageMountFailed") {
