@@ -25,11 +25,14 @@ extension View {
     }
 }
 
-/// This app's own icon, read back from the bundle; an SF Symbol stand-in when
-/// the system doesn't hand it out (it's an Icon Composer icon, which not every
-/// iOS version exposes through `UIImage(named:)`).
+/// This app's own icon. AppIconDisplay is Icon Composer's 512 px export, mask
+/// included (written by generate_icon.py): the compiled app icon only hands
+/// out its 120 px fallback, which blurs at this size on a 3x screen. The
+/// bundle's own icon, then an SF Symbol, are stand-ins if the asset is missing.
 struct AppIconImage: View {
     var size: CGFloat = 112
+
+    private static let display = UIImage(named: "AppIconDisplay")
 
     private static let image: UIImage? = {
         let icons = Bundle.main.infoDictionary?["CFBundleIcons"] as? [String: Any]
@@ -44,7 +47,13 @@ struct AppIconImage: View {
     }()
 
     var body: some View {
-        if let image = Self.image {
+        if let display = Self.display {
+            Image(uiImage: display)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: size, height: size)
+        } else if let image = Self.image {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
