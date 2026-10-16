@@ -21,6 +21,8 @@ targets:
     platform: iOS
     sources:
       - path: iCTRLApp
+        excludes:
+          - AllInOne-Info.plist
       - path: iCTRLKit
       # Shared with the runner: one string table for both processes, so a phrase
       # the user sees in a notification matches the one in the app.
@@ -44,13 +46,59 @@ targets:
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "iCTRL reaches this device's debug service through LocalDevVPN to mount the Developer Disk Image, and serves the automation API on your network."
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "iCTRL pairs with this device from Settings, reaches its debug service through LocalDevVPN or Shadowrocket to mount the Developer Disk Image, and serves the automation API on your network."
         # LSApplicationQueriesSchemes can't be expressed as an INFOPLIST_KEY_
         # setting — Xcode only maps an allowlist of keys and drops this one
         # silently — so it lives in a real plist that gets merged in. Without it
         # iOS denies UIApplication.open() for these schemes with no error, which
         # would break the Start button and the StikDebug shortcut.
         INFOPLIST_FILE: iCTRLApp/Info.plist
+
+  # SPIKE (docs/runner-merge-spike.md): iCTRL and the runner as ONE app. The
+  # main executable is iCTRL's own, so it launches with no DDI; the test bundle
+  # rides along in PlugIns/ and InProcessRunner dlopens XCTest after the mount.
+  iCTRLAllInOne:
+    type: application
+    platform: iOS
+    sources:
+      - path: iCTRLApp
+        excludes:
+          - Info.plist
+          - AllInOne-Info.plist
+      - path: iCTRLKit
+      - path: iCTRLUITests/Localized.swift
+    dependencies:
+      - framework: Frameworks/IDevice.xcframework
+        embed: false
+      - target: iCTRLUITests
+        embed: true
+        codeSign: true
+        copy:
+          destination: plugins
+    settings:
+      base:
+        # Its own product name: the iCTRL target still gets built (the UI test
+        # target depends on it), and two iCTRL.app outputs collide.
+        PRODUCT_NAME: iCTRLAllInOne
+        INFOPLIST_KEY_CFBundleDisplayName: iCTRL
+        PRODUCT_BUNDLE_IDENTIFIER: "$(ICTRL_BUNDLE_PREFIX).ictrl"
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "iCTRL pairs with this device from Settings, reaches its debug service through LocalDevVPN or Shadowrocket to mount the Developer Disk Image, and serves the automation API on your network."
+        INFOPLIST_FILE: iCTRLApp/AllInOne-Info.plist
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) ICTRL_ALL_IN_ONE"
+        # XCTRunner's own LC_RPATHs. Nothing is linked through them at launch
+        # (the app does not link XCTest), so a missing DDI costs nothing; they
+        # resolve the test bundle's @rpath/XCTest.framework and
+        # @rpath/libXCTestSwiftSupport.dylib once the image is mounted.
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks /System/Developer/Library/Frameworks /System/Developer/usr/lib /Developer/Library/Frameworks /Developer/usr/lib"
 
   iCTRLUITests:
     type: bundle.ui-testing
@@ -104,6 +152,10 @@ targets:
           echo "✅ Frameworks stripped"
 
 schemes:
+  iCTRLAllInOne:
+    build:
+      targets:
+        iCTRLAllInOne: all
   iCTRL:
     build:
       targets:

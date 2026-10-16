@@ -73,6 +73,8 @@ static const double kBootstrapMaxWindow = 300.0;
 + (void)reKickIfNeeded:(id)delegate;
 + (void)armBootstrapRetryLoop;
 + (void)pollBootstrapOnce;
++ (BOOL)isInProcess;
++ (void)deliverURL:(NSURL *)url;
 @end
 
 /// Append one +load-era line DIRECTLY to today's persisted log file. These lines
@@ -222,6 +224,17 @@ static void swizzled_setDelegate(id self, SEL _cmd, id<UIApplicationDelegate> de
     sEarlyURLs = [NSMutableArray array];
     sEarlyLogs = [NSMutableArray array];
     sEarlyLock = [[NSLock alloc] init];
+
+    // All-in-one build (iCTRLApp/Runner/InProcessRunner.swift): this bundle was
+    // loaded into the running iCTRL app, long after launch. There is no
+    // _XCTRunnerAppDelegate to hook, the app's own delegate must be left alone,
+    // and suspending would throw the user out of the screen they just tapped
+    // Start on. URLs arrive through +deliverURL: instead.
+    if ([self isInProcess]) {
+        earlyLog(@"🟩 +load reached in-process — no delegate hooks, no early backgrounding");
+        [self armBootstrapObserver];
+        return;
+    }
 
     // Swizzle UIApplication setDelegate: so we hook the delegate the moment it's
     // set (before didFinishLaunching). Fall back to a direct class hook too.
@@ -494,6 +507,17 @@ static BOOL sInstalled = NO;
     // The delegate callbacks (didFinishLaunching / scene:willConnect) just make
     // sure the continuous retry loop is armed — the loop itself owns re-kicking.
     [EarlyURLHook armBootstrapRetryLoop];
+}
+
++ (BOOL)isInProcess {
+    return getenv("ICTRL_IN_PROCESS") != NULL;
+}
+
+/// The host app's entry for ictrl:// URLs in the all-in-one build, found by
+/// name (NSClassFromString) since the app does not link this bundle. The test's
+/// 2s safety timer drains it.
++ (void)deliverURL:(NSURL *)url {
+    if ([url isKindOfClass:[NSURL class]]) { stashURL(url); }
 }
 
 + (NSArray<NSURL *> *)drainURLs {

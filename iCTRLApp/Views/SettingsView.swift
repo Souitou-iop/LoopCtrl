@@ -371,6 +371,13 @@ struct SettingsView: View {
     }
 
     private func stopRunner() {
+        #if ICTRL_ALL_IN_ONE
+        // Same URL, same handler — but the test it ends lives in this process,
+        // and XCTest exit()s when its test returns: Stop closes iCTRL. Starting
+        // again is a fresh launch (XCTest bootstraps once per process).
+        InProcessRunner.handle(Self.runnerStopURL)
+        return
+        #endif
         // Opening the runner's scheme brings it to the front, where it stops its
         // server and ends the test. It bounces back here afterwards, but the
         // probe is what settles the displayed state.
@@ -387,6 +394,15 @@ struct SettingsView: View {
 
     private func startRunner() {
         launchFailed = false
+        #if ICTRL_ALL_IN_ONE
+        do {
+            try InProcessRunner.start()
+        } catch {
+            ictrlLog("In-process start failed: \(error.localizedDescription)")
+            launchFailed = true
+        }
+        return
+        #endif
         UIApplication.shared.open(Self.runnerURL) { ok in
             // The usual cause is the runner simply not being installed — the two
             // IPAs ship separately, so having this app is no guarantee.
