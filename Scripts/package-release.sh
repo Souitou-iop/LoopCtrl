@@ -27,7 +27,8 @@ strip_one() {
     app="$(find "$work/Payload" -maxdepth 1 -name '*.app' -type d | head -1)"
     name="$(basename "$ipa")"
     # The team the build was signed with — read before the signature is replaced.
-    team="$(codesign -dv "$app" 2>&1 | awk -F= '/^TeamIdentifier/ { print $2 }')"
+    # None for an unsigned build (make ipa UNSIGNED=1).
+    team="$(codesign -dv "$app" 2>&1 | awk -F= '/^TeamIdentifier/ && $2 != "not set" { print $2 }' || true)"
 
     # Profiles anywhere in the bundle, not just the top level.
     find "$app" -name 'embedded.mobileprovision' -delete
@@ -64,3 +65,6 @@ for ipa in "$REPO/LoopCtrlUITests-Runner.ipa" "$REPO/LoopCtrl.ipa"; do
     [[ -f "$ipa" ]] || { echo "❌ $ipa missing — run make ipa first" >&2; exit 1; }
     strip_one "$ipa"
 done
+# The all-in-one package is optional (make ipa-allinone).
+[[ -f "$REPO/LoopCtrl-AllInOne.ipa" ]] && strip_one "$REPO/LoopCtrl-AllInOne.ipa"
+exit 0

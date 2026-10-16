@@ -13,6 +13,16 @@ RUNNER_BIN    = LoopCtrlUITests-Runner
 XCTEST_BUNDLE = LoopCtrlUITests.xctest
 RUNNER_IPA    = LoopCtrlUITests-Runner.ipa
 
+# `make ipa UNSIGNED=1` (or ipa-allinone): build without Xcode signing and sign
+# ad-hoc instead, for a team with no registered device (Xcode can't make a
+# profile) or for release packages that SideStore / Scripts/sign-ipa.sh re-sign
+# anyway. The bundle prefix drops the team suffix Local.xcconfig adds.
+ifdef UNSIGNED
+XCODE_SIGNING = CODE_SIGNING_ALLOWED=NO LOOPCTRL_BUNDLE_PREFIX=com.openminis
+else
+XCODE_SIGNING = -allowProvisioningUpdates
+endif
+
 # Signing identity is read from the freshly-built app (below, in `ipa`) so the
 # re-sign uses EXACTLY what xcodebuild chose from the Xcode project's automatic
 # signing — never a guessed keychain identity. Do NOT hardcode it here.
@@ -42,7 +52,7 @@ build:
 		-derivedDataPath $(DERIVED_DATA) \
 		-scheme $(SCHEME) \
 		-destination "generic/platform=iOS" \
-		-allowProvisioningUpdates \
+		$(XCODE_SIGNING) \
 		ARCHS=arm64
 	@echo ""
 	@echo "✅ Build completed"
@@ -165,9 +175,10 @@ ipa: build
 	@set -e; \
 	APP="$(BUILD_DIR)/$(RUNNER_APP)"; \
 	AUTH="$$(codesign -dvv "$$APP" 2>&1 | sed -n 's/^Authority=//p' | head -1)"; \
+	if [ -n "$(UNSIGNED)" ]; then AUTH="-"; fi; \
 	if [ -z "$$AUTH" ]; then echo "🔴 could not read signing identity from $$APP"; exit 1; fi; \
 	SHA="$$(security find-identity -v -p codesigning 2>/dev/null | grep -F "$$AUTH" | head -1 | awk '{print $$2}')"; \
-	IDENT="$${SHA:-$$AUTH}"; \
+	IDENT="$${SHA:-$$AUTH}"; if [ "$$AUTH" = "-" ]; then IDENT="-"; fi; \
 	echo "   using: $$AUTH ($$IDENT)"; \
 	for dylib in "$$APP/Frameworks/"*.dylib; do \
 		[ -f "$$dylib" ] || continue; \
@@ -230,7 +241,7 @@ ipa-allinone: Frameworks/IDevice.xcframework $(PROJECT)/project.pbxproj
 		-derivedDataPath $(DERIVED_DATA) \
 		-scheme LoopCtrlAllInOne \
 		-destination "generic/platform=iOS" \
-		-allowProvisioningUpdates \
+		$(XCODE_SIGNING) \
 		ARCHS=arm64
 	@# Same two steps the runner gets in `ipa`, for the same reasons: the
 	@# plug-in carries the host's bundle id, and is re-signed before the host.
@@ -241,9 +252,10 @@ ipa-allinone: Frameworks/IDevice.xcframework $(PROJECT)/project.pbxproj
 	APP_ID="$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$$APP/Info.plist")"; \
 	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $$APP_ID" "$$APP/PlugIns/$(XCTEST_BUNDLE)/Info.plist"; \
 	AUTH="$$(codesign -dvv "$$APP" 2>&1 | sed -n 's/^Authority=//p' | head -1)"; \
+	if [ -n "$(UNSIGNED)" ]; then AUTH="-"; fi; \
 	if [ -z "$$AUTH" ]; then echo "🔴 could not read signing identity from $$APP"; exit 1; fi; \
 	SHA="$$(security find-identity -v -p codesigning 2>/dev/null | grep -F "$$AUTH" | head -1 | awk '{print $$2}')"; \
-	IDENT="$${SHA:-$$AUTH}"; \
+	IDENT="$${SHA:-$$AUTH}"; if [ "$$AUTH" = "-" ]; then IDENT="-"; fi; \
 	for dylib in "$$APP/"*.dylib; do [ -f "$$dylib" ] && codesign --force --sign "$$IDENT" "$$dylib"; done; \
 	codesign --force --sign "$$IDENT" "$$APP/PlugIns/$(XCTEST_BUNDLE)"; \
 	codesign --force --sign "$$IDENT" --preserve-metadata=entitlements "$$APP"; \
@@ -267,6 +279,8 @@ help:
 	@echo ""
 	@echo "  make build   Build both apps with Xcode signing"
 	@echo "  make ipa     Build + package both IPAs"
+	@echo "  make ipa UNSIGNED=1   Same, ad-hoc signed (no team/device needed)"
+	@echo "  Scripts/package-release.sh   Strip profiles/team ids into release/"
 	@echo "  make clean   Remove build artifacts"
 
 # The idevice xcframework is built from source with Patches/idevice applied
