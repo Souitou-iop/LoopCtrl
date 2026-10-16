@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import MachO
 import UIKit
 
 /// Starts the XCUITest server inside THIS process — the all-in-one build, where
@@ -92,6 +93,7 @@ enum InProcessRunner {
 
         bootstrapped = true
         holdBackgroundTaskUntilTestStarts()
+        BootstrapForegroundGuard.arm()
         // Same hand-off as -[_XCTRunnerAppDelegate runTestsInBackground:]: a run
         // loop block rather than a dispatch block. The test never returns, and
         // the main queue does not drain re-entrantly — started from inside a
@@ -256,6 +258,7 @@ extension InProcessRunner {
     }
 
     private static func endBootstrapTask() {
+        BootstrapForegroundGuard.disarm()
         if let observer = testStartedObserver {
             NotificationCenter.default.removeObserver(observer)
             testStartedObserver = nil
@@ -263,5 +266,86 @@ extension InProcessRunner {
         guard bootstrapTask != .invalid else { return }
         UIApplication.shared.endBackgroundTask(bootstrapTask)
         bootstrapTask = .invalid
+    }
+}
+
+// MARK: - Staying in the foreground through the bootstrap
+
+/// Keeps XCTest from pressing Home on LoopCtrl during the one-time bootstrap.
+///
+/// The UI-testing bootstrap (-[XCTestDriver _preTestingInitializationForUIAutomation]
+/// → _XCUIInitializeForUITesting, XCTest.framework, Xcode 27) ends with
+/// _XCUISendTestRunnerToBackground: unless
+/// `UIApplication.shared.applicationState == .background` ("Test runner is
+/// already executing in the background."), it calls
+/// `-[XCUIDevice _silentPressButton:]` with Home ("Hitting home button to
+/// enter background.") and waits for UIApplicationDidEnterBackgroundNotification.
+/// Right for a separate runner app, which must get out of the way of the app
+/// under test; here the runner IS LoopCtrl, so it dropped the user on the Home
+/// Screen on the first Start. (A later Start re-enables automation without the
+/// bootstrap, which is why only the first one did it.)
+///
+/// So, between `_XCTestMain` and the test starting, `applicationState` answers
+/// `.background` to callers inside XCTest.framework only; everyone else,
+/// UIKit and SwiftUI included, still gets the real state. The original
+/// implementation is put back once the test runs.
+enum BootstrapForegroundGuard {
+    private static var original: IMP?
+    private static var xctestBase: UnsafeMutableRawPointer?
+
+    static func arm() {
+        guard original == nil,
+              let method = class_getInstanceMethod(UIApplication.self, #selector(getter: UIApplication.applicationState)) else { return }
+        // XCTest.framework itself, not the image _XCTestMain lives in
+        // (XCTestCore): the bootstrap's check is in XCTest.framework.
+        guard let base = loadedImageBase(pathSuffix: "/XCTest.framework/XCTest") else {
+            loopctrlLog("Foreground guard: XCTest.framework not loaded — not armed")
+            return
+        }
+        xctestBase = base
+
+        typealias StateFn = @convention(c) (AnyObject, Selector) -> Int
+        let real = method_getImplementation(method)
+        let realFn = unsafeBitCast(real, to: StateFn.self)
+        let block: @convention(block) (AnyObject) -> Int = { app in
+            let state = realFn(app, #selector(getter: UIApplication.applicationState))
+            guard state != UIApplication.State.background.rawValue, calledFromXCTest() else { return state }
+            loopctrlLog("XCTest bootstrap asked for the app state: answering background, so it does not press Home")
+            return UIApplication.State.background.rawValue
+        }
+        original = real
+        method_setImplementation(method, imp_implementationWithBlock(block))
+        loopctrlLog("Foreground guard armed for the XCTest bootstrap")
+    }
+
+    private static func loadedImageBase(pathSuffix: String) -> UnsafeMutableRawPointer? {
+        for index in 0..<_dyld_image_count() {
+            guard let name = _dyld_get_image_name(index),
+                  String(cString: name).hasSuffix(pathSuffix),
+                  let header = _dyld_get_image_header(index) else { continue }
+            return UnsafeMutableRawPointer(mutating: header)
+        }
+        return nil
+    }
+
+    static func disarm() {
+        guard let real = original,
+              let method = class_getInstanceMethod(UIApplication.self, #selector(getter: UIApplication.applicationState)) else { return }
+        method_setImplementation(method, real)
+        original = nil
+        loopctrlLog("Foreground guard disarmed")
+    }
+
+    /// Whether one of the nearest frames (past this block and its thunks)
+    /// returns into XCTest.framework.
+    private static func calledFromXCTest() -> Bool {
+        guard let base = xctestBase else { return false }
+        for address in Thread.callStackReturnAddresses.dropFirst().prefix(6) {
+            var info = Dl_info()
+            guard let pointer = UnsafeRawPointer(bitPattern: address.uintValue),
+                  dladdr(pointer, &info) != 0 else { continue }
+            if info.dli_fbase == base { return true }
+        }
+        return false
     }
 }
