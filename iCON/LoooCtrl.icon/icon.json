@@ -22,7 +22,7 @@
           "image-name" : "LoopCtrl 4.png",
           "name" : "LoopCtrl",
           "position" : {
-            "scale" : 0.8,
+            "scale" : 0.75,
             "translation-in-points" : [
               0,
               0
