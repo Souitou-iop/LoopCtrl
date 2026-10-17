@@ -297,9 +297,9 @@ enum L10n {
                            .zhHant: "iOS 26.3 及以下約 100 MB，iOS 26.4 起約 17 MB。只需下載一次並重複使用——重新開機後只需重新掛載。"],
         .ddiDownloaded: [.en: "Downloaded", .zhHans: "已下载", .zhHant: "已下載"],
         .downloadImageFiles: [.en: "Download image files", .zhHans: "下载镜像文件", .zhHant: "下載映像檔案"],
-        .ddiSourceFooter: [.en: "Fetched from the DeveloperDiskImage mirror maintained by the pymobiledevice3 author. Apple doesn't publish these for direct download; the same files ship inside Xcode.",
-                           .zhHans: "取自 pymobiledevice3 作者维护的 DeveloperDiskImage 镜像源。苹果不提供直接下载；相同文件随 Xcode 一起分发。",
-                           .zhHant: "取自 pymobiledevice3 作者維護的 DeveloperDiskImage 鏡像源。蘋果不提供直接下載；相同檔案隨 Xcode 一起分發。"],
+        .ddiSourceFooter: [.en: "Fetched from the DeveloperDiskImage mirror maintained by the pymobiledevice3 author, through jsDelivr with GitHub as a fallback. Every file is checked against a pinned SHA-256. Apple doesn't publish these for direct download; the same files ship inside Xcode.",
+                           .zhHans: "取自 pymobiledevice3 作者维护的 DeveloperDiskImage 镜像源，优先经 jsDelivr 下载，失败时改用 GitHub。每个文件都会按内置的 SHA-256 校验。苹果不提供直接下载；相同文件随 Xcode 一起分发。",
+                           .zhHant: "取自 pymobiledevice3 作者維護的 DeveloperDiskImage 鏡像源，優先經 jsDelivr 下載，失敗時改用 GitHub。每個檔案都會按內建的 SHA-256 校驗。蘋果不提供直接下載；相同檔案隨 Xcode 一起分發。"],
 
         .mountButton: [.en: "Mount Developer Disk Image", .zhHans: "挂载开发者磁盘镜像", .zhHant: "掛載開發者磁碟映像"],
         .mountedOK: [.en: "Mounted — the automation runner can launch now", .zhHans: "已挂载——自动化 runner 现在可以启动了", .zhHant: "已掛載——自動化 runner 現在可以啟動了"],

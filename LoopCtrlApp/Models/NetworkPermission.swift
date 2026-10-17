@@ -54,7 +54,9 @@ final class NetworkPermission: ObservableObject {
         }
         // A tiny request to the host the DDI download uses: on a fresh install
         // this is what raises the prompt.
-        var req = URLRequest(url: DeveloperDiskImageStore.Component.buildManifest.remoteURL, timeoutInterval: 10)
+        guard let url = DeveloperDiskImageStore.sources.first?.url(for: .buildManifest,
+                                                                  method: DeveloperDiskImageStore.mountMethod) else { return }
+        var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = "HEAD"
         URLSession.shared.dataTask(with: req) { _, resp, err in
             loopctrlLog("Network probe: \((resp as? HTTPURLResponse)?.statusCode.description ?? err?.localizedDescription ?? "no answer")")

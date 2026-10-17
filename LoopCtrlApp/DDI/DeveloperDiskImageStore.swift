@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// The files a DDI mount needs, kept on disk.
@@ -20,7 +21,7 @@ final class DeveloperDiskImageStore: ObservableObject {
         /// iOS 26.4 and later: cryptexd installs the DDI cryptex.
         case cryptex
 
-        /// Mirror folder, maintained by the pymobiledevice3 author. Apple does
+        /// Folder in the upstream repository, maintained by the pymobiledevice3 author. Apple does
         /// not publish these for direct download; the same content ships inside
         /// Xcode, so a user with a Mac can supply their own copy instead (see
         /// `importComponent`).
@@ -28,6 +29,24 @@ final class DeveloperDiskImageStore: ObservableObject {
             switch self {
             case .personalized: return "Xcode_iOS_DDI_Personalized"
             case .cryptex: return "Xcode_iOS_DDI_Cryptex"
+            }
+        }
+
+        /// SHA-256 of each file at `pinnedCommit`.
+        var sha256: [Component: String] {
+            switch self {
+            case .personalized: return [
+                .buildManifest: "8edd4a2f4f4ef1fbd7bfe49785d8badc673d1395d1d94d85b132ca8ab5ecaf54",
+                .image: "05fd807da5e19f030fa4941f24800c965c6c77982ab572dd5d1ef778fb69f9ca",
+                .trustCache: "36af60889ff5a737874a26daeb8e1a0139ebfebec6ec2e4d8f6a3c1bf1dce35c",
+            ]
+            case .cryptex: return [
+                .buildManifest: "27385d7582b03b36bb3104e22b520aee0c47d72fecb4e8ecfe12ef5d966c7012",
+                .image: "873097f695a8b9734e2abc54f795a8874d40ff6fd11208ecb01ef29534c7c176",
+                .trustCache: "f7f21986074eee03a215aca16ecfc78d6bf183600d8a0d2fb691f9896782e6f0",
+                .cryptexInfo: "edf49aef55aacc063d4d7be05b713bb545ce2993b3f62bcc15eccd75e610ee6c",
+                .rootHash: "3543fad2805b88119695c417e12679380b3b5a2742994bbcc839c8e2de5d7302",
+            ]
             }
         }
 
@@ -45,8 +64,47 @@ final class DeveloperDiskImageStore: ObservableObject {
         return v.majorVersion > 26 || (v.majorVersion == 26 && v.minorVersion >= 4) ? .cryptex : .personalized
     }
 
-    private static let mirrorBase =
-        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages"
+    // MARK: - Download sources
+
+    /// One place the image files can be fetched from. `base` is the folder
+    /// holding `Xcode_iOS_DDI_Personalized/` and `Xcode_iOS_DDI_Cryptex/`,
+    /// laid out exactly as in the upstream repository's `PersonalizedImages/`.
+    struct Source {
+        let name: String
+        let base: String
+
+        func url(for component: Component, method: MountMethod) -> URL? {
+            URL(string: "\(base)/\(method.mirrorFolder)/\(component.rawValue)")
+        }
+    }
+
+    /// The upstream commit the files and their SHA-256s below are pinned to.
+    /// Both public sources are addressed by this commit, never by a branch,
+    /// so what they serve can't change under the checksums. To move to a
+    /// newer image: bump this, re-hash every file (`shasum -a 256`), update
+    /// `MountMethod.sha256`, and re-upload to any CDN listed in Info.plist.
+    static let pinnedCommit = "6eae353ae694bda1c421d4a3eee5459ae59c99a1"
+
+    /// Tried in order until one serves a file whose SHA-256 matches.
+    ///
+    /// Our own mirrors go first: Info.plist `LoopCtrlDDIMirrors`, an array of
+    /// base URLs (set in project.yml), each hosting the pinned files under the
+    /// same layout. Then jsDelivr, a CDN in front of GitHub that is reachable
+    /// from more networks (mainland China included) than raw.githubusercontent.com,
+    /// and GitHub itself last. A mirror can't hand out a tampered image: every
+    /// file is checked against the pinned hash wherever it came from.
+    static var sources: [Source] {
+        let configured = (Bundle.main.object(forInfoDictionaryKey: "LoopCtrlDDIMirrors") as? [String] ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.hasPrefix("https://") }
+            .map { Source(name: URL(string: $0)?.host ?? $0, base: $0.hasSuffix("/") ? String($0.dropLast()) : $0) }
+        return configured + [
+            Source(name: "jsDelivr",
+                   base: "https://cdn.jsdelivr.net/gh/doronz88/DeveloperDiskImage@\(pinnedCommit)/PersonalizedImages"),
+            Source(name: "GitHub",
+                   base: "https://raw.githubusercontent.com/doronz88/DeveloperDiskImage/\(pinnedCommit)/PersonalizedImages"),
+        ]
+    }
 
     enum Component: String, CaseIterable {
         case buildManifest = "BuildManifest.plist"
@@ -54,11 +112,6 @@ final class DeveloperDiskImageStore: ObservableObject {
         case trustCache = "Image.dmg.trustcache"
         case cryptexInfo = "Image.dmg.cryptex_info"
         case rootHash = "Image.dmg.root_hash"
-
-        /// Download location for this device's mount method.
-        var remoteURL: URL {
-            URL(string: "\(DeveloperDiskImageStore.mirrorBase)/\(DeveloperDiskImageStore.mountMethod.mirrorFolder)/\(rawValue)")!
-        }
 
         /// Share of the download, for a progress bar that moves with the bytes.
         var weight: Double {
@@ -144,7 +197,6 @@ final class DeveloperDiskImageStore: ObservableObject {
                 progress = completed
                 continue
             }
-            statusMessage = "Downloading \(component.rawValue)…"
             try await download(component, to: dest) { [weak self] frac in
                 Task { @MainActor in self?.progress = completed + frac * weight }
             }
@@ -154,33 +206,67 @@ final class DeveloperDiskImageStore: ObservableObject {
         statusMessage = nil
     }
 
-    /// Generous limits: the mirror is GitHub, which can crawl and stall for
-    /// long stretches on some networks, and the default 60s idle limit then
-    /// fails the image partway.
+    /// Generous limits: a source can crawl and stall for long stretches on
+    /// some networks, and the default 60s idle limit then fails the image
+    /// partway.
     private static let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 120
         config.timeoutIntervalForResource = 60 * 60
         return URLSession(configuration: config)
     }()
-    private static let downloadAttempts = 4
+    /// Per source, before moving on to the next one.
+    private static let downloadAttempts = 3
 
-    /// Download one file, resuming from what already arrived when the
-    /// connection drops (a Range request; a server that ignores it sends the
-    /// whole file again, and the partial copy is discarded).
+    /// Download one file from the first source that serves it intact: an
+    /// HTTP error, a connection that keeps dropping, or a file whose SHA-256
+    /// doesn't match moves on to the next source.
     private func download(_ component: Component, to dest: URL,
                           onProgress: @escaping (Double) -> Void) async throws {
+        let method = Self.mountMethod
+        let expectedHash = method.sha256[component]
+        var lastError: Error = DDIError.downloadFailed(component.rawValue, "no download source")
+        for source in Self.sources {
+            guard let url = source.url(for: component, method: method) else { continue }
+            do {
+                let data = try await download(component, from: url, sourceName: source.name, onProgress: onProgress)
+                let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+                if let expectedHash, hash != expectedHash {
+                    loopctrlLog("⚠️ \(component.rawValue) from \(source.name): SHA-256 \(hash) ≠ pinned \(expectedHash)")
+                    lastError = DDIError.downloadFailed(component.rawValue, "checksum mismatch from \(source.name)")
+                    onProgress(0)
+                    continue
+                }
+                try data.write(to: dest, options: .atomic)
+                loopctrlLog("Downloaded \(component.rawValue) from \(source.name) — \(data.count)B, SHA-256 ok")
+                onProgress(1.0)
+                return
+            } catch {
+                lastError = error
+                loopctrlLog("⚠️ \(component.rawValue) from \(source.name) failed: \(error.localizedDescription)")
+                onProgress(0)
+            }
+        }
+        throw lastError
+    }
+
+    /// Fetch one file from one source, resuming from what already arrived
+    /// when the connection drops (a Range request; a server that ignores it
+    /// sends the whole file again, and the partial copy is discarded).
+    private func download(_ component: Component, from url: URL, sourceName: String,
+                          onProgress: @escaping (Double) -> Void) async throws -> Data {
         var data = Data()
         var expected: Int64 = -1
         var lastError: Error?
+        statusMessage = "Downloading \(component.rawValue) from \(sourceName)…"
         for attempt in 1...Self.downloadAttempts {
             do {
-                var request = URLRequest(url: component.remoteURL)
+                var request = URLRequest(url: url)
                 if !data.isEmpty { request.setValue("bytes=\(data.count)-", forHTTPHeaderField: "Range") }
                 let (bytes, response) = try await Self.session.bytes(for: request)
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 || http.statusCode == 206 else {
                     throw DDIError.downloadFailed(component.rawValue,
-                        (response as? HTTPURLResponse).map { "HTTP \($0.statusCode)" } ?? "no response")
+                        (response as? HTTPURLResponse).map { "HTTP \($0.statusCode) from \(sourceName)" } ?? "no response from \(sourceName)")
                 }
                 if http.statusCode == 200 {
                     data = Data()
@@ -203,19 +289,17 @@ final class DeveloperDiskImageStore: ObservableObject {
                         }
                     }
                 }
-                try data.write(to: dest, options: .atomic)
-                loopctrlLog("Downloaded \(component.rawValue) — \(data.count)B" + (attempt > 1 ? " (attempt \(attempt))" : ""))
-                onProgress(1.0)
-                return
+                if attempt > 1 { loopctrlLog("\(component.rawValue) from \(sourceName) finished on attempt \(attempt)") }
+                return data
             } catch let error as DDIError {
-                throw error
+                throw error   // an HTTP error won't fix itself; try the next source
             } catch {
                 lastError = error
-                loopctrlLog("⚠️ \(component.rawValue) download interrupted at \(data.count)B (attempt \(attempt)): \(error.localizedDescription)")
-                statusMessage = "Downloading \(component.rawValue)… (retrying, \(attempt)/\(Self.downloadAttempts - 1))"
+                loopctrlLog("⚠️ \(component.rawValue) from \(sourceName) interrupted at \(data.count)B (attempt \(attempt)): \(error.localizedDescription)")
+                statusMessage = "Downloading \(component.rawValue) from \(sourceName)… (retrying, \(attempt)/\(Self.downloadAttempts - 1))"
             }
         }
-        throw lastError ?? DDIError.downloadFailed(component.rawValue, "no response")
+        throw lastError ?? DDIError.downloadFailed(component.rawValue, "no response from \(sourceName)")
     }
 
     /// Accept a user-supplied copy, for people who'd rather pull the files out
