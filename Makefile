@@ -27,6 +27,11 @@ endif
 # re-sign uses EXACTLY what xcodebuild chose from the Xcode project's automatic
 # signing — never a guessed keychain identity. Do NOT hardcode it here.
 
+# Extra settings handed to xcodebuild, for version stamping from CI without
+# editing project.yml:
+#   make ipa UNSIGNED=1 EXTRA_BUILD_SETTINGS="MARKETING_VERSION=0.1.0 CURRENT_PROJECT_VERSION=42"
+EXTRA_BUILD_SETTINGS ?=
+
 # ──────────────────────────────────────────────
 # Build both targets with Xcode signing
 # ──────────────────────────────────────────────
@@ -53,7 +58,8 @@ build:
 		-scheme $(SCHEME) \
 		-destination "generic/platform=iOS" \
 		$(XCODE_SIGNING) \
-		ARCHS=arm64
+		ARCHS=arm64 \
+		$(EXTRA_BUILD_SETTINGS)
 	@echo ""
 	@echo "✅ Build completed"
 	@echo "   $(BUILD_DIR)/$(MAIN_APP)"
@@ -242,7 +248,8 @@ ipa-allinone: Frameworks/IDevice.xcframework $(PROJECT)/project.pbxproj
 		-scheme LoopCtrlAllInOne \
 		-destination "generic/platform=iOS" \
 		$(XCODE_SIGNING) \
-		ARCHS=arm64
+		ARCHS=arm64 \
+		$(EXTRA_BUILD_SETTINGS)
 	@# Same two steps the runner gets in `ipa`, for the same reasons: the
 	@# plug-in carries the host's bundle id, and is re-signed before the host.
 	@set -e; \
