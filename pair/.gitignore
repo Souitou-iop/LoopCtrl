@@ -4,3 +4,4 @@ node_modules/
 .DS_Store
 # Design references handed over for v1 (demo, research notes); not part of the project.
 /reference/
+.claude/
