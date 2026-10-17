@@ -4,8 +4,9 @@
 <dict>
 	<!-- Our own Developer Disk Image mirrors, tried before jsDelivr and GitHub
 	     (DeveloperDiskImageStore.sources). Each entry is an https base URL
-	     laid out like the upstream PersonalizedImages/ folder, e.g.
-	     https://cdn.example.com/ddi -> .../Xcode_iOS_DDI_Personalized/Image.dmg.
+	     laid out like the upstream repository's root, e.g. https://cdn.example.com/ddi
+	     -> .../PersonalizedImages/Xcode_iOS_DDI_Personalized/Image.dmg and
+	     .../DeveloperDiskImages/16.4/DeveloperDiskImage.dmg.
 	     Files must be the ones pinned in DeveloperDiskImageStore: every
 	     download is checked against its SHA-256. Empty: no mirror of our own. -->
 	<key>LoopCtrlDDIMirrors</key>

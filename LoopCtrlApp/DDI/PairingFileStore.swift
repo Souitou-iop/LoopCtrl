@@ -1,18 +1,28 @@
 import Foundation
+import IDevice
 import UniformTypeIdentifiers
 
 /// Where the device pairing record lives.
 ///
-/// The pairing file is a RemotePairing (RP) record: a plist with the host's
-/// Ed25519 keys (`public_key`, `private_key`) and its `identifier`, which the
-/// mount uses to open the RemotePairing tunnel to this device's `remoted`.
+/// Which record a mount needs depends on the OS, the same split as
+/// `DeveloperDiskImageStore.MountMethod`:
 ///
-/// Two sources produce one without a separate lockdown step:
+/// **iOS 17+** — a RemotePairing (RP) record: a plist with the host's Ed25519
+/// keys (`public_key`, `private_key`) and its `identifier`, which the mount
+/// uses to open the RemotePairing tunnel to this device's `remoted`. Two
+/// sources produce one without a separate lockdown step:
 ///  * a computer pairing, or LoopCtrl's own on-device pairing (iOS 27+) — RP keys only.
 ///  * iLoader on iOS 17.4+ — a merged plist carrying both the lockdown record
 ///    (`HostID`, `HostCertificate`, …) and the RP keys.
-/// A lockdown-only record (`idevicepair pair`, iLoader below 17.4) has no RP
-/// keys and cannot open the tunnel, so it is turned away at import.
+/// A lockdown-only record has no RP keys and cannot open the tunnel, so on
+/// these systems it is turned away at import.
+///
+/// **iOS 16** — a lockdown pairing record (`HostID`, `SystemBUID`,
+/// `HostCertificate`, `HostPrivateKey`, `RootCertificate`, `RootPrivateKey`,
+/// `DeviceCertificate`, `WiFiMACAddress`, usually `EscrowBag`/`UDID`): what
+/// `idevicepair pair`, jitterbugpair or iLoader write, and what SideStore
+/// imports. There is no `remoted` to talk to; the mount opens a lockdownd
+/// session with it instead. A merged file works here too.
 ///
 /// Only its *path* matters to the mounting code — the plist is parsed by the
 /// idevice library, never here.
@@ -143,11 +153,16 @@ enum PairingFileStore {
     /// The check mirrors what idevice's `RpPairingFile::from_bytes` requires:
     /// 32-byte `public_key` and `private_key`, and a string `identifier`. Any
     /// other keys (a merged iLoader file's lockdown half) are left alone.
+    /// On iOS 16 the lockdown half is what counts; see `validateLockdown`.
     private static func validate(_ data: Data) throws {
         guard let plist = try? PropertyListSerialization.propertyList(
                 from: data, options: [], format: nil) as? [String: Any] else {
             throw DDIError.invalidPairingFile("Not a property list. Expected a "
                 + "pairing file from a computer pairing, or from iLoader on iOS 17.4 or later.")
+        }
+        if DeveloperDiskImageStore.mountMethod == .legacy {
+            try validateLockdown(plist, data: data)
+            return
         }
         let hasKeys = ["public_key", "private_key"].allSatisfy { (plist[$0] as? Data)?.count == 32 }
         guard hasKeys, plist["identifier"] is String else {
@@ -160,6 +175,36 @@ enum PairingFileStore {
             throw DDIError.invalidPairingFile(
                 "No RemotePairing keys (public_key, private_key, identifier). This "
                 + "looks like a property list but not a pairing record.")
+        }
+    }
+
+    /// iOS 16: the record has to be a lockdown pairing record, and idevice has
+    /// to be able to load it. The key check is only there for a readable
+    /// message; idevice's own parse (`PairingFile::from_bytes`, which also
+    /// decodes the certificates and key) is the authority.
+    private static func validateLockdown(_ plist: [String: Any], data: Data) throws {
+        let required = ["HostID", "SystemBUID", "HostCertificate", "HostPrivateKey",
+                        "RootCertificate", "RootPrivateKey", "DeviceCertificate", "WiFiMACAddress"]
+        let missing = required.filter { plist[$0] == nil }
+        guard missing.isEmpty else {
+            if plist["public_key"] != nil {
+                throw DDIError.invalidPairingFile(
+                    "This is a RemotePairing record, which iOS 16 has no use for. iOS 16 "
+                    + "needs a lockdown pairing record — from `idevicepair pair`, "
+                    + "jitterbugpair or iLoader on a computer.")
+            }
+            throw DDIError.invalidPairingFile(
+                "Not a lockdown pairing record — missing \(missing.joined(separator: ", ")).")
+        }
+        var handle: OpaquePointer?
+        let err = data.withUnsafeBytes { buf in
+            idevice_pairing_file_from_bytes(buf.bindMemory(to: UInt8.self).baseAddress, UInt(data.count), &handle)
+        }
+        if let handle { idevice_pairing_file_free(handle) }
+        if let err {
+            let message = err.pointee.message.map { String(cString: $0) } ?? "code \(err.pointee.code)"
+            idevice_error_free(err)
+            throw DDIError.invalidPairingFile("The lockdown pairing record can't be loaded: \(message)")
         }
     }
 }
