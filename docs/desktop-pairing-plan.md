@@ -1,4 +1,4 @@
-# 电脑端一次性配对工具：调研与设计（iOS 17–26）
+# 电脑端一次性配对工具：调研与设计（iOS 16–26）
 
 状态：设计稿，尚未实现。调研日期 2026-10-17，基于 idevice v0.1.68 源码、Impactor（claration/Impactor，MIT）源码、libimobiledevice 源码和社区资料。标 ⚠️ 的结论还没有在真机上验证。
 
@@ -7,7 +7,7 @@
 - **可行，而且有现成的参考实现。** idevice 已经能在 USB 下完成两件事：lockdown 配对，以及生成 LoopCtrl 需要的 RPPairing 文件。生成后可以通过 house_arrest/AFC 直接写进 App 的容器。Impactor 就是用 idevice 做的跨平台侧载工具（Win/macOS/Linux），它已经把「签名安装 App → 生成 RP 配对文件 → 写进 App 的 Documents」串成了一步（见 `crates/plume_utils/src/device.rs` 的 `install_remote_pairing_record` / `get_rsd_pairing_file`）。我们的工具基本可以照这个思路实现。
 - **实际支持下限是 iOS 17.4，不是 17.0。** USB 上生成 RP 记录要用 lockdown 服务 `CoreDeviceProxy`，这个服务 17.4 才有（pymobiledevice3 文档：17.4+ 用 `lockdown start-tunnel`，更早的版本要走 USB 网卡加 QUIC 隧道，需要管理员权限，Windows 上也没有官方支持）。StikDebug 标注的完整支持范围同样是 17.4–18.x 和 26.x。这和 LoopCtrl 现在的提示「iLoader 需要 17.4+」一致。
 - **iOS 27 以下不能纯手机配对（基本确定，⚠️ 未在真机验证）。** 理由见第 3 节。
-- **建议放弃 iOS 16，产品下限定为 iOS 17.4。** 理由见第 7 节。
+- **保留 iOS 16，用 lockdown 记录走旧版挂载。** 重启后要重新挂载是所有版本都有的事，不是放弃 iOS 16 的理由。App 已经加上了 iOS 16 的设备内挂载路径，助手在 iOS 16 上写入 lockdown 记录即可。见第 7 节。
 - **最大的风险其实是签名分发，而不是配对。** 见第 6 节。
 
 ## 1. 目标流程（客户视角）
@@ -37,7 +37,7 @@
 - App 启动或回到前台时检查投递位置：用现有的 `PairingFileStore.store(_:)` 校验并移到正式位置（这样文件会带上 `completeFileProtection` 和 0600 权限），然后删除投递文件。AFC 写入的文件没有数据保护等级，不能长期放着。
 - 首选 `vend_container`，不需要改 Info.plist。如果失败（比如某些签名方式没有 `get-task-allow`），退回到 `vend_documents`；这条路要求在 project.yml 里加上 `UIFileSharingEnabled`。加了之后用户会在「文件」App 里看到 LoopCtrl 的 Documents 目录，所以投递文件要即取即删。
 
-**可选的同步写入。** 同一次连接里还可以把 lockdown 记录合并进去，做成 iLoader 那样的合并 plist。LoopCtrl 只读 RP 那一半，合并后对以后的功能（比如通过 lockdown 安装更新）更有利。
+**同步写入 lockdown 记录。** 同一次连接里还可以把 lockdown 记录合并进去，做成 iLoader 那样的合并 plist。iOS 17+ 上 LoopCtrl 只读 RP 那一半，合并后对以后的功能（比如通过 lockdown 安装更新）更有利。**iOS 16 上只写 lockdown 记录**：没有 RemotePairing，App 用 lockdown 记录挂载（见第 7 节），这一步也不需要 CoreDeviceProxy。
 
 ## 3. 能不能纯手机配对（iOS 17–26）
 
@@ -86,19 +86,30 @@
 
 建议：面向客户时用 A。助手负责完成注册、签名、安装、配对，客户只做插线和点信任。到期前 App 内提醒，再连一次电脑续签。这一部分要单独评估苹果的条款和法务风险，不在本文范围内。
 
-## 7. 是否放弃 iOS 16
+## 7. iOS 16 和 17.0–17.3
 
-建议放弃，产品最低版本定为 **iOS 17.4**（工程上可以保留 17.0，但不对外承诺）：
+**更正：** 本文早先的版本建议放弃 iOS 16，理由是「每次重启都要连电脑重新挂 DDI」。这是错的：DDI 挂载在**所有** iOS 版本上都不会跨重启保留，17+ 同样每次重启后要在 App 内重新挂载。只要 iOS 16 也能在设备内挂载，「一次之后只用手机」对 iOS 16 同样成立，所以重启不是放弃 iOS 16 的理由。
 
-- iOS 16 没有 RemotePairing 和 RSD，LoopCtrl 的设备内挂载流程完全用不上。每次重启都要连电脑重新挂 DDI，和「一次之后只用手机」的目标冲突。
-- 17.0–17.3 在 USB 上生成 RP 记录需要 USB 网卡加 QUIC 隧道（Windows 上没有官方支持），而且设备内回环挂载也没有社区验证；StikDebug 同样从 17.4 起支持。
-- 17.4 以下的活跃设备占比预计很小（未查具体数据）。XCTest 在 iOS 16 上的 KVC 构造路径也一直没有真机验证过（见 `docs/runner-merge-spike.md` 第 9 项）。
+**iOS 16 真正的缺口有两个：**
+
+1. **设备内挂载路径——已补上。** iOS 16 没有 `remoted` / RSD，挂载改走同一个 LocalDevVPN / Shadowrocket 回环上的 lockdownd（`10.7.0.1:62078`）：用 lockdown 配对记录建立会话 → 启动 `com.apple.mobile.mobile_image_mounter` → 上传并挂载旧版 `DeveloperDiskImage.dmg` 和 `.signature`（`ImageType = Developer`）。这就是 SideStore、StikDebug 当年在 iOS 16 上配合 jitterbugpair 文件的做法。实现见 `DDIMounter.performLegacyMount`、`DeveloperDiskImageStore.MountMethod.legacy`；镜像从 doronz88/DeveloperDiskImage 的 `DeveloperDiskImages/16.x/` 下载（16.0–16.7 都有），也可以从 Xcode 14 的 `DeviceSupport/16.x/` 取。`PairingFileStore` 在 iOS 16 上接受 lockdown 记录，17+ 仍然要求 RP 记录。⚠️ 还没有在 iOS 16 真机上跑过。
+2. **进程内 XCTest 启动——未验证。** iOS 16 上 XCTest 走 KVC 构造配置那条路径，一直没有真机验证（见 `docs/runner-merge-spike.md` 第 9 项）。这一项不通过，挂载成功也跑不起来。
+
+所以 iOS 16 的结论是「保留，等真机验证」，而不是放弃。电脑端助手在 iOS 16 上只需要做 lockdown 配对并写入 lockdown 记录，不需要 CoreDeviceProxy。
+
+**17.0–17.3（调研结论，⚠️ 未实现、未验证）：** 这几个版本没有 lockdown 服务 `CoreDeviceProxy`，所以在 USB 上生成 RP 记录需要 USB 网卡加 QUIC 隧道（Windows 上没有官方支持）；设备内用 RP 记录连 `remoted` 也没有社区验证。但 lockdown 这条路很可能走得通：
+
+- pymobiledevice3 v11.19.0 的发布说明写明，17.0–17.3.1 仍然在普通 USB lockdown 上挂载 PersonalizedDMG，不需要隧道。也就是说，image mounter 服务在 17.0–17.3 上可以通过 lockdownd 访问，个性化挂载（TSS 签名）也不依赖 RSD。
+- SideStore 在 17.0–17.3 上用 lockdown 配对文件经回环访问 lockdownd 侧载，这几个版本上坏掉的只是 JIT（需要 RSD 隧道），不是 lockdown 连接。
+- idevice v0.1.68 已经有对应接口：`image_mounter_connect`（TCP provider，走 lockdownd）加 `image_mounter_mount_personalized_with_callback`（基于 provider 的个性化挂载）。
+
+因此 17.0–17.3 可以复用这次的 lockdown 连接代码，再接个性化镜像，就能和 iOS 16 一样只用 lockdown 记录。本次没有实现这一项（`mountMethod` 在 17.0–17.3 仍然走 RP），需要一台 17.0–17.3 的设备验证后再决定。
 
 建议同步修改：README 和 App 内的系统要求说明；`PairingFileStore` 的提示不再推荐 StikPair（其许可证禁止商用），改为推荐我们自己的配对助手。
 
 ## 8. 待解决的风险
 
-1. ⚠️ 第 3 节的两项真机验证还没做。
+1. ⚠️ 第 3 节的两项真机验证还没做。iOS 16 的挂载和 XCTest 启动（第 7 节）也还没做。
 2. ⚠️ 新版 idevice 改了 `RemotePairingClient::new` 的签名（Impactor 用的 rev 已经把 `&mut RpPairingFile` 作为参数）。电脑端工具和 App 内的 xcframework（v0.1.68 + 补丁）最好用同一个版本，避免 RP 文件格式出现差异。
 3. ⚠️ iOS 大版本更新可能让配对文件失效（第 4 节），需要实测 26.x → 27 的情况。
 4. 苹果可能在新版本 iOS 收紧 CoreDeviceProxy 或 untrusted tunnelservice。我们和 Xcode 走的是同一条路，风险和整个社区相同。
@@ -122,4 +133,6 @@
 - libimobiledevice `src/lockdown.c`（`PairingProhibitedOverThisConnection`）：<https://github.com/libimobiledevice/libimobiledevice/blob/master/src/lockdown.c>
 - libimobiledevice lockdown API 文档（CU pairing 仅 Apple TV）：<https://libimobiledevice.org/docs/libimobiledevice/latest/>
 - pymobiledevice3（17.4+ lockdown tunnel）：<https://pypi.org/project/pymobiledevice3/>
+- pymobiledevice3 v11.19.0 发布说明（17.0–17.3.1 在 USB lockdown 上挂载 PersonalizedDMG）：<https://newreleases.io/project/github/doronz88/pymobiledevice3/release/v11.19.0>
+- 旧版 DDI 镜像（16.0–16.7）：<https://github.com/doronz88/DeveloperDiskImage/tree/main/DeveloperDiskImages>
 - StikDebug README（17.4+ 支持范围）：<https://github.com/StephenDev0/StikDebug>

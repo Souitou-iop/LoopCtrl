@@ -2,11 +2,13 @@ import Foundation
 
 /// The files a DDI mount needs, kept on disk.
 ///
-/// Which files depends on the OS: up to iOS 26.3 the personalized image is
-/// mounted through the image mounter; from iOS 26.4 the DDI is a cryptex,
-/// installed through cryptexd from a different set of files. Each set lives in
-/// its own directory, so an OS update that crosses 26.4 downloads the other
-/// set instead of mounting files the device no longer accepts.
+/// Which files depends on the OS: iOS 16 mounts the legacy, per-version
+/// DeveloperDiskImage.dmg with its signature; iOS 17 – 26.3 mount the
+/// personalized image through the image mounter; from iOS 26.4 the DDI is a
+/// cryptex, installed through cryptexd from a different set of files. Each set
+/// lives in its own directory, so an OS update that crosses a boundary (or, on
+/// iOS 16, any minor version) downloads the other set instead of mounting
+/// files the device no longer accepts.
 ///
 /// Not bundled in the app: the images change with Xcode releases, and most
 /// users mounting a DDI already have network. Downloaded once and reused — the
@@ -15,6 +17,9 @@ import Foundation
 final class DeveloperDiskImageStore: ObservableObject {
 
     enum MountMethod: String {
+        /// iOS 16: image mounter over a lockdownd session, legacy image +
+        /// signature. One image per OS minor version, not personalized.
+        case legacy
         /// iOS 17 – 26.3: image mounter, personalized image.
         case personalized
         /// iOS 26.4 and later: cryptexd installs the DDI cryptex.
@@ -23,9 +28,22 @@ final class DeveloperDiskImageStore: ObservableObject {
         /// Mirror folder, maintained by the pymobiledevice3 author. Apple does
         /// not publish these for direct download; the same content ships inside
         /// Xcode, so a user with a Mac can supply their own copy instead (see
-        /// `importComponent`).
+        /// `importComponent`). For iOS 16 that is
+        /// `Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/DeviceSupport/16.x/`
+        /// of an Xcode 14.
         var mirrorFolder: String {
             switch self {
+            case .legacy: return "DeveloperDiskImages/\(DeveloperDiskImageStore.legacyImageVersion)"
+            case .personalized: return "PersonalizedImages/Xcode_iOS_DDI_Personalized"
+            case .cryptex: return "PersonalizedImages/Xcode_iOS_DDI_Cryptex"
+            }
+        }
+
+        /// Directory name under Application Support/DDI. The personalized and
+        /// cryptex names predate the legacy set and are kept as they were.
+        var localFolder: String {
+            switch self {
+            case .legacy: return "Legacy-\(DeveloperDiskImageStore.legacyImageVersion)"
             case .personalized: return "Xcode_iOS_DDI_Personalized"
             case .cryptex: return "Xcode_iOS_DDI_Cryptex"
             }
@@ -33,6 +51,7 @@ final class DeveloperDiskImageStore: ObservableObject {
 
         var components: [Component] {
             switch self {
+            case .legacy: return [.legacyImage, .legacySignature]
             case .personalized: return [.buildManifest, .image, .trustCache]
             case .cryptex: return [.buildManifest, .image, .trustCache, .cryptexInfo, .rootHash]
             }
@@ -42,11 +61,22 @@ final class DeveloperDiskImageStore: ObservableObject {
     /// The method this device's OS needs.
     nonisolated static var mountMethod: MountMethod {
         let v = ProcessInfo.processInfo.operatingSystemVersion
+        if v.majorVersion < 17 { return .legacy }
         return v.majorVersion > 26 || (v.majorVersion == 26 && v.minorVersion >= 4) ? .cryptex : .personalized
     }
 
+    /// The mirror's folder for this OS's legacy image: `major.minor`, the way
+    /// Xcode's DeviceSupport names them (patch releases share one image). The
+    /// mirror stops at 16.7 — the last iOS 16 minor — so anything later in
+    /// the 16 line is clamped to it rather than pointing at a missing folder.
+    nonisolated static var legacyImageVersion: String {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        let minor = v.majorVersion == 16 ? min(v.minorVersion, 7) : v.minorVersion
+        return "\(v.majorVersion).\(minor)"
+    }
+
     private static let mirrorBase =
-        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages"
+        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main"
 
     enum Component: String, CaseIterable {
         case buildManifest = "BuildManifest.plist"
@@ -54,6 +84,8 @@ final class DeveloperDiskImageStore: ObservableObject {
         case trustCache = "Image.dmg.trustcache"
         case cryptexInfo = "Image.dmg.cryptex_info"
         case rootHash = "Image.dmg.root_hash"
+        case legacyImage = "DeveloperDiskImage.dmg"
+        case legacySignature = "DeveloperDiskImage.dmg.signature"
 
         /// Download location for this device's mount method.
         var remoteURL: URL {
@@ -63,7 +95,7 @@ final class DeveloperDiskImageStore: ObservableObject {
         /// Share of the download, for a progress bar that moves with the bytes.
         var weight: Double {
             switch self {
-            case .image: return 0.9
+            case .image, .legacyImage: return 0.9
             case .buildManifest: return 0.07
             default: return 0.01
             }
@@ -83,7 +115,7 @@ final class DeveloperDiskImageStore: ObservableObject {
     /// personalized files directly in `DDI/`; they are moved into place
     /// rather than downloaded again.
     nonisolated static var directory: URL {
-        let dir = rootDirectory.appendingPathComponent(mountMethod.mirrorFolder)
+        let dir = rootDirectory.appendingPathComponent(mountMethod.localFolder)
         migrateLegacyFiles(into: dir)
         return dir
     }

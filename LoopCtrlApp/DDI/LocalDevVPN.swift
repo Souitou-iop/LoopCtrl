@@ -92,6 +92,22 @@ enum LocalDevVPN {
         return frame
     }()
 
+    /// The lockdownd counterpart, for iOS 16 (no `remoted`): a length-prefixed
+    /// `QueryType` request, which lockdownd answers without a session with
+    /// `Type = com.apple.mobile.lockdown`.
+    private static let lockdownQuery: Data = {
+        let xml = #"""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict><key>Label</key><string>LoopCtrl</string><key>Request</key><string>QueryType</string></dict></plist>
+        """#
+        let body = Data(xml.utf8)
+        var frame = Data()
+        withUnsafeBytes(of: UInt32(body.count).bigEndian) { frame.append(contentsOf: $0) }
+        frame.append(body)
+        return frame
+    }()
+
     /// Whether the tunnel actually works: a connection to the service the mount
     /// talks to, that answers like that service.
     ///
@@ -102,12 +118,24 @@ enum LocalDevVPN {
     /// handshake itself for any address it captures, whether or not it can
     /// reach it. So the probe starts an RPPairing handshake and wants the
     /// `RPPairing` magic back.
-    static func probeTunnel(timeout: TimeInterval = 2.5) async -> TunnelProbe {
+    ///
+    /// With `lockdown` (iOS 16, where the mount goes through lockdownd) the
+    /// same check is made against lockdownd's port with a `QueryType`. That is
+    /// the default on iOS 16, so every caller probes what the mount will dial.
+    static func probeTunnel(lockdown: Bool = DeveloperDiskImageStore.mountMethod == .legacy,
+                            timeout: TimeInterval = 2.5) async -> TunnelProbe {
         let host = NWEndpoint.Host(DDIMounter.tunnelAddress)
-        guard let port = NWEndpoint.Port(rawValue: DDIMounter.tunnelPort) else { return .unreachable("bad port") }
+        let portNumber = lockdown ? DDIMounter.lockdownPort : DDIMounter.tunnelPort
+        guard let port = NWEndpoint.Port(rawValue: portNumber) else { return .unreachable("bad port") }
         let conn = NWConnection(host: host, port: port, using: .tcp)
         let queue = DispatchQueue(label: "loopctrl.tunnel.probe")
         let magic = Data("RPPairing".utf8)
+        let lockdownType = Data("com.apple.mobile.lockdown".utf8)
+        let request = lockdown ? lockdownQuery : handshake
+        func answered(_ data: Data?) -> Bool {
+            guard let data else { return false }
+            return lockdown ? data.range(of: lockdownType) != nil : data.prefix(magic.count) == magic
+        }
         let result: TunnelProbe = await withCheckedContinuation { cont in
             var done = false
             func finish(_ r: TunnelProbe) {
@@ -119,11 +147,15 @@ enum LocalDevVPN {
             conn.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    conn.send(content: handshake, completion: .contentProcessed { error in
+                    conn.send(content: request, completion: .contentProcessed { error in
                         if error != nil { finish(.notDevice) }
                     })
-                    conn.receive(minimumIncompleteLength: magic.count, maximumLength: 4096) { data, _, _, _ in
-                        finish(data?.prefix(magic.count) == magic ? .reachable : .notDevice)
+                    // lockdownd's reply is a few hundred bytes; asking for at
+                    // least that much keeps a split first segment from
+                    // reading as "not the device".
+                    let minimum = lockdown ? 64 : magic.count
+                    conn.receive(minimumIncompleteLength: minimum, maximumLength: 4096) { data, _, _, _ in
+                        finish(answered(data) ? .reachable : .notDevice)
                     }
                 case .waiting(let err), .failed(let err):
                     if #available(iOS 14.2, *), conn.currentPath?.unsatisfiedReason == .localNetworkDenied {
@@ -143,14 +175,14 @@ enum LocalDevVPN {
                 if #available(iOS 14.2, *), conn.currentPath?.unsatisfiedReason == .localNetworkDenied {
                     finish(.localNetworkDenied)
                 } else if conn.state == .ready {
-                    // Connected, but no RemotePairing reply in time.
+                    // Connected, but no RemotePairing (or lockdownd) reply in time.
                     finish(.notDevice)
                 } else {
                     finish(.unreachable("no answer in \(timeout)s"))
                 }
             }
         }
-        loopctrlLog("Tunnel probe \(DDIMounter.tunnelAddress):\(DDIMounter.tunnelPort) → \(result); interfaces: \(interfaceSummary())")
+        loopctrlLog("Tunnel probe \(DDIMounter.tunnelAddress):\(portNumber) → \(result); interfaces: \(interfaceSummary())")
         return result
     }
 

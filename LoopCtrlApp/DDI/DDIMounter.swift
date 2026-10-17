@@ -45,6 +45,12 @@ enum DDIError: LocalizedError {
 /// talks to it as an ordinary network client, exactly as Xcode on a Mac would.
 /// The pairing file is what authenticates that conversation.
 ///
+/// iOS 16 has no `remoted`. There the same tunnel reaches `lockdownd` at
+/// 10.7.0.1:62078 instead, and the mount is the pre-17 one: a lockdownd session
+/// opened with a lockdown pairing record, `com.apple.mobile.mobile_image_mounter`
+/// started through it, and the legacy DeveloperDiskImage.dmg uploaded and
+/// mounted with its signature — what SideStore and StikDebug did on iOS 16.
+///
 /// All of the real work happens in the `idevice` Rust library (MIT); this is the
 /// Swift side that sequences it.
 @MainActor
@@ -55,6 +61,8 @@ final class DDIMounter: ObservableObject {
     static let tunnelAddress = "10.7.0.1"
     /// `remoted` — the RemotePairing service the tunnel exposes.
     static let tunnelPort: UInt16 = 49152
+    /// `lockdownd`, which the iOS 16 mount talks to through the same tunnel.
+    static let lockdownPort: UInt16 = 62078
 
     enum Phase: Equatable {
         case idle
@@ -95,6 +103,7 @@ final class DDIMounter: ObservableObject {
             // VPN surfaces as "device socket io failed", which names a socket
             // rather than the step the user has to fix — and the tunnel is down
             // after every reboot, so this is the common case, not an edge one.
+            // On iOS 16 this probes lockdownd rather than remoted (its default).
             switch await LocalDevVPN.probeTunnel() {
             case .reachable: break
             case .localNetworkDenied: throw DDIError.localNetworkDenied
@@ -115,9 +124,15 @@ final class DDIMounter: ObservableObject {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
                 let thread = Thread {
                     do {
-                        try Self.performMount(pairingPath: pairingPath, method: method,
-                                              imageDir: imageDir) { phase in
+                        let report: (Phase) -> Void = { phase in
                             Task { @MainActor in self.phase = phase }
+                        }
+                        if method == .legacy {
+                            try Self.performLegacyMount(pairingPath: pairingPath, imageDir: imageDir,
+                                                        report: report)
+                        } else {
+                            try Self.performMount(pairingPath: pairingPath, method: method,
+                                                  imageDir: imageDir, report: report)
                         }
                         cont.resume()
                     } catch {
@@ -348,6 +363,91 @@ final class DDIMounter: ObservableObject {
                             },
                             box.toOpaque())
                     }
+                }
+            }
+        }
+        report(.finalizing)
+    }
+
+    /// iOS 16: mount the legacy image through lockdownd.
+    ///
+    /// No RemotePairing and no TSS: the TCP provider dials lockdownd through
+    /// the tunnel, `image_mounter_connect` opens a session with the lockdown
+    /// pairing record and starts the image mounter service through it, and
+    /// `mount_developer` sends ReceiveBytes then MountImage with the image's
+    /// own signature — the libimobiledevice / pymobiledevice3 legacy sequence.
+    nonisolated private static func performLegacyMount(pairingPath: String, imageDir: String,
+                                                       report: @escaping (Phase) -> Void) throws {
+        loopctrlLog("DDI mount starting — legacy image (lockdownd) from \(imageDir)")
+
+        var pairing: OpaquePointer?
+        try check("Reading pairing file") { idevice_pairing_file_read(pairingPath, &pairing) }
+        defer { if let pairing { idevice_pairing_file_free(pairing) } }
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = lockdownPort.bigEndian
+        guard tunnelAddress.withCString({ inet_pton(AF_INET, $0, &addr.sin_addr) }) == 1 else {
+            throw DDIError.tunnelUnavailable("bad tunnel address")
+        }
+
+        // The provider takes the pairing file over once it is created; it is
+        // only ours to free if creation fails.
+        var provider: OpaquePointer?
+        try withUnsafePointer(to: &addr) { ptr in
+            try ptr.withMemoryRebound(to: idevice_sockaddr.self, capacity: 1) { sa in
+                try check("Connecting to the device") {
+                    let err = idevice_tcp_provider_new(sa, pairing, "LoopCtrl", &provider)
+                    if err == nil { pairing = nil }
+                    return err
+                }
+            }
+        }
+        defer { if let provider { idevice_provider_free(provider) } }
+        guard provider != nil else { throw DDIError.tunnelUnavailable("no provider") }
+
+        report(.queryingDevice)
+
+        // v0.1.68's image_mounter_connect frees the provider itself when the
+        // connect fails, so forget it then rather than free it a second time.
+        var client: OpaquePointer?
+        try check("Opening the image mounter") {
+            let err = image_mounter_connect(provider, &client)
+            if err != nil { provider = nil }
+            return err
+        }
+        defer { if let client { image_mounter_free(client) } }
+        guard let client else { throw DDIError.ffi("Opening the image mounter", "no client") }
+
+        // Already mounted? A second MountImage fails, so look first. The
+        // device answers LookupImage with the mounted image's signature, or
+        // none (idevice reports that as NotFound).
+        var signature: UnsafeMutablePointer<UInt8>?
+        var signatureLen = 0
+        if let err = image_mounter_lookup_image(client, "Developer", &signature, &signatureLen) {
+            idevice_error_free(err)
+        }
+        if let signature {
+            idevice_data_free(signature, UInt(signatureLen))
+            loopctrlLog("✅ A developer image is already mounted — nothing to do")
+            return
+        }
+
+        let dir = URL(fileURLWithPath: imageDir)
+        let image = try Data(contentsOf: dir.appendingPathComponent(
+            DeveloperDiskImageStore.Component.legacyImage.rawValue), options: .mappedIfSafe)
+        let imageSignature = try Data(contentsOf: dir.appendingPathComponent(
+            DeveloperDiskImageStore.Component.legacySignature.rawValue))
+
+        // No progress callback in the FFI for this one; the image is ~8MB
+        // over loopback, so the bar sits at the start only briefly.
+        report(.uploading(0))
+        try image.withUnsafeBytes { img in
+            try imageSignature.withUnsafeBytes { sig in
+                try check("Mounting the image") {
+                    image_mounter_mount_developer(client,
+                                                  img.bindMemory(to: UInt8.self).baseAddress, image.count,
+                                                  sig.bindMemory(to: UInt8.self).baseAddress, imageSignature.count)
                 }
             }
         }
