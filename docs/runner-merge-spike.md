@@ -1,8 +1,9 @@
 # 可行性验证：把 XCUITest Runner 合并进 LoopCtrl App
 
-> 分支 `claude/runner-merge-spike-65b04f`。结论基于对 Xcode 27.1（XCTest-25228）以及
-> 本机 iOS 27 Developer Disk Image 中二进制的反汇编和字符串分析，外加一次能编译通过的原型。
-> **没有在真机上运行过。** 下文标注 ✅ 的是在 Mac 上已经验证过的，标注 ⚠️ 的是推断、尚未上机验证的。
+> 已合并进 `main`（`a919f4a`、`b97f41b`）。结论基于对 Xcode 27.1（XCTest-25228）以及
+> 本机 iOS 27 Developer Disk Image 中二进制的反汇编和字符串分析，外加能编译通过的原型。
+> **已在 iPhone 17（iOS 27.2）上跑通启动、停止、再次启动和远程访问**（2026-10-17）。
+> 下文标注 ✅ 的是已经验证过的，标注 ⚠️ 的是推断、尚未验证的；第 6 节给出逐项状态。
 
 ## 结论：可行，但有几点需要注意
 
@@ -15,11 +16,12 @@ LoopCtrl 只占 1 个（SideStore + LoopCtrl，空出一个），每 7 天也少
 
 需要注意的几点（后面分别展开）：
 
-1. **XCTest 每个进程只能启动一次**，而测试结束时 XCTest 会调用 `exit()`。所以「停止服务器」
-   会把整个 LoopCtrl 一起关掉，要再启动只能重新打开 App。如果想要「停止后在 App 内再启动」，
-   需要另外改造（让测试不退出，只重启 `JSONRPCServer`）。
+1. **XCTest 每个进程只能启动一次**，而测试结束时 XCTest 会调用 `exit()`。最初的实现里「停止服务器」
+   会把整个 LoopCtrl 一起关掉。已改为让测试停在 run loop 里不返回（parked），只重启 `JSONRPCServer`。
+   ✅ 上机：Stop 后 App 不退出，再 Start 能恢复监听（见第 4 节）。
 2. **UI 和测试共用主线程。** 测试方法在主线程上跑 `distantFuture` 嵌套 run loop，SwiftUI 界面
-   就在这个嵌套 run loop 里继续响应。理论上可行，但 XCTest 做快照之类的慢操作时，界面会跟着卡。⚠️
+   就在这个嵌套 run loop 里继续响应。✅ 上机：parked 期间按钮和开关都能正常操作（远程访问开关即在此状态下切换）。
+   ⚠️ 还没量过 XCTest 做快照时界面卡顿到什么程度。
 3. **后台存活**依赖 testmanagerd 按 pid 发放的后台断言，加上从 XCTRunner 模板抄来的
    `UIBackgroundModes = continuous`。现在的 Runner 也是同一套机制，但用在普通 App 上还没验证过。⚠️
 4. **数据不会自动迁移。** Runner 和 LoopCtrl 现在是两个沙盒、两个钥匙串。合并后，已配对客户端的密钥、
@@ -111,7 +113,7 @@ PlugIns/LoopCtrlUITests.xctest                XCTContainsUITests = true
 Info.plist                                 CFBundleURLSchemes loopctrl / loopctrl-app, UIBackgroundModes continuous
 ```
 
-## 3. testmanagerd 对客户端进程的要求（✅ 字符串分析 / ⚠️ 未实测）
+## 3. testmanagerd 对客户端进程的要求（✅ 字符串分析，核心行为已在真机验证）
 
 分析对象：本机 iOS 27 DDI（`022-20886-114.dmg`）中的 `usr/libexec/testmanagerd`。
 
@@ -126,19 +128,20 @@ Info.plist                                 CFBundleURLSchemes loopctrl / loopctr
   合并后，用户在 LoopCtrl 里点「启动」时 App 在前台，弹窗会盖在 LoopCtrl 上面。原来的早期自动挂起
   （会在弹窗出现时把启动打断）在同进程模式下已经关掉。
 - **后台**：testmanagerd 有 `_XCTD_requestBackgroundAssertionForPID:`，测试进程按 pid 申请后台断言。⚠️
+  代码里已按这条路径加了 `beginBackgroundTask` 覆盖自举窗口，但 5 分钟以上的后台存活还没实测（第 6 节第 6 项）。
 
 ## 4. 副作用
 
 **进程保活与 UI**：`testStartServer` 在主线程上 `while keepRunning { runLoop.run(mode: .default, before: .distantFuture) }`。
-SwiftUI 的事件、定时器、主队列都会在这个嵌套 run loop 里继续执行。⚠️ 要实测的是：滚动
-（`UITrackingRunLoopMode` 会再嵌套一层，一般没问题）、XCTest 做快照时界面会不会明显卡顿。
+SwiftUI 的事件、定时器、主队列都会在这个嵌套 run loop 里继续执行。✅ 上机：服务运行和 parked 两种状态下，
+主页和设置页都能正常滚动、点击、拨动开关。⚠️ 还没量过 XCTest 做快照时界面卡顿到什么程度。
 
 **通知**：测试会设置 `UNUserNotificationCenter.current().delegate = self`。LoopCtrl 现在没有自己的
 delegate，所以不冲突；但以后如果 App 要处理通知，需要统一由测试一侧来处理。
 
-**停止**：现在的「停止」（通知按钮、`loopctrl://stop`、RPC `stop_server`）都会让
-`keepRunning = false` → 测试返回 → XCTest `exit()`。合并后这会**关闭整个 LoopCtrl**。
-**已改（⚠️ 未上机）**：所有「停止」现在都走 `LoopCtrlUITests.stopService`。同进程模式下它只关掉
+**停止**：最初的「停止」（通知按钮、`loopctrl://stop`、RPC `stop_server`）都会让
+`keepRunning = false` → 测试返回 → XCTest `exit()`，从而**关闭整个 LoopCtrl**。
+**已改（✅ 上机）**：所有「停止」现在都走 `LoopCtrlUITests.stopService`。同进程模式下它只关掉
 `JSONRPCServer`，测试继续停在自己的 run loop 里（parked），不会返回，所以 XCTest 不会 `exit()`；
 之后 `InProcessRunner.start()` 投递 `loopctrl://start`，由同一个测试实例重新建监听器。
 监听器意外失败也一样只停不退。两个 App 的模式保持原样（测试结束、Runner 退出）。
@@ -159,7 +162,7 @@ Automation Mode。没有别的路径会走到 disable，所以遮罩跟的是测
   ⚠️ 重连之后还没逐个验证每种 RPC（点击、截图、视频流）。私有 API 不在时 `releaseAutomation` 会拒绝执行，退回到原来的行为（遮罩保留）。
 
 **重启之后**：DDI 消失。主程序不链接 XCTest，rpath 指向不存在的目录也没关系（启动时不会经过它们），
-所以 App 能正常启动 ✅（这是链接层面的推断，⚠️ 要上机确认）。`DeveloperDiskImage.status()`
+所以 App 能正常启动 ✅（多次重装后首次启动均正常；⚠️ 重启手机后不挂 DDI 直接启动这一场景还没单独验证）。`DeveloperDiskImage.status()`
 会显示「未挂载」→ 用户在 App 内重新挂载 → 点「启动」。`.xctest` 不是 appex，系统不会自动加载它。
 
 **同一个 UserDefaults / 钥匙串**：`serverPort` 等设置变成一份（App 和测试原本就用同名 key，这是好事）；
@@ -206,12 +209,28 @@ Automation Mode。没有别的路径会走到 disable，所以遮罩跟的是测
 
 只要第 1、3、4、5 步通过，合并就成立。第 6 步决定能不能完全替代独立的 Runner。
 
+**实际进度（iPhone 17，iOS 27.2，2026-10-17）：**
+
+| # | 项目 | 状态 |
+|---|---|---|
+| 1 | 没挂 DDI 也能启动 | ⚠️ 未测（重启后未验证） |
+| 2 | 安装与签名 | ⚠️ SideStore 未测；开发者证书签名安装 ✅，可正常启动 |
+| 3 | 挂载后加载 XCTest | ✅ 真机确认 |
+| 4 | 自举与密码弹窗 | ✅ 真机确认（输入密码后正常进入测试） |
+| 5 | 服务器 | ✅ 局域网 `/schema` 返回 200；⚠️ 点击、截图、视频流未逐个验证 |
+| 6 | 后台 5 分钟 | ⚠️ **未测，风险最大** |
+| 7 | URL scheme | ⚠️ 未测 |
+| 8 | 停止 / 再次启动 | ✅ 真机确认（App 不退出，遮罩消失，Start 恢复） |
+| 9 | iOS 16 | ⚠️ 无设备，未测 |
+
+补充：首次启动不再退回桌面（XCTest 自举期间拦截 Home 键），✅ 真机确认（`b97f41b`）。
+
 ## 7. 如果要正式采用，还需要做的
 
-- ~~让「停止」不关闭 App~~（已做，见第 4 节，⚠️ 未上机）。
+- ~~让「停止」不关闭 App~~（已做并上机确认，见第 4 节）。
 - ~~在 `start()` 到测试开始之间申请 `beginBackgroundTask`~~（已做：`InProcessRunner` 在
-  `testStartServer` 开始时结束它，⚠️ 未上机）。
-- 把 LoopCtrl 原来「打开另一个 App」的提示文案、`LSApplicationQueriesSchemes` 中的 `loopctrl`、
-  README 的安装步骤（两个 IPA 改成一个）都改掉。
+  `testStartServer` 开始时结束它。代码路径已在真机跑过；⚠️ 后台停留 5 分钟这一项仍未测）。
+- ~~把 LoopCtrl 原来「打开另一个 App」的提示文案、README 的安装步骤（两个 IPA 改成一个）都改掉~~
+  （已改：`startOpensRunnerFooter` 只在两个 App 的版本里显示，README 以 All-in-One 为默认安装方式）。
 - 旧 Runner 的配对数据要么放弃（重新配对），要么做一次性导出导入。
 - 决定是否保留两套产物（独立 Runner 仍然适合配合 Xcode / Mac 使用）。
