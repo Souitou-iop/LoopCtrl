@@ -202,7 +202,7 @@ final class OnDevicePairing: ObservableObject {
         let request = BGContinuedProcessingTaskRequest(identifier: Self.taskIdentifier,
                                                        title: Self.hostName,
                                                        subtitle: L10n.t(.pairWaitingSubtitle))
-        // Queue rather than fail when the system is busy, as StikPair does:
+        // Queue rather than fail when the system is busy:
         // a late launch is attached (or completed) by attach(_:).
         request.strategy = .queue
         do {

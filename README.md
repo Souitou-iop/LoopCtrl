@@ -100,8 +100,11 @@ Developer Disk Image mounted first.
 <a id="setup"></a>
 ## Put it on a phone
 
-You need an iPhone on **iOS 16 or later** with **Developer Mode** on
-(Settings → Privacy & Security → Developer Mode, then restart).
+You need an iPhone with **Developer Mode** on (Settings → Privacy & Security →
+Developer Mode, then restart). The app runs on iOS 16 and later, but mounting
+the disk image on the phone itself needs **iOS 17 or later**, and pairing on the
+phone needs **iOS 27**. On iOS 16, mount the image from a computer with
+Xcode or `devicectl`.
 
 1. **Get the IPA.** Build `LoopCtrl-AllInOne.ipa` with
    `make ipa-allinone UNSIGNED=1` ([Build from source](#build)), or use one
@@ -159,9 +162,12 @@ phone. It routes no other traffic. LoopCtrl's mounter is built on
 
 - **Pairing.** On iOS 27 and later, tap **Pair on this device**, then go to
   Settings → Privacy & Security → Developer Mode → "Pair with LoopCtrl" and
-  enter the code the app shows. On earlier versions, import a pairing file from
-  StikPair, or one exported by iLoader on iOS 17.4 or later. A file from
-  `idevicepair` alone won't mount.
+  enter the code the app shows. On iOS 17 to 26, pair once on a computer over USB and import the
+  resulting pairing file, or import one exported by iLoader (iOS 17.4 or
+  later). A file from `idevicepair` alone won't mount. LoopCtrl's own desktop
+  pairing tool is planned.
+- **Mounting.** The on-device mounter supports iOS 17 and later: the
+  personalized image on 17 to 26.3, the cryptex image on 26.4 and later.
 - **Network.** Any Wi-Fi works; cellular alone doesn't. The first mount needs
   internet access, because Apple signs the image for your specific device.
 - **Other ways.** Connecting to Xcode on a Mac mounts it, and so does
