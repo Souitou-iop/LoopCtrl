@@ -15,7 +15,9 @@ pub mod real;
 pub enum WatchEvent {
     /// A USB device appeared (network devices are filtered out by the backend).
     Attached(AttachedDevice),
-    Detached { mux_id: u32 },
+    Detached {
+        mux_id: u32,
+    },
 }
 
 /// Result of the Trust step: the outcome and, when trusted, the lockdown

@@ -5,15 +5,17 @@ use std::future::Future;
 use std::pin::Pin;
 
 use futures_util::StreamExt;
-use idevice::amfi::AmfiClient;
 use idevice::afc::opcode::AfcFopenMode;
+use idevice::amfi::AmfiClient;
 use idevice::core_device_proxy::CoreDeviceProxy;
 use idevice::house_arrest::HouseArrestClient;
 use idevice::installation_proxy::InstallationProxyClient;
 use idevice::lockdown::LockdownClient;
 use idevice::pairing_file::PairingFile;
 use idevice::provider::{IdeviceProvider, UsbmuxdProvider};
-use idevice::remote_pairing::{RemotePairingClient, RemotePairingLockdownService, RpPairingFile, RpPairingSocketProvider};
+use idevice::remote_pairing::{
+    RemotePairingClient, RemotePairingLockdownService, RpPairingFile, RpPairingSocketProvider,
+};
 use idevice::rsd::RsdHandshake;
 use idevice::usbmuxd::{Connection, UsbmuxdAddr, UsbmuxdConnection, UsbmuxdDevice, UsbmuxdListenEvent};
 use idevice::{Idevice, IdeviceError, IdeviceService, RemoteXpcClient};
@@ -171,7 +173,9 @@ impl RealConn {
     async fn via_tunnel<T>(
         &self,
         host: &HostIdentity,
-        f: impl AsyncFnOnce(&mut RemotePairingClient<RemoteXpcClient<Box<dyn idevice::ReadWrite>>>) -> Result<T, IdeviceError>,
+        f: impl AsyncFnOnce(
+            &mut RemotePairingClient<RemoteXpcClient<Box<dyn idevice::ReadWrite>>>,
+        ) -> Result<T, IdeviceError>,
     ) -> Result<T, IdeviceError> {
         let proxy = CoreDeviceProxy::connect(&self.paired()).await?;
         let rsd_port = proxy.tunnel_info().server_rsd_port;
@@ -213,7 +217,10 @@ async fn rp_pair<R: RpPairingSocketProvider>(
     Ok((fresh.to_bytes(), false))
 }
 
-async fn rp_verify<R: RpPairingSocketProvider>(client: &mut RemotePairingClient<R>, rp: &[u8]) -> Result<(), IdeviceError> {
+async fn rp_verify<R: RpPairingSocketProvider>(
+    client: &mut RemotePairingClient<R>,
+    rp: &[u8],
+) -> Result<(), IdeviceError> {
     let mut file = RpPairingFile::from_bytes(rp)?;
     client.attempt_pair_verify().await?;
     client.validate_pairing(&mut file).await
@@ -229,10 +236,14 @@ impl DeviceConn for RealConn {
         let mut l = match self.session().await {
             Ok(l) => l,
             // Not trusted yet: the public subset of values.
-            Err(_) => LockdownClient::connect(&self.provider).await.map_err(|e| map(ErrorCode::Disconnected, "lockdown", e))?,
+            Err(_) => LockdownClient::connect(&self.provider)
+                .await
+                .map_err(|e| map(ErrorCode::Disconnected, "lockdown", e))?,
         };
-        let mut get = async |k: &str| l.get_value(Some(k), None).await.ok().and_then(|v| v.as_string().map(str::to_owned));
-        let ios = get("ProductVersion").await.ok_or_else(|| PairError::new(ErrorCode::Disconnected, "no ProductVersion"))?;
+        let mut get =
+            async |k: &str| l.get_value(Some(k), None).await.ok().and_then(|v| v.as_string().map(str::to_owned));
+        let ios =
+            get("ProductVersion").await.ok_or_else(|| PairError::new(ErrorCode::Disconnected, "no ProductVersion"))?;
         let product_type = get("ProductType").await.unwrap_or_default();
         let name = get("DeviceName").await.unwrap_or_else(|| "iPhone".into());
         Ok(DeviceInfo {
@@ -252,7 +263,8 @@ impl DeviceConn for RealConn {
         }
         let mut mux = self.addr.connect(2).await.map_err(|e| err(ErrorCode::NoUsbmux, "usbmuxd", e))?;
         let buid = mux.get_buid().await.map_err(|e| err(ErrorCode::NoUsbmux, "usbmuxd BUID", e))?;
-        let mut l = LockdownClient::connect(&self.provider).await.map_err(|e| map(ErrorCode::Disconnected, "lockdown", e))?;
+        let mut l =
+            LockdownClient::connect(&self.provider).await.map_err(|e| map(ErrorCode::Disconnected, "lockdown", e))?;
         let host_id = uuid::Uuid::new_v4().to_string().to_uppercase();
         // `pair` resends while the dialog is pending (PairingDialogResponsePending).
         let record = match l.pair(host_id, buid, Some(PAIR_HOST_NAME)).await {
@@ -263,7 +275,8 @@ impl DeviceConn for RealConn {
             Err(e) => return Err(map(ErrorCode::Internal, "lockdown pair", e)),
         };
         // The record works before we keep it.
-        let mut check = LockdownClient::connect(&self.provider).await.map_err(|e| map(ErrorCode::Disconnected, "lockdown", e))?;
+        let mut check =
+            LockdownClient::connect(&self.provider).await.map_err(|e| map(ErrorCode::Disconnected, "lockdown", e))?;
         check.start_session(&record).await.map_err(|e| map(ErrorCode::Internal, "StartSession with new record", e))?;
         let bytes = self.serialize(&record)?;
         // usbmuxd keeps it too, so this computer is not asked again.
@@ -276,7 +289,9 @@ impl DeviceConn for RealConn {
 
     fn set_lockdown(&mut self, lockdown: &[u8]) -> Result<(), PairError> {
         if self.record.is_none() {
-            self.record = Some(PairingFile::from_bytes(lockdown).map_err(|e| err(ErrorCode::RecordFailed, "lockdown record", e))?);
+            self.record = Some(
+                PairingFile::from_bytes(lockdown).map_err(|e| err(ErrorCode::RecordFailed, "lockdown record", e))?,
+            );
         }
         Ok(())
     }
@@ -286,7 +301,8 @@ impl DeviceConn for RealConn {
         match l.get_value(Some("DeveloperModeStatus"), Some("com.apple.security.mac.amfi")).await {
             Ok(v) => Ok(v.as_boolean().unwrap_or(false)),
             Err(_) => {
-                let mut amfi = AmfiClient::connect(&self.paired()).await.map_err(|e| map(ErrorCode::Internal, "amfi", e))?;
+                let mut amfi =
+                    AmfiClient::connect(&self.paired()).await.map_err(|e| map(ErrorCode::Internal, "amfi", e))?;
                 amfi.get_developer_mode_status().await.map_err(|e| map(ErrorCode::Internal, "amfi status", e))
             }
         }
@@ -331,7 +347,9 @@ impl DeviceConn for RealConn {
     }
 
     async fn list_apps(&mut self) -> Result<AppList, PairError> {
-        let mut ip = InstallationProxyClient::connect(&self.paired()).await.map_err(|e| map(ErrorCode::Internal, "installation_proxy", e))?;
+        let mut ip = InstallationProxyClient::connect(&self.paired())
+            .await
+            .map_err(|e| map(ErrorCode::Internal, "installation_proxy", e))?;
         ip.get_apps(Some("User"), None).await.map_err(|e| map(ErrorCode::Internal, "installation_proxy lookup", e))
     }
 
@@ -366,8 +384,10 @@ impl DeviceConn for RealConn {
     }
 
     async fn verify_lockdown(&mut self, lockdown: &[u8]) -> Result<(), PairError> {
-        let record = PairingFile::from_bytes(lockdown).map_err(|e| err(ErrorCode::VerifyFailed, "lockdown record", e))?;
-        let mut l = LockdownClient::connect(&self.provider).await.map_err(|e| map(ErrorCode::Disconnected, "lockdown", e))?;
+        let record =
+            PairingFile::from_bytes(lockdown).map_err(|e| err(ErrorCode::VerifyFailed, "lockdown record", e))?;
+        let mut l =
+            LockdownClient::connect(&self.provider).await.map_err(|e| map(ErrorCode::Disconnected, "lockdown", e))?;
         l.start_session(&record).await.map_err(|e| map(ErrorCode::VerifyFailed, "StartSession", e))?;
         Ok(())
     }

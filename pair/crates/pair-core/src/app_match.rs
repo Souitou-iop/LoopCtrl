@@ -105,7 +105,10 @@ mod tests {
     #[test]
     fn ignores_uitests_runner_and_lookalikes() {
         let mut apps = HashMap::new();
-        apps.insert("com.openminis.loopctrl.uitests.xctrunner".to_string(), app(&[("CFBundleName", s("LoopCtrlUITests-Runner"))]));
+        apps.insert(
+            "com.openminis.loopctrl.uitests.xctrunner".to_string(),
+            app(&[("CFBundleName", s("LoopCtrlUITests-Runner"))]),
+        );
         apps.insert("com.example.loopctrlpro".to_string(), app(&[("CFBundleName", s("LoopCtrl Pro"))]));
         assert!(find_loopctrl(&apps).is_none());
     }
@@ -113,7 +116,10 @@ mod tests {
     #[test]
     fn display_name_fallback() {
         let mut apps = HashMap::new();
-        apps.insert("com.resigned.app".to_string(), app(&[("CFBundleDisplayName", s("LoopCtrl")), ("UIFileSharingEnabled", Value::Boolean(true))]));
+        apps.insert(
+            "com.resigned.app".to_string(),
+            app(&[("CFBundleDisplayName", s("LoopCtrl")), ("UIFileSharingEnabled", Value::Boolean(true))]),
+        );
         let m = find_loopctrl(&apps).unwrap();
         assert_eq!(m.matched_by, MatchedBy::DisplayName);
         assert!(m.file_sharing);

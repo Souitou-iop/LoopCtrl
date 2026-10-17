@@ -234,7 +234,11 @@ impl MockBackend {
             p.auto = Some(AutoScript { trust_after: ms(trust_ms), restart_after: ms(0), turn_on_after: ms(0) });
             if i == 2 {
                 // Trust on its own, Developer Mode by hand.
-                p.auto = Some(AutoScript { trust_after: ms(trust_ms), restart_after: Duration::MAX, turn_on_after: Duration::MAX });
+                p.auto = Some(AutoScript {
+                    trust_after: ms(trust_ms),
+                    restart_after: Duration::MAX,
+                    turn_on_after: Duration::MAX,
+                });
             }
             let udid = p.info.udid.clone();
             w.phones.insert(udid.clone(), p);
@@ -494,7 +498,8 @@ impl DeviceConn for MockConn {
 
     async fn verify_rp(&mut self, _host: &HostIdentity, rp: &[u8]) -> Result<(), PairError> {
         self.wait(900).await;
-        idevice::remote_pairing::RpPairingFile::from_bytes(rp).map_err(|e| PairError::new(ErrorCode::VerifyFailed, e.to_string()))?;
+        idevice::remote_pairing::RpPairingFile::from_bytes(rp)
+            .map_err(|e| PairError::new(ErrorCode::VerifyFailed, e.to_string()))?;
         self.phone(|_| ())
     }
 

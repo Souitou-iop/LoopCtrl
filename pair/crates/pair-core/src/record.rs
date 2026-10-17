@@ -120,11 +120,13 @@ pub fn build(lockdown: &[u8], rp: Option<&[u8]>, meta: &RecordMeta) -> Result<Ve
     m.insert("FormatVersion".into(), Value::Integer(FORMAT_VERSION.into()));
     m.insert(
         "Kind".into(),
-        Value::String(match meta.kind {
-            RecordKind::RemotePairing => "remotePairing+lockdown",
-            RecordKind::Lockdown => "lockdown",
-        }
-        .into()),
+        Value::String(
+            match meta.kind {
+                RecordKind::RemotePairing => "remotePairing+lockdown",
+                RecordKind::Lockdown => "lockdown",
+            }
+            .into(),
+        ),
     );
     m.insert("HostName".into(), Value::String(meta.host_name.clone()));
     m.insert("ProductVersion".into(), Value::String(meta.ios.clone()));

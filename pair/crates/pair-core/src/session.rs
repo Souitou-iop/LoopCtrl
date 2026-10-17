@@ -75,10 +75,17 @@ pub struct DeviceView {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Event {
-    Device { device: Box<DeviceView> },
-    Removed { udid: String },
+    Device {
+        device: Box<DeviceView>,
+    },
+    Removed {
+        udid: String,
+    },
     /// usbmuxd connection state.
-    Watch { ok: bool, detail: Option<String> },
+    Watch {
+        ok: bool,
+        detail: Option<String>,
+    },
 }
 
 #[derive(Debug)]
@@ -139,16 +146,18 @@ impl ManagerHandle {
         let _ = self.tx.send(Cmd::Forget(udid.to_owned()));
     }
 
-    pub async fn snapshot(&self) -> Vec<DeviceView> {
+    /// Current views, by attach order. The request is sent right away; the
+    /// returned future does not borrow the handle.
+    pub fn snapshot(&self) -> impl std::future::Future<Output = Vec<DeviceView>> + Send + 'static {
         let (tx, rx) = oneshot::channel();
         let _ = self.tx.send(Cmd::Snapshot(tx));
-        rx.await.unwrap_or_default()
+        async move { rx.await.unwrap_or_default() }
     }
 
-    pub async fn env_check(&self) -> Option<EnvReport> {
+    pub fn env_check(&self) -> impl std::future::Future<Output = Option<EnvReport>> + Send + 'static {
         let (tx, rx) = oneshot::channel();
         let _ = self.tx.send(Cmd::Env(tx));
-        rx.await.ok()
+        async move { rx.await.ok() }
     }
 }
 

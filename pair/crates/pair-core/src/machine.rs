@@ -61,7 +61,10 @@ pub enum Input {
     Revealed,
     /// The current wait (reboot or Developer Mode confirmation) ran out.
     Timeout,
-    Generated { kind: RecordKind, via: Option<RpVia> },
+    Generated {
+        kind: RecordKind,
+        via: Option<RpVia>,
+    },
     App(Option<AppMatch>),
     Written(WriteVia),
     Verified,
@@ -283,7 +286,9 @@ impl Machine {
 
             Input::Timeout => match self.phase {
                 P::Rebooting => self.fail(PairError::new(ErrorCode::RebootTimeout, "no reconnect")),
-                P::ConfirmingDevMode => self.fail(PairError::new(ErrorCode::DevModeCancelled, "Developer Mode still off")),
+                P::ConfirmingDevMode => {
+                    self.fail(PairError::new(ErrorCode::DevModeCancelled, "Developer Mode still off"))
+                }
                 _ => None,
             },
 
@@ -351,10 +356,22 @@ mod tests {
     use crate::model::MatchedBy;
 
     fn info(ios: &str) -> DeviceInfo {
-        DeviceInfo { udid: "U1".into(), name: "林晓的 iPhone".into(), model: "iPhone 15 Pro".into(), product_type: "iPhone16,1".into(), ios: ios.into() }
+        DeviceInfo {
+            udid: "U1".into(),
+            name: "林晓的 iPhone".into(),
+            model: "iPhone 15 Pro".into(),
+            product_type: "iPhone16,1".into(),
+            ios: ios.into(),
+        }
     }
     fn app() -> AppMatch {
-        AppMatch { bundle_id: "a.loopctrl".into(), name: "LoopCtrl".into(), version: Some("1.4".into()), matched_by: MatchedBy::BundleSuffix, file_sharing: false }
+        AppMatch {
+            bundle_id: "a.loopctrl".into(),
+            name: "LoopCtrl".into(),
+            version: Some("1.4".into()),
+            matched_by: MatchedBy::BundleSuffix,
+            file_sharing: false,
+        }
     }
 
     /// Runs a machine through the happy path up to the Developer Mode check.

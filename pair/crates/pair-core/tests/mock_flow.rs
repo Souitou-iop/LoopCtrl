@@ -49,7 +49,9 @@ impl Rig {
                     }
                 }
                 Ok(_) => {}
-                Err(_) => panic!("timed out waiting for {udid}: last {:?}", self.latest.borrow().get(udid).map(|v| v.phase)),
+                Err(_) => {
+                    panic!("timed out waiting for {udid}: last {:?}", self.latest.borrow().get(udid).map(|v| v.phase))
+                }
             }
         }
     }
