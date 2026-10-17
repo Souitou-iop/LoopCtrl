@@ -1,0 +1,37 @@
+[package]
+name = "pair-core"
+description = "Pairing core of LoopCtrl Pair: lockdown/RemotePairing records written into LoopCtrl over USB"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+plist.workspace = true
+log.workspace = true
+uuid = { version = "1", features = ["v4"] }
+rand = "0.8"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+os_info = { version = "3", default-features = false }
+idevice = { version = "=0.1.68", default-features = false, features = [
+  "ring",
+  "usbmuxd",
+  "pair",
+  "amfi",
+  "afc",
+  "house_arrest",
+  "installation_proxy",
+  "remote_pairing",
+  "core_device_proxy",
+  "tunnel_tcp_stack",
+  "rsd",
+  "xpc",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
