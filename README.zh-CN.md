@@ -86,7 +86,7 @@ LoopCtrl 的底层是一个长期运行的 XCUITest 会话，服务运行期间 
 <a id="setup"></a>
 ## 装到手机上
 
-你需要一台 **iOS 16 及以上**、已开启 **开发者模式** 的 iPhone（设置 → 隐私与安全性 → 开发者模式，开启后重启）。
+你需要一台已开启 **开发者模式** 的 iPhone（设置 → 隐私与安全性 → 开发者模式，开启后重启）。App 在 iOS 16 及以上可运行，但在手机上直接挂载磁盘镜像需要 **iOS 17 及以上**，在本机配对需要 **iOS 27**。iOS 16 请在电脑上用 Xcode 或 `devicectl` 挂载镜像。
 
 1. **准备 IPA。** 用 `make ipa-allinone UNSIGNED=1` 构建 `LoopCtrl-AllInOne.ipa`
    （见[从源码构建](#build)），或者用别人帮你构建好的包。
@@ -128,8 +128,9 @@ runner 里嵌着一个测试包 `PlugIns/LoopCtrlUITests.xctest`，必须先单�
 LoopCtrl 的挂载功能基于 [idevice](https://github.com/jkcoxson/idevice)。
 
 - **配对。** iOS 27 及以上：点 **在本机配对**，然后进入 设置 → 隐私与安全性 → 开发者模式 →
-  “Pair with LoopCtrl”，输入 App 显示的配对码。更早的系统：**导入配对文件**，可以用 StikPair 生成的文件，
-  或 iLoader 在 iOS 17.4 及以上导出的文件。只用 `idevicepair` 生成的文件无法挂载。
+  “Pair with LoopCtrl”，输入 App 显示的配对码。iOS 17 至 26：先在电脑上通过 USB 配对一次，再**导入配对文件**；
+  也可以导入 iLoader 在 iOS 17.4 及以上导出的文件。只用 `idevicepair` 生成的文件无法挂载。LoopCtrl 自己的桌面配对工具正在计划中。
+- **挂载。** 本机挂载支持 iOS 17 及以上：17 至 26.3 使用个性化镜像，26.4 及以上使用 cryptex 镜像。
 - **网络。** 任意 Wi-Fi 都可以，只有蜂窝网络不行。第一次挂载需要联网，因为 Apple 要为这台设备单独签发镜像。
 - **其他办法。** 连接 Mac 上的 Xcode 会自动挂载，[StikDebug](https://github.com/StikDebug/StikDebug) 也可以。
 

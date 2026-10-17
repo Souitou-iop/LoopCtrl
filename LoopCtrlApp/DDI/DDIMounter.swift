@@ -209,7 +209,7 @@ final class DDIMounter: ObservableObject {
     /// expected to be short-lived; failures here are deliberately ignored,
     /// because the goal is the provider install, not the session.
     ///
-    /// An RP-only pairing file (StikPair, on-device pairing) has no lockdown
+    /// An RP-only pairing file (on-device pairing) has no lockdown
     /// half, so this returns at the read and installs nothing. That is fine
     /// from idevice v0.1.68: its TSS request goes through idevice's own HTTP
     /// client, which installs the provider itself before the TLS handshake.

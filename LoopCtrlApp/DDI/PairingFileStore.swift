@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// mount uses to open the RemotePairing tunnel to this device's `remoted`.
 ///
 /// Two sources produce one without a separate lockdown step:
-///  * StikPair, or LoopCtrl's own on-device pairing (iOS 27+) — RP keys only.
+///  * a computer pairing, or LoopCtrl's own on-device pairing (iOS 27+) — RP keys only.
 ///  * iLoader on iOS 17.4+ — a merged plist carrying both the lockdown record
 ///    (`HostID`, `HostCertificate`, …) and the RP keys.
 /// A lockdown-only record (`idevicepair pair`, iLoader below 17.4) has no RP
@@ -147,7 +147,7 @@ enum PairingFileStore {
         guard let plist = try? PropertyListSerialization.propertyList(
                 from: data, options: [], format: nil) as? [String: Any] else {
             throw DDIError.invalidPairingFile("Not a property list. Expected a "
-                + "pairing file from StikPair, or from iLoader on iOS 17.4 or later.")
+                + "pairing file from a computer pairing, or from iLoader on iOS 17.4 or later.")
         }
         let hasKeys = ["public_key", "private_key"].allSatisfy { (plist[$0] as? Data)?.count == 32 }
         guard hasKeys, plist["identifier"] is String else {
