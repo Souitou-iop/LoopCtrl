@@ -11,8 +11,26 @@ class AppState: ObservableObject {
     @AppStorage("autoStartServer") var autoStartServer = false
     @AppStorage(ServerPort.defaultsKey) var serverPort = Int(ServerPort.defaultPort)
     @AppStorage("allowRemoteAccess") var allowRemoteAccess = false
+    /// Phase 0 relay enrollment. The base URL and optional expected device id
+    /// are non-secret settings; the enrollment token is Debug-only and local.
+    @AppStorage("relayBaseURL") var relayBaseURL = ""
+    @AppStorage("relayExpectedDeviceID") var relayExpectedDeviceID = ""
+    #if DEBUG
+    @AppStorage("relayEnrollmentToken") var relayEnrollmentToken = ""
+    #endif
 
     private var server: JSONRPCServer?
+    private var relay: RelayRPCClient?
+    /// The all-in-one runner owns the real /rpc implementation in this process.
+    /// In the two-app build AppState's own server is only a local endpoint, so
+    /// a relay session must not advertise it as a working LoopCtrl.
+    private var relayEligible: Bool {
+        #if LOOPCTRL_ALL_IN_ONE
+        return true
+        #else
+        return false
+        #endif
+    }
 
     struct PendingAuth: Identifiable {
         let id = UUID()
@@ -54,6 +72,7 @@ class AppState: ObservableObject {
         do {
             try s.start()
             serverError = nil
+            if relayEligible { startRelayIfConfigured() }
         } catch {
             print("🔴 Failed to start server: \(error)")
             serverError = error.localizedDescription
@@ -62,9 +81,55 @@ class AppState: ObservableObject {
     }
 
     func stopServer() {
+        relay?.stop()
+        relay = nil
         server?.stop()
         server = nil
         isServerRunning = false
+    }
+
+    /// Phase 0 is deliberately opt-in: the relay starts only when the base URL,
+    /// enrollment token, and (implicitly) the fixed server port are present.
+    /// The token is an ad-hoc Debug value, never a Release build setting.
+    private func startRelayIfConfigured() {
+        #if DEBUG
+        let token = relayEnrollmentToken
+        #else
+        let token = ""
+        #endif
+        guard let enrollment = Self.relayEnrollment(
+            baseURL: relayBaseURL,
+            token: token,
+            expectedDeviceID: relayExpectedDeviceID
+        ) else {
+            return
+        }
+        let client = RelayRPCClient(configuration: .init(
+            enrollment: enrollment,
+            rpcPort: UInt16(serverPort)
+        ))
+        client.onLog = { message in loopctrlLog("Relay: \(message)") }
+        client.onState = { state in
+            loopctrlLog("Relay state: \(state)")
+        }
+        relay = client
+        client.start()
+    }
+
+    static func relayEnrollment(
+        baseURL rawBaseURL: String,
+        token: String,
+        expectedDeviceID: String
+    ) -> RelayEnrollment? {
+        guard let url = URL(string: rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return nil
+        }
+        let expected = expectedDeviceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try? RelayEnrollment(
+            baseURL: url,
+            token: token,
+            expectedDeviceID: expected.isEmpty ? nil : expected
+        )
     }
 
     func refreshSessions() {
