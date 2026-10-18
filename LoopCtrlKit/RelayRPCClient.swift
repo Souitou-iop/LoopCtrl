@@ -368,8 +368,7 @@ final class RelayRPCClient {
         body: Data?,
         timeout: TimeInterval
     ) async throws -> HTTPResult {
-        guard let url = URL(string: configuration.enrollment.baseURL.absoluteString
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path) else {
+        guard let url = Self.endpoint(base: configuration.enrollment.baseURL, path: path) else {
             throw RelayFailure.protocolFailure("invalid relay URL")
         }
         var request = URLRequest(url: url)
@@ -382,6 +381,15 @@ final class RelayRPCClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         return try await perform(request)
+    }
+
+    /// `base` may carry a path prefix (a relay mounted at
+    /// `https://host/loopctrl-relay/` behind a reverse proxy); `path` is the
+    /// relay route, e.g. `/v1/device/poll`.
+    static func endpoint(base: URL, path: String) -> URL? {
+        var prefix = base.absoluteString
+        while prefix.hasSuffix("/") { prefix.removeLast() }
+        return URL(string: prefix + path)
     }
 
     private func perform(_ request: URLRequest) async throws -> HTTPResult {
@@ -436,7 +444,7 @@ enum RelayEnrollmentError: LocalizedError {
         case .invalidDeviceID:
             return "Expected relay device id is malformed."
         case .invalidBaseURL:
-            return "Relay base URL must be an origin with no path, query, or fragment."
+            return "Relay base URL must be an http(s) URL with no query, fragment, or credentials."
         }
     }
 }
@@ -457,9 +465,12 @@ struct RelayEnrollment {
         guard scheme == "https" || (scheme == "http" && loopback) else {
             throw RelayEnrollmentError.insecureTransport
         }
+        // A path prefix is allowed (a relay behind a reverse-proxy location);
+        // query, fragment, credentials, and dot segments are not.
         guard scheme != nil, host != nil, baseURL.user == nil, baseURL.password == nil,
               baseURL.query == nil, baseURL.fragment == nil,
-              baseURL.path.isEmpty || baseURL.path == "/" else {
+              !baseURL.pathComponents.contains(".."),
+              !baseURL.pathComponents.contains(".") else {
             throw RelayEnrollmentError.invalidBaseURL
         }
 

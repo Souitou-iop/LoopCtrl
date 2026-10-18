@@ -159,7 +159,7 @@ service, and do not reuse the production Headscale host or its nginx config.
   values. The expected id is optional; with it, the client pins the id returned
   by registration.
   Non-loopback endpoints must be `https`; a `http` origin is accepted only for
-  `127.0.0.1`/`localhost`/`::1`. There is no path, query, or userinfo.
+  `127.0.0.1`/`localhost`/`::1`. A path prefix (a relay behind a reverse-proxy location such as `/loopctrl-relay/`) is allowed; query, fragment, userinfo, and dot segments are not.
 - `start()` runs one register → poll → forward → respond loop, where each poll
   is a separate HTTP request, with a capped reconnect backoff. `stop()` cancels
   the current request and the loop.
