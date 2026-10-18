@@ -101,7 +101,7 @@ extension L10n {
                        .zhHant: "連接埠需在 %d 到 %d 之間。"],
         .portReset: [.en: "Restore Default", .zhHans: "恢复默认", .zhHant: "恢復預設"],
         .portApply: [.en: "Move Service to Port %@", .zhHans: "将服务切换到端口 %@", .zhHant: "將服務切換到連接埠 %@"],
-        .remoteAccess: [.en: "Remote Access", .zhHans: "远程访问", .zhHant: "遠端存取"],
+        .remoteAccess: [.en: "LAN Access", .zhHans: "局域网访问", .zhHant: "區域網路存取"],
         .remoteAccessOnFooter: [.en: "Devices on the same Wi-Fi can reach the address above; each one still has to be approved before it can pair.",
                                 .zhHans: "同一 Wi-Fi 下的设备可以访问上面的地址，每台设备仍需你批准才能配对。",
                                 .zhHant: "同一 Wi-Fi 下的裝置可以存取上面的位址，每台裝置仍需你批准才能配對。"],

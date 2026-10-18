@@ -127,6 +127,7 @@ class AuthManager {
 
     private init() {
         loadFromKeychain()
+        loadPreApprovals()
         pruneExpired()
     }
 
@@ -200,6 +201,17 @@ class AuthManager {
             completion(createSession(clientName: clientName).map { .approved($0) } ?? .denied)
             return
         }
+        if let keyID, let pre = ledger.admitPreApproved(keyID: keyID, source: source, id: requestID,
+                                                       clientName: clientName, address: peer?.address,
+                                                       fingerprint: fingerprint, now: now) {
+            lock.unlock()
+            Self.postChange()
+            // An operator the user approved by confirming a remote service
+            // invite, arriving through that relay with the key the invite named.
+            completion(createSession(clientName: clientName, relayConnection: pre.connectionID)
+                .map { .approved($0) } ?? .denied)
+            return
+        }
         var slot = pairSlots[local] ?? PairSlot()
         if slot.pending {
             lock.unlock()
@@ -255,6 +267,57 @@ class AuthManager {
             self.delegate?.authManager(self, didExpireAuthRequest: clientName, requestID: requestID)
             settle(.timedOut)
         }
+    }
+
+    // MARK: - Remote service pre-approvals
+
+    /// Where pre-approvals are kept: this process's defaults (the runner's
+    /// container in the two-IPA build, the app's in the all-in-one build).
+    static let preApprovalsKey = "relayPreApprovals"
+
+    /// Pre-approve the operators of a remote service connection: their
+    /// pairing requests through that relay, with exactly these keys, are
+    /// approved without a prompt. Replaces the connection's earlier list.
+    /// Only for callers on the device itself (the runner's `config`).
+    func setRelayPreApprovals(connectionID: String, operators: [(name: String, keyID: String)]) {
+        lock.lock()
+        ledger.setPreApprovals(connectionID: connectionID, operators: operators)
+        let list = ledger.preApprovals
+        lock.unlock()
+        Self.savePreApprovals(list)
+    }
+
+    /// Unbind: forget the connection's pre-approvals and revoke every session
+    /// they let in. Returns the number of sessions revoked.
+    @discardableResult
+    func revokeRelayPreApprovals(connectionID: String) -> Int {
+        lock.lock()
+        ledger.revokePreApprovals(connectionID: connectionID)
+        let list = ledger.preApprovals
+        let ids = sessions.values.filter { $0.relayConnection == connectionID }.map(\.id)
+        lock.unlock()
+        Self.savePreApprovals(list)
+        ids.forEach(revokeSession(id:))
+        return ids.count
+    }
+
+    var relayPreApprovals: [PairRequestLedger.PreApproval] {
+        lock.lock(); defer { lock.unlock() }
+        return ledger.preApprovals
+    }
+
+    private static func savePreApprovals(_ list: [PairRequestLedger.PreApproval]) {
+        if let data = try? JSONEncoder().encode(list) {
+            UserDefaults.standard.set(data, forKey: preApprovalsKey)
+        }
+    }
+
+    private func loadPreApprovals() {
+        guard let data = UserDefaults.standard.data(forKey: Self.preApprovalsKey),
+              let list = try? JSONDecoder().decode([PairRequestLedger.PreApproval].self, from: data) else { return }
+        lock.lock()
+        ledger.restorePreApprovals(list)
+        lock.unlock()
     }
 
     private func isPending(_ requestID: String) -> Bool {
@@ -327,16 +390,17 @@ class AuthManager {
         completion(session.map { .approved($0) } ?? .denied)
     }
 
-    private func createSession(clientName: String) -> AuthSession? {
+    private func createSession(clientName: String, relayConnection: String? = nil) -> AuthSession? {
         guard let key = SecureEnvelope.randomBytes(32) else { return nil }
         let now = Date()
-        let session = AuthSession(
+        var session = AuthSession(
             id: SecureEnvelope.tokenId(for: key),
             keyHex: key.hexString,
             clientName: clientName,
             grantedAt: now,
             lastActiveAt: now
         )
+        session.relayConnection = relayConnection
         lock.lock()
         sessions[session.id] = session
         lock.unlock()

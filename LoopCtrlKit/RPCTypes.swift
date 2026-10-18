@@ -114,6 +114,11 @@ enum JSONValue: Codable, Equatable {
         return nil
     }
 
+    var arrayValue: [JSONValue]? {
+        if case .array(let v) = self { return v }
+        return nil
+    }
+
     func toAny() -> Any {
         switch self {
         case .string(let v): return v
@@ -166,6 +171,9 @@ struct AuthSession: Identifiable, Codable {
     /// used since this was recorded.
     var lastAddress: String?
     var lastVia: String?
+    /// The remote service connection whose pre-approval let this client in;
+    /// unbinding that connection revokes the session too.
+    var relayConnection: String?
 
     /// The 32-byte key, or nil if the stored record is corrupt.
     var key: Data? { Data(hexString: keyHex) }
@@ -183,6 +191,7 @@ struct AuthSession: Identifiable, Codable {
         case lastActiveAt = "last_active_at"
         case lastAddress = "last_address"
         case lastVia = "last_via"
+        case relayConnection = "relay_connection"
     }
 }
 
@@ -198,5 +207,8 @@ enum PeerSource: String {
     /// A VPN or proxy tunnel (utun, ipsec, ppp).
     case vpn
     case cellular
+    /// Relayed by a remote service (docs/relay-enrollment.md). Set by the
+    /// relay transport, never inferred from an interface.
+    case relay
     case other
 }

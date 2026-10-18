@@ -99,6 +99,11 @@ the project's Headscale also hands out) shows as **Tailscale** (`tailnet`).
 Traffic relayed through DERP arrives on the same tailnet address, so the phone
 can't tell it from a direct tailnet connection, and it shows as Tailscale too.
 
+A client that comes through a remote service relay has source **Relay**
+(`relay`, 「中继」). The relay transport sets this source itself; the server never
+works it out from the network interface. Operators named in a confirmed invite
+are pre-approved for that source only. See [relay-enrollment.md](relay-enrollment.md#pre-approval-on-the-phone).
+
 ## Code
 
 - `LoopCtrlKit/PairRequestLedger.swift` holds the pending and recent requests

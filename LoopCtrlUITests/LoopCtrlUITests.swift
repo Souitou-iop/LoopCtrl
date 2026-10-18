@@ -1649,6 +1649,32 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         let fromThisDevice = params?[JSONRPCServer.peerSourceParam]?.stringValue == PeerSource.local.rawValue
         let pairRespond = params?["pair_respond"]?.objectValue
         let pairAllowRecent = params?["pair_allow_recent"]?.stringValue
+        // Remote service pre-approvals (docs/relay-enrollment.md): set when
+        // the user confirms an invite in the app, removed on 解除绑定. Same
+        // rule: only from this device.
+        let relayPreapprove = params?["relay_preapprove"]?.objectValue
+        let relayRevoke = params?["relay_revoke"]?.stringValue
+        if (relayPreapprove != nil || relayRevoke != nil) && !fromThisDevice {
+            return (nil, JSONRPCError(code: -32602,
+                                      message: "Remote service approvals can be changed only on this device, in the LoopCtrl app",
+                                      data: nil))
+        }
+        if let relayPreapprove {
+            guard let connectionID = relayPreapprove["connection_id"]?.stringValue,
+                  let rows = relayPreapprove["operators"]?.arrayValue else {
+                return (nil, JSONRPCError(code: -32602, message: "relay_preapprove needs connection_id and operators", data: nil))
+            }
+            let operators: [(name: String, keyID: String)] = rows.compactMap { row in
+                guard let o = row.objectValue, let keyID = o["key_id"]?.stringValue else { return nil }
+                return (o["name"]?.stringValue ?? "", keyID)
+            }
+            AuthManager.shared.setRelayPreApprovals(connectionID: connectionID, operators: operators)
+            Self.logBuffer.append("🔑 Remote service \(connectionID): \(operators.count) operator(s) pre-approved")
+        }
+        if let connectionID = relayRevoke {
+            let revoked = AuthManager.shared.revokeRelayPreApprovals(connectionID: connectionID)
+            Self.logBuffer.append("🧹 Remote service \(connectionID) unbound: pre-approvals removed, \(revoked) session(s) revoked")
+        }
         if (pairRespond != nil || pairAllowRecent != nil) && !fromThisDevice {
             return (nil, JSONRPCError(code: -32602,
                                       message: "Pairing requests can be answered only on this device: the LoopCtrl app or the notification",
@@ -1796,6 +1822,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                 "expires_at": .string(iso.string(from: s.expiresAt)),
                 "last_address": s.lastAddress.map(JSONValue.string) ?? .null,
                 "last_via": s.lastVia.map(JSONValue.string) ?? .null,
+                "relay_connection": s.relayConnection.map(JSONValue.string) ?? .null,
             ])
         }
 
@@ -1832,6 +1859,10 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         // shown to clients elsewhere on the network.
         if fromThisDevice {
             result["pairing"] = Self.pairingJSON()
+            result["relay_preapprovals"] = .array(AuthManager.shared.relayPreApprovals.map {
+                .object(["connection_id": .string($0.connectionID), "name": .string($0.operatorName),
+                         "key_id": .string($0.keyID)])
+            })
         }
         if let pairingAnswer {
             result["pairing_applied"] = .bool(pairingAnswer)

@@ -6,6 +6,8 @@ struct LoopCtrlApp: App {
     @StateObject private var permission = NetworkPermission()
     /// Clients and log of the runner on this device; shared by Settings and Logs.
     @StateObject private var runnerAdmin = RunnerAdmin()
+    /// 远程服务 connections (relay enrolment), shared by the home card and Settings.
+    @StateObject private var remote = RemoteServiceStore()
     @State private var showPermissionAlert = false
     /// Outcome of a pairing file shared to the app, shown as an alert.
     @State private var sharedPairing: SharedPairingResult?
@@ -31,6 +33,7 @@ struct LoopCtrlApp: App {
             }
             .environmentObject(appState)
             .environmentObject(runnerAdmin)
+            .environmentObject(remote)
             .sheet(item: $appState.pendingAuthRequest) { request in
                 AuthRequestView(request: request)
                     .environmentObject(appState)
@@ -38,6 +41,12 @@ struct LoopCtrlApp: App {
             // A pairing file shared to LoopCtrl from another app (Files, Mail,
             // AirDrop, a chat): validate, store, and say so either way.
             .onOpenURL { url in
+                // loopctrl://connect?… (or loopctrl-app://connect?…): a remote
+                // service invite. The home screen shows its confirmation.
+                if RemoteInvite.isInviteLink(url) {
+                    remote.receive(link: url)
+                    return
+                }
                 #if LOOPCTRL_ALL_IN_ONE
                 // loopctrl:// belongs to this app now that it is also the runner.
                 if url.scheme?.lowercased() == "loopctrl" {

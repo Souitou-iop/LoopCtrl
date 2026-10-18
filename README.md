@@ -32,14 +32,14 @@ asks to pair. You tap **Allow** in the notification. From then on it can see
 the screen and tap, swipe and type in any app, the way you would.
 
 Use `127.0.0.1` when the agent runs on the phone itself (Minis, for example).
-For an agent on a computer, switch on **Remote Access** and use the Wi-Fi
+For an agent on a computer, switch on **LAN Access** and use the Wi-Fi
 address the app shows.
 
 > [!CAUTION]
 > **A paired client controls the whole phone**: every app, every screen,
 > everything you could type. Approve only pairing requests you started
 > yourself, and check that the key on the phone matches the one your client
-> prints. Keep Remote Access off when you don't need it, and don't leave an
+> prints. Keep LAN Access off when you don't need it, and don't leave an
 > agent alone with payments, messages or anything you can't undo. Use it on
 > your own devices, for testing and research.
 
@@ -180,7 +180,7 @@ phone. It routes no other traffic. LoopCtrl's mounter is built on
 
 - **The runner opens and closes at once.** The disk image isn't mounted (often
   after a reboot), the `.xctest` wasn't signed, or the free certificate expired.
-- **A computer can't connect.** Remote Access is off, Local Network access was
+- **A computer can't connect.** LAN Access is off, Local Network access was
   denied, or the phone is on cellular. Test it with
   `curl http://<phone-ip>:8300/schema`.
 - **The client says it's pairing, but no prompt appears.** Something else on
@@ -194,14 +194,14 @@ phone. It routes no other traffic. LoopCtrl's mounter is built on
 **The home screen** shows where things stand (pairing, disk image, service)
 and offers one button for the next step: mount, start or stop. While the
 server runs, the home screen shows the server's addresses (tap one to copy
-it) and the **Remote Access** switch.
+it) and the **LAN Access** switch.
 
 **Settings** is where you pair and mount, change the port, see who is
 authorized and revoke them, read the runner's and the app's logs, and look up
 the server's version and capabilities.
 
 **Notifications** carry the same controls when you're in another app.
-Long-press the server notification to switch Remote Access or Nearby Discovery
+Long-press the server notification to switch LAN Access or Nearby Discovery
 or to stop the server, and long-press a pairing request to allow or deny it.
 Missed the notification? While a request waits, the home screen shows it as a
 card with Allow and Deny, and **Authorized N clients** opens the Authorization
@@ -216,7 +216,7 @@ the phone:
 | | Who can ask to pair |
 |---|---|
 | Default | Apps on this phone, and a computer over USB |
-| **Remote Access** on | Anyone on the same Wi-Fi who knows the address |
+| **LAN Access** on | Anyone on the same Wi-Fi who knows the address |
 | **Nearby Discovery** on | Also Macs close by, with no shared network (peer-to-peer Wi-Fi); the phone announces itself |
 
 Every client still needs your **Allow**, whichever step you're on. Nearby
@@ -319,7 +319,7 @@ make ipa                     # → LoopCtrl.ipa + LoopCtrlUITests-Runner.ipa  (t
   there, not in Xcode.
 - **The two-IPA build** installs the app and the runner separately; the app
   starts the runner through its `loopctrl://` URL scheme. It uses two
-  sideloading slots, and changing Remote Access from the app needs one Allow.
+  sideloading slots, and changing LAN Access from the app needs one Allow.
   [`docs/runner-merge-spike.md`](docs/runner-merge-spike.md) (in Chinese)
   explains how the all-in-one build loads the runner in-process.
 - **The CLI** builds separately with Docker or `zig`: `make -C cli build`,

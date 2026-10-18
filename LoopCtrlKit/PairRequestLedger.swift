@@ -87,6 +87,22 @@ struct PairRequestLedger {
     /// Newest first.
     private(set) var recent: [Entry] = []
 
+    /// An operator the user approved ahead of time by confirming a remote
+    /// service invite (docs/relay-enrollment.md). Standing, unlike a grant:
+    /// it lasts until the connection is unbound. Bound to the full `keyID`
+    /// the invite named, and honoured only for requests that arrive through
+    /// the relay, so the same key on the LAN is still asked about.
+    struct PreApproval: Equatable, Codable {
+        let connectionID: String
+        let operatorName: String
+        let keyID: String
+    }
+
+    /// The `source` a relayed request carries (`PeerSource.relay`).
+    static let relaySource = "relay"
+
+    private(set) var preApprovals: [PreApproval] = []
+
     // MARK: - Lifecycle
 
     /// A request is now waiting for the user.
@@ -141,6 +157,51 @@ struct PairRequestLedger {
         entry.autoApproved = true
         insertRecent(entry, now: now)
         return true
+    }
+
+    // MARK: - Remote service pre-approvals
+
+    /// Replace the pre-approved operators of one connection. Keys are
+    /// lower-cased; anything but 64 hex characters is dropped, so a short
+    /// fingerprint can never become a binding.
+    mutating func setPreApprovals(connectionID: String, operators: [(name: String, keyID: String)]) {
+        preApprovals.removeAll { $0.connectionID == connectionID }
+        for op in operators {
+            let keyID = op.keyID.lowercased()
+            guard keyID.count == 64, keyID.allSatisfy({ $0.isHexDigit }),
+                  !preApprovals.contains(where: { $0.connectionID == connectionID && $0.keyID == keyID })
+            else { continue }
+            preApprovals.append(PreApproval(connectionID: connectionID, operatorName: op.name, keyID: keyID))
+        }
+    }
+
+    /// Forget a connection's pre-approvals (解除绑定). Returns how many went.
+    @discardableResult
+    mutating func revokePreApprovals(connectionID: String) -> Int {
+        let before = preApprovals.count
+        preApprovals.removeAll { $0.connectionID == connectionID }
+        return before - preApprovals.count
+    }
+
+    mutating func restorePreApprovals(_ list: [PreApproval]) {
+        preApprovals = list
+    }
+
+    /// Let a relayed request in if its key was pre-approved. Recorded as
+    /// allowed (`autoApproved`) under `id`. Not spent: the operator may pair
+    /// again later (a new computer, a revoked key) for as long as the
+    /// connection is bound.
+    mutating func admitPreApproved(keyID: String, source: String, id: String, clientName: String,
+                                   address: String?, fingerprint: String?, now: Date) -> PreApproval? {
+        guard source == Self.relaySource,
+              let match = preApprovals.first(where: { $0.keyID == keyID.lowercased() }) else { return nil }
+        var entry = Entry(id: id, clientName: clientName, source: source, address: address,
+                          fingerprint: fingerprint, keyID: keyID, requestedAt: now, deadline: now)
+        entry.outcome = .allowed
+        entry.resolvedAt = now
+        entry.autoApproved = true
+        insertRecent(entry, now: now)
+        return match
     }
 
     /// Drop finished entries past their window.

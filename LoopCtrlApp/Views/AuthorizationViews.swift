@@ -213,6 +213,8 @@ struct AuthorizationView: View {
                     Text(L10n.ui(.recentFooter))
                 }
 
+                RelayPreApprovalSection()
+
                 Section {
                     if !admin.clientsLoaded && admin.notice == nil {
                         HStack { Spacer(); ProgressView(); Spacer() }
