@@ -151,7 +151,9 @@ final class RelayRPCClient {
             guard let active = registration else { continue }
             emit(.polling)
             do {
-                guard let work = try await poll(active) else {
+                let work = try await poll(active)
+                reconnectAttempt = 0
+                guard let work else {
                     continue
                 }
                 emit(.forwarding)
@@ -175,13 +177,15 @@ final class RelayRPCClient {
             } catch is CancellationError {
                 break
             } catch let error as RelayFailure {
-                if case .unauthorized = error {
+                if Self.sessionIsLost(after: error) {
                     // The short-lived device token expired. The enrollment token
                     // is not reusable, so this loop cannot silently re-register.
                     emit(.failed("relay device session expired; re-enroll"))
                     break
                 }
-                registration = nil
+                // Keep the device session: the enrollment token was consumed by
+                // registration, so dropping it here would turn any network
+                // blip into a permanent 401 on re-register.
                 reconnectAttempt += 1
                 emit(.waitingToReconnect(error.localizedDescription))
                 do {
@@ -190,7 +194,6 @@ final class RelayRPCClient {
                     break
                 }
             } catch {
-                registration = nil
                 reconnectAttempt += 1
                 emit(.waitingToReconnect(error.localizedDescription))
                 do {
@@ -213,6 +216,14 @@ final class RelayRPCClient {
         cancelLock.lock()
         cancelled = value
         cancelLock.unlock()
+    }
+
+    /// Only a relay that no longer knows this device token ends the session.
+    /// Transport errors, 5xx, and local LoopCtrl failures keep the token and
+    /// retry the poll; re-registering would need a fresh enrollment token.
+    static func sessionIsLost(after error: RelayFailure) -> Bool {
+        if case .unauthorized = error { return true }
+        return false
     }
 
     private func reconnectDelay(attempt: Int) -> TimeInterval {

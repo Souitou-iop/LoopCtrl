@@ -47,6 +47,12 @@ class AppState: ObservableObject {
                 self?.startServer()
             }
         }
+        // In the all-in-one build the in-process runner, not AppState's own
+        // server, answers /rpc on the server port, and the runner's Start
+        // button never goes through startServer(). The relay only forwards to
+        // 127.0.0.1, so it can run on its own from launch; a call that arrives
+        // before Start answers a generic 502.
+        if relayEligible { startRelayIfConfigured() }
     }
 
     func startServer() {
@@ -72,7 +78,6 @@ class AppState: ObservableObject {
         do {
             try s.start()
             serverError = nil
-            if relayEligible { startRelayIfConfigured() }
         } catch {
             print("🔴 Failed to start server: \(error)")
             serverError = error.localizedDescription
@@ -81,8 +86,6 @@ class AppState: ObservableObject {
     }
 
     func stopServer() {
-        relay?.stop()
-        relay = nil
         server?.stop()
         server = nil
         isServerRunning = false
@@ -92,6 +95,8 @@ class AppState: ObservableObject {
     /// enrollment token, and (implicitly) the fixed server port are present.
     /// The token is an ad-hoc Debug value, never a Release build setting.
     private func startRelayIfConfigured() {
+        relay?.stop()
+        relay = nil
         #if DEBUG
         let token = relayEnrollmentToken
         #else
@@ -115,6 +120,48 @@ class AppState: ObservableObject {
         relay = client
         client.start()
     }
+
+    #if DEBUG
+    /// Debug-only enrollment for device tests, so a relay URL and a single-use
+    /// enrollment token can be set without UI:
+    ///
+    ///     loopctrl-app://relay-debug?url=https://relay.example&token=<enrollment>
+    ///     loopctrl-app://relay-debug?clear=1
+    ///
+    /// Release builds compile none of this and never read a token. The token
+    /// is never logged.
+    func handleRelayDebugURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "loopctrl-app",
+              url.host?.lowercased() == "relay-debug",
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        else { return false }
+        func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
+        if value("clear") != nil {
+            relay?.stop()
+            relay = nil
+            relayBaseURL = ""
+            relayEnrollmentToken = ""
+            relayExpectedDeviceID = ""
+            loopctrlLog("Relay debug: enrollment cleared")
+            return true
+        }
+        if let base = value("url") { relayBaseURL = base }
+        if let token = value("token") { relayEnrollmentToken = token }
+        relayExpectedDeviceID = value("device") ?? ""
+        guard relayEligible else {
+            loopctrlLog("Relay debug: saved, but only the all-in-one build runs the relay")
+            return true
+        }
+        if Self.relayEnrollment(baseURL: relayBaseURL, token: relayEnrollmentToken,
+                                expectedDeviceID: relayExpectedDeviceID) == nil {
+            loopctrlLog("Relay debug: enrollment rejected (https origin and a well-formed token are required)")
+            return true
+        }
+        loopctrlLog("Relay debug: enrollment set for \(relayBaseURL); starting relay")
+        startRelayIfConfigured()
+        return true
+    }
+    #endif
 
     static func relayEnrollment(
         baseURL rawBaseURL: String,
