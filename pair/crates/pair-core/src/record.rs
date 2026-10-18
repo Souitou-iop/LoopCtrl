@@ -89,6 +89,13 @@ fn has_rp_keys(d: &Dictionary) -> bool {
     key32("public_key") && key32("private_key") && d.get("identifier").and_then(Value::as_string).is_some()
 }
 
+/// Apple's XML plist parser (`PropertyListSerialization`, `plutil`) rejects
+/// `<date>` values with fractional seconds, which the plist crate writes.
+fn whole_seconds(t: SystemTime) -> SystemTime {
+    let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs)
+}
+
 /// Builds the file LoopCtrl imports, from the lockdown record and (17.4+) the
 /// RP record, both as plist bytes in idevice's own serialization.
 pub fn build(lockdown: &[u8], rp: Option<&[u8]>, meta: &RecordMeta) -> Result<Vec<u8>, PairError> {
@@ -138,7 +145,7 @@ pub fn build(lockdown: &[u8], rp: Option<&[u8]>, meta: &RecordMeta) -> Result<Ve
         };
         m.insert("RemotePairingVia".into(), Value::String(via.into()));
     }
-    m.insert("CreatedAt".into(), Value::Date(SystemTime::now().into()));
+    m.insert("CreatedAt".into(), Value::Date(whole_seconds(SystemTime::now()).into()));
     m.insert("Tool".into(), Value::String(format!("LoopCtrl Pair {}", meta.tool_version)));
     out.insert(META_KEY.into(), Value::Dictionary(m));
 
@@ -225,6 +232,23 @@ pub(crate) mod tests {
             ios: "18.6.2".into(),
             rp_via: (kind == RecordKind::RemotePairing).then_some(RpVia::LockdownService),
             tool_version: "0.1.0".into(),
+        }
+    }
+
+    #[test]
+    fn dates_have_no_fractional_seconds() {
+        let out = build(&sample_lockdown(), Some(&sample_rp()), &meta(RecordKind::RemotePairing)).unwrap();
+        let text = String::from_utf8(out.clone()).unwrap();
+        let date = text.split("<date>").nth(1).unwrap().split("</date>").next().unwrap();
+        assert!(!date.contains('.'), "{date}");
+        // The parser LoopCtrl uses must accept the file.
+        #[cfg(target_os = "macos")]
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let f = dir.path().join("pairingFile.plist");
+            std::fs::write(&f, &out).unwrap();
+            let lint = std::process::Command::new("plutil").arg("-lint").arg(&f).output().unwrap();
+            assert!(lint.status.success(), "{}", String::from_utf8_lossy(&lint.stdout));
         }
     }
 
