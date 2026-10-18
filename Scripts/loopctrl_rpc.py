@@ -650,8 +650,9 @@ def nearby_call(query: str, method: str, params: dict | None, client_name: str) 
 #
 # RFC 7748 X25519, so pairing needs nothing beyond the standard library. Uses
 # `cryptography` when it is installed; otherwise a plain Montgomery ladder. The
-# private key is single-use (one per pairing), so the pure-Python fallback's
-# lack of constant-time arithmetic exposes nothing reusable.
+# private key serves one pairing (retries of it included, for at most
+# PENDING_PAIR_TTL) and is then thrown away, so the pure-Python fallback's lack
+# of constant-time arithmetic exposes nothing long-lived.
 
 _X25519_BASE = (9).to_bytes(32, "little")
 
@@ -698,9 +699,47 @@ def _x25519(scalar: bytes, u: bytes) -> bytes:
 
 # -------------------------------------------------------------------- pairing
 
+# A pairing that was refused or timed out keeps its key here for a while, so
+# the retry presents the same key: the device user can allow a missed request
+# afterwards from the LoopCtrl app, and that approval is bound to the key.
+PENDING_PAIR_STORE = os.path.expanduser("~/.loopctrl/pending_pair.json")
+PENDING_PAIR_TTL = 10 * 60   # the device lists a missed request this long
+
+
+def _pending_pair_key(name: str, drop: bool = False) -> bytes:
+    """The private key for pairing as `name`: the one an unfinished attempt
+    left, if still fresh, else a new one (remembered for the retry).
+    `drop=True` forgets it after a successful pairing."""
+    try:
+        with open(PENDING_PAIR_STORE) as fh:
+            pending = json.load(fh)
+    except (OSError, ValueError):
+        pending = {}
+    now = time.time()
+    pending = {k: v for k, v in pending.items()
+               if isinstance(v, dict) and now - v.get("created", 0) < PENDING_PAIR_TTL}
+    priv = b""
+    if drop:
+        pending.pop(name, None)
+    elif name in pending:
+        priv = bytes.fromhex(pending[name]["priv"])
+    else:
+        priv = secrets.token_bytes(32)
+        pending[name] = {"priv": priv.hex(), "created": now}
+    os.makedirs(os.path.dirname(PENDING_PAIR_STORE), exist_ok=True)
+    fd = os.open(PENDING_PAIR_STORE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump(pending, fh)
+    return priv
+
+
 def pair(host: str, client_name: str, plain: bool, timeout: float = 90.0,
          store_key: str | None = None) -> dict:
-    """Pair with the device. BLOCKS until the user taps Allow on-screen."""
+    """Pair with the device. BLOCKS until the user taps Allow on-screen.
+
+    A refused or timed-out attempt can be allowed afterwards on the phone
+    (LoopCtrl → recent requests → Allow This Client); running `pair` again
+    within 10 minutes then succeeds without another prompt."""
     url = f"http://{host}/pair"
     if plain:
         status, resp = _post(url, {"client_name": client_name, "plain": True}, timeout)
@@ -708,8 +747,10 @@ def pair(host: str, client_name: str, plain: bool, timeout: float = 90.0,
             raise SystemExit(f"pair failed ({status}): {resp}")
         key = bytes.fromhex(resp["token"])
     else:
-        # X25519; the device wraps K against our public key.
-        priv = secrets.token_bytes(32)
+        # X25519; the device wraps K against our public key. Retries reuse
+        # the key (see _pending_pair_key).
+        pending_name = f"{store_key or host}|{client_name}"
+        priv = _pending_pair_key(pending_name)
         pub = _x25519(priv, _X25519_BASE)
         print(f"key fingerprint: {hashlib.sha256(pub).hexdigest()[:8]}  "
               "(verify it matches the on-device prompt)", file=sys.stderr)
@@ -724,6 +765,7 @@ def pair(host: str, client_name: str, plain: bool, timeout: float = 90.0,
         k_wrap = _hmac(shared, LABEL_PAIR + pub + device_pub)
         pad = _hmac(k_wrap, LABEL_WRAP)
         key = bytes(a ^ b for a, b in zip(bytes.fromhex(resp["token_ct"]), pad))
+        _pending_pair_key(pending_name, drop=True)
 
     record = {
         "tok": hashlib.sha256(key).digest()[:4].hex(),

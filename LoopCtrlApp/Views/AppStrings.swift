@@ -33,6 +33,13 @@ extension L10n {
         case tunnelConnected, tunnelNotConnected, tunnelNotInstalled, tunnelLocalNetworkDenied, tunnelNotDevice
         case phaseConnecting, phaseQuerying, phaseFinalizing
         case troubleshooting, remount, stikDebugDetail, localDevVPNDetail, openApp, appStore
+        // Authorization
+        case authorizationTitle, authorizedCount, missedRequests
+        case pendingSection, recentSection, recentFooter, noRecentRequests
+        case pairKeyHint, pairNoKeyHint, pairSecondsLeft
+        case outcomePending, outcomeAllowed, outcomeDenied, outcomeTimedOut, outcomeAllowedOnRetry
+        case allowThisClient, grantArmed, grantUsed, noKeyCannotAllow
+        case revokeAll, viaTailnet
         // Logs
         case noLogsYet, noMatches, currentRun, share, shareCurrentLog, refresh, unreadable
         case deleteAllLogs, deleteAllLogsConfirm, deleteAllLogsBody, deleteAll
@@ -44,6 +51,39 @@ extension L10n {
     }
 
     private static let uiTable: [UI: [Lang: String]] = [
+        .authorizationTitle: [.en: "Authorization", .zhHans: "授权管理", .zhHant: "授權管理"],
+        .authorizedCount: [.en: "%d Authorized Clients", .zhHans: "已授权 %d 个客户端", .zhHant: "已授權 %d 個用戶端"],
+        .missedRequests: [.en: "%d missed requests can still be allowed",
+                          .zhHans: "%d 个错过的请求仍可允许",
+                          .zhHant: "%d 個錯過的請求仍可允許"],
+        .pendingSection: [.en: "Waiting for Approval", .zhHans: "待处理", .zhHant: "待處理"],
+        .recentSection: [.en: "Recent Requests", .zhHans: "最近请求", .zhHant: "最近請求"],
+        .recentFooter: [.en: "Requests stay here for 10 minutes. Allowing a client lets its next request with the same key in once, without asking; any other key is asked about as usual. A request without a key (plain USB pairing) can only be answered while it waits.",
+                        .zhHans: "请求会在这里保留 10 分钟。允许某个客户端后，它下次用同一密钥发起的请求会直接通过一次，不再询问；其他密钥照常询问。没有密钥的请求（USB 明文配对）只能在等待期间处理。",
+                        .zhHant: "請求會在這裡保留 10 分鐘。允許某個用戶端後，它下次用同一金鑰發起的請求會直接通過一次，不再詢問；其他金鑰照常詢問。沒有金鑰的請求（USB 明文配對）只能在等待期間處理。"],
+        .noRecentRequests: [.en: "No requests in the last 10 minutes", .zhHans: "最近 10 分钟没有请求", .zhHant: "最近 10 分鐘沒有請求"],
+        .pairKeyHint: [.en: "Allow only if the client shows the same key.",
+                       .zhHans: "客户端上显示的密钥一致才允许。",
+                       .zhHant: "用戶端上顯示的金鑰一致才允許。"],
+        .pairNoKeyHint: [.en: "No key: anything on this device or a computer over USB could have sent this.",
+                         .zhHans: "没有密钥：本机上的任何 App 或通过 USB 连接的电脑都可能发出此请求。",
+                         .zhHant: "沒有金鑰：本機上的任何 App 或透過 USB 連接的電腦都可能發出此請求。"],
+        .pairSecondsLeft: [.en: "%d seconds left", .zhHans: "剩余 %d 秒", .zhHant: "剩餘 %d 秒"],
+        .outcomePending: [.en: "Waiting", .zhHans: "等待中", .zhHant: "等待中"],
+        .outcomeAllowed: [.en: "Allowed", .zhHans: "已允许", .zhHant: "已允許"],
+        .outcomeDenied: [.en: "Denied", .zhHans: "已拒绝", .zhHant: "已拒絕"],
+        .outcomeTimedOut: [.en: "Timed out", .zhHans: "已超时", .zhHant: "已逾時"],
+        .outcomeAllowedOnRetry: [.en: "Allowed on retry", .zhHans: "重试已通过", .zhHant: "重試已通過"],
+        .allowThisClient: [.en: "Allow This Client", .zhHans: "允许此客户端", .zhHant: "允許此用戶端"],
+        .grantArmed: [.en: "Allowed — waiting for the client to retry (%@)",
+                      .zhHans: "已允许，等待客户端重试（%@）",
+                      .zhHant: "已允許，等待用戶端重試（%@）"],
+        .grantUsed: [.en: "The client came back and was let in", .zhHans: "客户端已重试并通过", .zhHant: "用戶端已重試並通過"],
+        .noKeyCannotAllow: [.en: "No key to bind an approval to — ask the client to try again.",
+                            .zhHans: "没有可绑定的密钥，请让客户端重新发起请求。",
+                            .zhHant: "沒有可綁定的金鑰，請讓用戶端重新發起請求。"],
+        .revokeAll: [.en: "Revoke All", .zhHans: "吊销全部", .zhHant: "撤銷全部"],
+        .viaTailnet: [.en: "Tailscale", .zhHans: "Tailscale", .zhHant: "Tailscale"],
         .settingsTitle: [.en: "Settings", .zhHans: "设置", .zhHant: "設定"],
         .localAddress: [.en: "This device", .zhHans: "本机", .zhHant: "本機"],
         .lanAddress: [.en: "Wi-Fi", .zhHans: "局域网", .zhHant: "區域網路"],

@@ -49,9 +49,21 @@ struct SettingsView: View {
                         .font(.largeTitle.bold())
 
                     VStack(spacing: 20) {
+                        // A request waiting for an answer comes first: it
+                        // stays here until answered or timed out, whatever
+                        // happened to its notification.
+                        if runner.isRunning {
+                            ForEach(runnerAdmin.pendingRequests) { request in
+                                PairRequestCard(request: request)
+                                    .transition(.move(edge: .top).combined(with: .opacity))
+                            }
+                        }
                         statusCard
                         if runner.isRunning {
                             connectionCard
+                            if runnerAdmin.isPaired {
+                                AuthorizationEntryRow()
+                            }
                         }
                         primaryButton
                         hint
@@ -67,6 +79,8 @@ struct SettingsView: View {
         .animation(.default, value: runner.state)
         .animation(.default, value: ddi.isMounted)
         .animation(.default, value: runnerAdmin.visibility)
+        .animation(.default, value: runnerAdmin.pendingRequests)
+        .pairingRequestPolling(admin: runnerAdmin, active: runner.isRunning)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
@@ -197,17 +211,13 @@ struct SettingsView: View {
         }
         // Remote access can also be switched from the runner's notification,
         // so keep it current while shown. Pairing is only ever started by the
-        // switch itself.
+        // switch itself. Over /rpc, `pairingRequestPolling` above re-reads
+        // `config`, which carries the visibility too.
         .task(id: runnerAdmin.isPaired) {
             #if LOOPCTRL_ALL_IN_ONE
             while !Task.isCancelled {
                 runnerAdmin.refreshInProcessVisibility()
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-            }
-            #else
-            while !Task.isCancelled && runnerAdmin.isPaired {
-                await runnerAdmin.loadClients()
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
             }
             #endif
         }

@@ -203,6 +203,11 @@ the server's version and capabilities.
 **Notifications** carry the same controls when you're in another app.
 Long-press the server notification to switch Remote Access or Nearby Discovery
 or to stop the server, and long-press a pairing request to allow or deny it.
+Missed the notification? While a request waits, the home screen shows it as a
+card with Allow and Deny, and **Authorized N clients** opens the Authorization
+page: the waiting request, requests from the last 10 minutes (a timed-out one
+can still be allowed, and the client gets in on its next try), and every
+client holding a key, with revoke.
 Approving needs the phone unlocked.
 
 **Who can reach it.** It goes one step at a time, and each step needs you on
@@ -278,6 +283,12 @@ it asks for a key before it controls anything. `/stream` (live H.264) and
   nonce. Replays are refused, and so are timestamps more than ±120 s off.
 - Only one request waits at a time, with a cooldown after a refusal. Requests
   from the phone itself get their own slot.
+- A refused or timed-out request stays in the app's recent list for 10 minutes.
+  Allowing it there arms a one-shot grant bound to the SHA-256 of the client's
+  X25519 public key: the next `/pair` with that same key is approved without a
+  prompt or cooldown. The reference clients reuse a pending key for 10 minutes
+  for this. A plain (keyless) request can't be allowed afterwards. Details:
+  [docs/pairing-approval.md](docs/pairing-approval.md).
 - Keys live in the app's sandbox, not the Keychain, so re-signing the app keeps
   them.
 
