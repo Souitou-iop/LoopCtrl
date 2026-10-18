@@ -84,7 +84,8 @@ python3 relay/selftest.py
 Runs the relay in-process on a random loopback port and exercises enrollment,
 registration, single-use enforcement, a server-held HTTP poll, opaque byte
 forwarding, response return, rejection of unknown operator/device tokens, and
-a simulated 31-minute no-poll gap.
+a simulated 31-minute no-poll gap. It also forces a pending operator wait
+through both device expiry (`410`) and operator timeout (`504`).
 
 ### Poll transport and timeout contract
 
@@ -111,6 +112,14 @@ the server-side operator timeout. The next poll is a new HTTP request. The
 client never reuses a request ID, and the relay rejects a second response to
 the same ID. This is why the server-advertised wait plus grace is explicit and
 tested rather than implicit in a hardcoded timeout.
+
+An operator wait is capped by both deadlines: the configured operator timeout
+and the device session's current expiry. If the device session expires while an
+operator request is pending, the relay drops the session and wakes the wait
+immediately with `410 {"error":"device_session_expired"}`. If the operator
+deadline wins first, the relay returns `504 {"error":"device_timeout"}` and
+removes the pending record. The self-test forces both paths with an injectable
+clock and asserts that neither hangs.
 
 ### 2. Relay + operator client by hand
 
@@ -207,7 +216,8 @@ device the same keys via the Xcode scheme or a temporary debug-only field.
 
 - `python3 relay/selftest.py` — PASS (registration, single-use enrollment,
   server-held poll forwarding, opaque request/response bytes, a simulated
-  31-minute no-poll gap, unknown-token rejection).
+  31-minute no-poll gap, prompt `410` on device expiry, `504` on operator
+  timeout, unknown-token rejection).
 - `relay/check_swift_timeout.sh` — PASS (`server poll_timeout + 15 s grace`,
   with a 12-second floor).
 - `swiftc -typecheck RelayRPCClient.swift SecureEnvelope.swift ServerPort.swift
