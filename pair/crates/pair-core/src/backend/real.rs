@@ -35,6 +35,7 @@ const UNTRUSTED_TUNNEL_SERVICE: &str = "com.apple.internal.dt.coredevice.untrust
 #[derive(Debug, Clone)]
 pub struct RealBackend {
     addr: UsbmuxdAddr,
+    allow_network: bool,
 }
 
 impl Default for RealBackend {
@@ -45,7 +46,15 @@ impl Default for RealBackend {
 
 impl RealBackend {
     pub fn new() -> Self {
-        Self { addr: UsbmuxdAddr::from_env_var().unwrap_or_default() }
+        Self { addr: UsbmuxdAddr::from_env_var().unwrap_or_default(), allow_network: false }
+    }
+
+    /// Testing only: also take Wi-Fi devices that usbmuxd already has a pair
+    /// record for. A first Trust is impossible over the network (lockdownd
+    /// answers `PairingProhibitedOverThisConnection`), so v1 ships USB only.
+    pub fn allow_network(mut self, on: bool) -> Self {
+        self.allow_network = on;
+        self
     }
 }
 
@@ -80,6 +89,11 @@ impl Backend for RealBackend {
                 UsbmuxdListenEvent::Connected(UsbmuxdDevice { connection_type: Connection::Usb, udid, device_id }) => {
                     WatchEvent::Attached(AttachedDevice { udid, mux_id: device_id })
                 }
+                UsbmuxdListenEvent::Connected(UsbmuxdDevice {
+                    connection_type: Connection::Network(_),
+                    udid,
+                    device_id,
+                }) if self.allow_network => WatchEvent::Attached(AttachedDevice { udid, mux_id: device_id }),
                 UsbmuxdListenEvent::Connected(_) => continue,
                 UsbmuxdListenEvent::Disconnected(mux_id) => WatchEvent::Detached { mux_id },
             };

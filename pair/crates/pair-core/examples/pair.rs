@@ -3,6 +3,7 @@
 //! ```text
 //! cargo run -p pair-core --example pair            # real usbmuxd
 //! cargo run -p pair-core --example pair -- --mock  # simulated phone
+//! cargo run -p pair-core --example pair -- --network  # also Wi-Fi devices already trusted (testing)
 //! ```
 //!
 //! Every phone that is plugged in starts by itself (batch behaviour). Records
@@ -49,7 +50,8 @@ fn main() {
         }
         std::thread::sleep(Duration::from_secs(10));
     } else {
-        let _h = ManagerHandle::start(RealBackend::new(), cfg, print);
+        let network = std::env::args().any(|a| a == "--network");
+        let _h = ManagerHandle::start(RealBackend::new().allow_network(network), cfg, print);
         loop {
             std::thread::sleep(Duration::from_secs(3600));
         }
