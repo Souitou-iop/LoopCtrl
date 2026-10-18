@@ -51,10 +51,18 @@ struct RunnerConnectRows: View {
 struct ClientRow: View {
     let client: RunnerAdmin.Client
     let isSelf: Bool
+    /// A second line with when it was paired (the authorization page).
+    var showsGrantTime = false
+
+    /// "tailnet" for a VPN address in Tailscale's ranges, else `lastVia`.
+    private var source: String? {
+        guard let via = client.lastVia else { return nil }
+        return client.lastAddress.map { AuthManager.displaySource(address: $0, via: via) } ?? via
+    }
 
     /// The app ships no .lproj, so Foundation formats in English by default;
     /// follow the language the rest of the UI is shown in instead.
-    private static let locale: Locale = {
+    static let locale: Locale = {
         switch L10n.lang {
         case .zhHans: return Locale(identifier: "zh-Hans")
         case .zhHant: return Locale(identifier: "zh-Hant")
@@ -62,7 +70,7 @@ struct ClientRow: View {
         }
     }()
 
-    private static let relative: RelativeDateTimeFormatter = {
+    static let relative: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .short
         f.dateTimeStyle = .named
@@ -70,7 +78,7 @@ struct ClientRow: View {
         return f
     }()
 
-    private static let absolute: DateFormatter = {
+    static let absolute: DateFormatter = {
         let f = DateFormatter()
         f.locale = locale
         f.dateStyle = .medium
@@ -80,11 +88,7 @@ struct ClientRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: Self.sourceIcon(client.lastVia))
-                .font(.body.weight(.medium))
-                .foregroundColor(Self.sourceColor(client.lastVia))
-                .frame(width: 36, height: 36)
-                .background(Self.sourceColor(client.lastVia).opacity(0.12), in: Circle())
+            SourceStyle.badge(source)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
@@ -103,6 +107,12 @@ struct ClientRow: View {
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                if showsGrantTime, let granted = client.grantedAt {
+                    Text(String(format: L10n.t(.pairedAt), Self.absolute.string(from: granted)))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
             }
         }
         .padding(.vertical, 2)
@@ -113,8 +123,8 @@ struct ClientRow: View {
     /// ("127.0.0.1"); the source does.
     private var subtitle: String {
         var parts = [String]()
-        if let via = client.lastVia {
-            parts.append(Self.sourceName(via))
+        if let via = source {
+            parts.append(SourceStyle.name(via))
             if let address = client.lastAddress, via != PeerSource.local.rawValue {
                 parts.append(address)
             }
@@ -152,9 +162,16 @@ struct ClientRow: View {
             Label(client.id, systemImage: "number")
         }
     }
+}
 
-    private static func sourceName(_ via: String) -> String {
-        switch PeerSource(rawValue: via) {
+/// How a request's source is named, drawn and tinted: a `PeerSource` raw
+/// value, or "tailnet" (see `AuthManager.displaySource`).
+enum SourceStyle {
+    static let tailnet = "tailnet"
+
+    static func name(_ via: String?) -> String {
+        if via == tailnet { return L10n.ui(.viaTailnet) }
+        switch via.flatMap(PeerSource.init(rawValue:)) {
         case .local: return L10n.t(.viaLocal)
         case .lan: return L10n.t(.viaLAN)
         case .nearby: return L10n.t(.viaNearby)
@@ -164,7 +181,8 @@ struct ClientRow: View {
         }
     }
 
-    private static func sourceIcon(_ via: String?) -> String {
+    static func icon(_ via: String?) -> String {
+        if via == tailnet { return "point.3.connected.trianglepath.dotted" }
         switch via.flatMap(PeerSource.init(rawValue:)) {
         case .local: return "iphone"
         case .lan: return "wifi"
@@ -175,7 +193,8 @@ struct ClientRow: View {
         }
     }
 
-    private static func sourceColor(_ via: String?) -> Color {
+    static func color(_ via: String?) -> Color {
+        if via == tailnet { return .teal }
         switch via.flatMap(PeerSource.init(rawValue:)) {
         case .lan: return .blue
         case .nearby: return .purple
@@ -184,10 +203,19 @@ struct ClientRow: View {
         default: return .gray
         }
     }
+
+    /// A round tinted badge with the source's symbol.
+    static func badge(_ via: String?, size: CGFloat = 36) -> some View {
+        Image(systemName: icon(via))
+            .font(.body.weight(.medium))
+            .foregroundColor(color(via))
+            .frame(width: size, height: size)
+            .background(color(via).opacity(0.12), in: Circle())
+    }
 }
 
 /// The client rows, with swipe and context-menu actions, shared by the
-/// Settings sheet and the full clients screen. Revoking another client and
+/// Settings sheet and the authorization page. Revoking another client and
 /// disconnecting this app both go through the confirmations of
 /// `clientConfirmations`.
 struct ClientRows: View {
@@ -195,11 +223,12 @@ struct ClientRows: View {
     let clients: [RunnerAdmin.Client]
     @Binding var pendingRevoke: RunnerAdmin.Client?
     @Binding var confirmDisconnect: Bool
+    var showsGrantTime = false
 
     var body: some View {
         ForEach(clients) { client in
             let isSelf = client.id == admin.ownSessionID
-            let row = ClientRow(client: client, isSelf: isSelf)
+            let row = ClientRow(client: client, isSelf: isSelf, showsGrantTime: showsGrantTime)
             row
                 .swipeActions {
                     if isSelf {
@@ -265,64 +294,6 @@ extension View {
             } message: {
                 Text(L10n.t(.disconnectConfirmBody))
             }
-    }
-}
-
-/// Every client holding a key to the runner, with revocation.
-struct RunnerClientsView: View {
-    @EnvironmentObject var admin: RunnerAdmin
-    @State private var pendingRevoke: RunnerAdmin.Client?
-    @State private var confirmRevokeOthers = false
-    @State private var confirmDisconnect = false
-
-    var body: some View {
-        List {
-            if admin.isPaired {
-                Section {
-                    if !admin.clientsLoaded && admin.notice == nil {
-                        HStack { Spacer(); ProgressView(); Spacer() }
-                    } else if admin.clients.isEmpty {
-                        Text(L10n.t(.noClients)).foregroundColor(.secondary)
-                    }
-                    ClientRows(clients: admin.clients,
-                               pendingRevoke: $pendingRevoke,
-                               confirmDisconnect: $confirmDisconnect)
-                    if let notice = admin.notice {
-                        NoticeLabel(text: notice)
-                    }
-                } footer: {
-                    Text(L10n.t(.clientsFooter))
-                }
-
-                Section {
-                    if !admin.otherClients.isEmpty {
-                        Button(role: .destructive) { confirmRevokeOthers = true } label: {
-                            Label(L10n.t(.revokeOthers), systemImage: "person.crop.circle.badge.xmark")
-                        }
-                    }
-                    Button(role: .destructive) { confirmDisconnect = true } label: {
-                        Label(L10n.t(.disconnectThisApp), systemImage: "personalhotspot.slash")
-                    }
-                }
-            } else {
-                Section { RunnerConnectRows() }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle(L10n.t(.authorizedClients))
-        .navigationBarTitleDisplayMode(.inline)
-        .refreshable { await admin.loadClients() }
-        .clientConfirmations(admin: admin,
-                             pendingRevoke: $pendingRevoke,
-                             confirmRevokeOthers: $confirmRevokeOthers,
-                             confirmDisconnect: $confirmDisconnect)
-        // A new client can pair while this screen is open; keep it current.
-        .task(id: admin.isPaired) {
-            while !Task.isCancelled && admin.isPaired {
-                await admin.loadClients()
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-            }
-        }
     }
 }
 

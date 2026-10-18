@@ -52,6 +52,11 @@ final class RunnerClient {
     /// the runner's, not the port's, so pairing survives a port change.
     var port: Int { Int(ServerPort.stored) }
     private var record: Record?
+    /// The key of a pairing that has not succeeded yet, reused by the next
+    /// attempt so that allowing this app after the fact (the runner's recent
+    /// requests list) matches it. Memory only, and dropped once it is older
+    /// than the runner's window.
+    private var pendingPairKey: (key: Curve25519.KeyAgreement.PrivateKey, created: Date)?
 
     init() {
         if let data = KeychainStore.load(account: Self.keychainAccount) {
@@ -82,7 +87,13 @@ final class RunnerClient {
         #if LOOPCTRL_ALL_IN_ONE
         return   // nothing to pair with: see isPaired
         #endif
-        let priv = Curve25519.KeyAgreement.PrivateKey()
+        let priv: Curve25519.KeyAgreement.PrivateKey
+        if let pending = pendingPairKey, Date().timeIntervalSince(pending.created) < PairRequestLedger.recentWindow {
+            priv = pending.key
+        } else {
+            priv = Curve25519.KeyAgreement.PrivateKey()
+            pendingPairKey = (priv, Date())
+        }
         let pub = priv.publicKey.rawRepresentation
         let (status, body) = try await post("/pair", json: [
             "client_name": Self.clientName,
@@ -114,6 +125,7 @@ final class RunnerClient {
 
         let rec = Record(key: key.hexString, tok: SecureEnvelope.tokenId(for: key))
         record = rec
+        pendingPairKey = nil
         if let data = try? JSONEncoder().encode(rec) {
             KeychainStore.save(data, account: Self.keychainAccount)
         }

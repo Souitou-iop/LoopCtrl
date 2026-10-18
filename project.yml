@@ -152,6 +152,24 @@ targets:
           rmdir  "${RUNNER_APP}/Frameworks" 2>/dev/null || true
           echo "✅ Frameworks stripped"
 
+  # Logic tests for LoopCtrlKit code that needs nothing from iOS (pairing
+  # request bookkeeping). macOS, so they run without a simulator or device:
+  #   xcodebuild test -scheme LoopCtrlKitTests -destination platform=macOS
+  LoopCtrlKitTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: LoopCtrlKit/PairRequestLedger.swift
+      - path: Tests/LoopCtrlKitTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "com.openminis.loopctrl.kittests"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+
 schemes:
   LoopCtrlAllInOne:
     build:
@@ -172,3 +190,10 @@ schemes:
       # Data" on the phone. The server takes its own frames; record nothing.
       preferredScreenCaptureFormat: screenshots
       captureScreenshotsAutomatically: false
+  LoopCtrlKitTests:
+    build:
+      targets:
+        LoopCtrlKitTests: [test]
+    test:
+      targets:
+        - LoopCtrlKitTests

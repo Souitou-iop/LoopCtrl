@@ -24,9 +24,15 @@ protocol AuthManagerDelegate: AnyObject {
                      completion: @escaping (Bool) -> Void)
     /// The request timed out before the user answered; withdraw its prompt.
     func authManager(_ manager: AuthManager, didExpireAuthRequest clientName: String, requestID: String)
+    /// The request was answered somewhere other than the prompt (the pending
+    /// card in the LoopCtrl app); withdraw the prompt. Its `completion` will
+    /// not be honoured any more.
+    func authManager(_ manager: AuthManager, didWithdrawAuthRequest clientName: String, requestID: String)
 }
 
 extension AuthManagerDelegate {
+    func authManager(_ manager: AuthManager, didWithdrawAuthRequest clientName: String, requestID: String) {}
+
     func authManager(_ manager: AuthManager, didReceiveAuthRequest clientName: String,
                      requestID: String, nearby: Bool, local: Bool, fingerprint: String?,
                      completion: @escaping (Bool) -> Void) {
@@ -93,6 +99,16 @@ class AuthManager {
         var cooldownUntil = Date.distantPast
     }
     private var pairSlots: [Bool: PairSlot] = [:]   // key: local
+    /// Pending and recently finished requests, for the LoopCtrl app's card
+    /// and list (see `PairRequestLedger`). Guarded by `lock`.
+    private var ledger = PairRequestLedger()
+    /// requestID -> how to settle it. Every answer (the notification, the
+    /// app's card, the timeout) goes through here, so exactly one wins.
+    private var resolvers: [String: (PairRequestLedger.Outcome) -> Void] = [:]
+
+    /// Posted (on `NotificationCenter.default`, any thread) when the pending
+    /// or recent requests change, so an in-process screen can re-read them.
+    static let pairingRequestsDidChange = Notification.Name("LoopCtrlPairingRequestsDidChange")
 
     /// Replay cache, per session: nonce -> the request timestamp it arrived with.
     ///
@@ -153,18 +169,37 @@ class AuthManager {
     /// Every pairing needs the user's tap on the device; a client that already
     /// holds a key never pairs again, so nothing is lost by not remembering
     /// earlier approvals. (A name-based shortcut would be worse than useless:
-    /// `clientName` is whatever the requester claims.) The only exception is
-    /// the developer's one-shot `LOOPCTRL_ALLOW_AUTH_ONCE`, and never for a
-    /// request from a nearby device.
+    /// `clientName` is whatever the requester claims.) The exceptions are the
+    /// developer's one-shot `LOOPCTRL_ALLOW_AUTH_ONCE` (never for a request
+    /// from a nearby device), and a grant the user armed from the recent
+    /// requests list for exactly this public key (`allowRecentRequest`).
     ///
     /// One request may wait for the user at a time, and a refused or expired
-    /// request holds off new ones for `pairCooldown`.
+    /// request holds off new ones for `pairCooldown`; a request let in by a
+    /// grant skips both.
     /// `local`: the request came over loopback (this device or USB); it has
     /// its own slot, see `pairSlots`.
+    /// `keyID`: `PairRequestLedger.keyID(forPublicKey:)` of the client's key,
+    /// nil for a plain loopback grant. `peer`: where it came from, for the
+    /// app's card.
     func requestAuth(clientName: String, nearby: Bool, local: Bool = false, fingerprint: String? = nil,
+                     keyID: String? = nil, peer: (address: String, via: String)? = nil,
                      completion: @escaping (PairOutcome) -> Void) {
+        let requestID = "auth-\(UUID().uuidString)"
+        let source = peer.map { Self.displaySource(address: $0.address, via: $0.via) }
+            ?? (nearby ? PeerSource.nearby.rawValue : local ? PeerSource.local.rawValue : PeerSource.other.rawValue)
         lock.lock()
         let now = Date()
+        if let keyID, ledger.consumeGrant(keyID: keyID, id: requestID, clientName: clientName,
+                                          source: source, address: peer?.address,
+                                          fingerprint: fingerprint, now: now) {
+            lock.unlock()
+            Self.postChange()
+            // No prompt, no slot, no cooldown: the user already said yes to
+            // this key. A failure to mint is still just a refusal.
+            completion(createSession(clientName: clientName).map { .approved($0) } ?? .denied)
+            return
+        }
         var slot = pairSlots[local] ?? PairSlot()
         if slot.pending {
             lock.unlock()
@@ -190,27 +225,94 @@ class AuthManager {
             finishPairing(clientName: clientName, approved: false, local: local, completion: completion)
             return
         }
-        let requestID = "auth-\(UUID().uuidString)"
 
-        // Exactly one of: the user's answer, or the timeout.
-        let answered = NSLock()
-        var done = false
-        let claim: () -> Bool = {
-            answered.lock(); defer { answered.unlock() }
-            if done { return false }
-            done = true
-            return true
+        // Exactly one of: the user's answer (notification or app card), or
+        // the timeout.
+        let settle: (PairRequestLedger.Outcome) -> Void = { [weak self] outcome in
+            guard let self else { return }
+            self.lock.lock()
+            let first = self.resolvers.removeValue(forKey: requestID) != nil
+            if first { self.ledger.finish(id: requestID, outcome: outcome, now: Date()) }
+            self.lock.unlock()
+            guard first else { return }
+            Self.postChange()
+            self.finishPairing(clientName: clientName, approved: outcome == .allowed, local: local,
+                               completion: completion)
         }
+        lock.lock()
+        ledger.begin(id: requestID, clientName: clientName, source: source, address: peer?.address,
+                     fingerprint: fingerprint, keyID: keyID, now: now, timeout: Self.approvalTimeout)
+        resolvers[requestID] = settle
+        lock.unlock()
+        Self.postChange()
+
         delegate.authManager(self, didReceiveAuthRequest: clientName, requestID: requestID,
-                             nearby: nearby, local: local, fingerprint: fingerprint) { [weak self] approved in
-            guard let self = self, claim() else { return }
-            self.finishPairing(clientName: clientName, approved: approved, local: local, completion: completion)
+                             nearby: nearby, local: local, fingerprint: fingerprint) { approved in
+            settle(approved ? .allowed : .denied)
         }
         DispatchQueue.global().asyncAfter(deadline: .now() + Self.approvalTimeout) { [weak self] in
-            guard let self = self, claim() else { return }
+            guard let self, self.isPending(requestID) else { return }
             self.delegate?.authManager(self, didExpireAuthRequest: clientName, requestID: requestID)
-            self.finishPairing(clientName: clientName, approved: false, local: local, completion: completion)
+            settle(.timedOut)
         }
+    }
+
+    private func isPending(_ requestID: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return resolvers[requestID] != nil
+    }
+
+    /// Answer a waiting request from the LoopCtrl app's card, as the
+    /// notification would. Returns false if it was no longer waiting.
+    ///
+    /// Only for callers on the device itself: the in-process app, or the
+    /// app over loopback in the two-IPA build (see the runner's `config`).
+    @discardableResult
+    func respondToPendingRequest(id: String, allow: Bool) -> Bool {
+        lock.lock()
+        let settle = resolvers[id]
+        let name = ledger.pending.first { $0.id == id }?.clientName ?? ""
+        lock.unlock()
+        guard let settle else { return false }
+        delegate?.authManager(self, didWithdrawAuthRequest: name, requestID: id)
+        settle(allow ? .allowed : .denied)
+        return true
+    }
+
+    /// Allow a refused or timed-out client from the recent list: its next
+    /// request with the same public key is approved once, without a prompt
+    /// or cooldown. Same callers as `respondToPendingRequest`.
+    @discardableResult
+    func allowRecentRequest(id: String) -> Bool {
+        lock.lock()
+        let ok = ledger.allowAfterTheFact(id: id, now: Date())
+        lock.unlock()
+        if ok { Self.postChange() }
+        return ok
+    }
+
+    /// The waiting and recently finished requests (pruned to the window).
+    func pairingRequests() -> (pending: [PairRequestLedger.Entry], recent: [PairRequestLedger.Entry]) {
+        lock.lock(); defer { lock.unlock() }
+        ledger.prune(now: Date())
+        return (ledger.pending, ledger.recent)
+    }
+
+    private static func postChange() {
+        NotificationCenter.default.post(name: pairingRequestsDidChange, object: nil)
+    }
+
+    /// The source shown for a request: `PeerSource`, except that a VPN
+    /// tunnel address in Tailscale's ranges (100.64.0.0/10, fd7a:115c:a1e0::/48,
+    /// which the project's Headscale also uses) is "tailnet". A tailnet peer
+    /// reached through a DERP relay arrives the same way, so it is "tailnet" too.
+    static func displaySource(address: String, via: String) -> String {
+        guard via == PeerSource.vpn.rawValue else { return via }
+        let lower = address.lowercased()
+        if lower.hasPrefix("fd7a:115c:a1e0:") { return "tailnet" }
+        let parts = address.split(separator: ".").compactMap { Int($0) }
+        if parts.count == 4, parts[0] == 100, (64...127).contains(parts[1]) { return "tailnet" }
+        return via
     }
 
     private func finishPairing(clientName: String, approved: Bool, local: Bool,

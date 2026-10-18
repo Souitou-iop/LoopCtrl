@@ -394,12 +394,18 @@ struct OptionsView: View {
                 ClientRows(clients: Array(runnerAdmin.clients.prefix(Self.inlineClientLimit)),
                            pendingRevoke: $pendingRevoke,
                            confirmDisconnect: $confirmDisconnect)
-                if runnerAdmin.clients.count > Self.inlineClientLimit {
-                    NavigationLink {
-                        RunnerClientsView()
-                    } label: {
-                        Label(String(format: L10n.ui(.showAllClients), runnerAdmin.clients.count),
-                              systemImage: "person.2")
+                NavigationLink {
+                    AuthorizationView()
+                } label: {
+                    HStack {
+                        Label(L10n.ui(.authorizationTitle), systemImage: "person.badge.key")
+                        Spacer()
+                        if !runnerAdmin.pendingRequests.isEmpty {
+                            StateChip(text: L10n.ui(.outcomePending), tone: .warning)
+                        } else if runnerAdmin.clients.count > Self.inlineClientLimit {
+                            Text(String(format: L10n.ui(.showAllClients), runnerAdmin.clients.count))
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
                 if !runnerAdmin.otherClients.isEmpty {

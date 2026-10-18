@@ -616,14 +616,79 @@ static int rpc_call(const char *hostport, const char *method, const char *params
     return 0;
 }
 
+// ── Pending pairing key ─────────────────────────────────────────────────────
+//
+// A pairing that was refused or timed out keeps its private key for a while,
+// so the retry presents the same public key: the device user can allow a
+// missed request afterwards in the LoopCtrl app, and that approval is bound to
+// the key. One file per device record, ~/.loopctrl/pending/<name>: hex key,
+// space, unix time. Dropped once pairing succeeds or after PENDING_PAIR_TTL.
+
+#define PENDING_PAIR_TTL (10 * 60)
+
+static void pending_path(const char *store_key, char *out, size_t n) {
+    const char *home = getenv("HOME");
+    if (!home) home = "/root";
+    char name[200];
+    size_t j = 0;
+    for (const char *c = store_key; *c && j + 1 < sizeof name; c++) {
+        int ok = (*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+                 (*c >= '0' && *c <= '9') || *c == '.' || *c == '-';
+        name[j++] = ok ? *c : '_';
+    }
+    name[j] = 0;
+    snprintf(out, n, "%s/.loopctrl/pending/%s", home, name);
+}
+
+/// The key an unfinished pairing left for `store_key`, if still fresh; else a
+/// new one, remembered for the retry.
+static void pending_key(const char *store_key, uint8_t priv[32]) {
+    char path[512];
+    pending_path(store_key, path, sizeof path);
+    char *txt = read_file(path, NULL);
+    if (txt) {
+        char hex[65] = {0};
+        long long created = 0;
+        int fresh = sscanf(txt, "%64s %lld", hex, &created) == 2 &&
+                    (long long)time(NULL) - created < PENDING_PAIR_TTL &&
+                    strlen(hex) == 64 && hex_decode(hex, priv, 32) == 0;
+        free(txt);
+        if (fresh) return;
+    }
+    random_bytes(priv, 32);
+    const char *home = getenv("HOME");
+    if (!home) home = "/root";
+    char dir[512];
+    snprintf(dir, sizeof dir, "%s/.loopctrl", home);
+    mkdir(dir, 0700);
+    snprintf(dir, sizeof dir, "%s/.loopctrl/pending", home);
+    mkdir(dir, 0700);
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return;   // still pairs, just without the retry match
+    char hex[65];
+    hex_encode(priv, 32, hex);
+    char line[100];
+    int len = snprintf(line, sizeof line, "%s %lld\n", hex, (long long)time(NULL));
+    if (write(fd, line, (size_t)len) != len) { /* best effort */ }
+    close(fd);
+}
+
+static void drop_pending_key(const char *store_key) {
+    char path[512];
+    pending_path(store_key, path, sizeof path);
+    unlink(path);
+}
+
 /// LAN pairing (mode A): X25519 to a shared secret, device wraps the key.
-/// Blocks until someone taps Allow on the device.
+/// Blocks until someone taps Allow on the device. A refused or timed-out
+/// attempt can be allowed afterwards on the phone; the next `pair` within ten
+/// minutes reuses the key and then goes through without another prompt.
 static int do_pair(const char *hostport, const char *client_name) {
     char host[256], port[16];
     split_host(hostport, host, sizeof host, port, sizeof port);
 
     uint8_t priv[32], pub[32];
-    random_bytes(priv, 32);
+    pending_key(STORE_KEY(hostport), priv);
     x25519_base(pub, priv);
 
     char pub_b64[64];
@@ -686,6 +751,7 @@ static int do_pair(const char *hostport, const char *client_name) {
     hex_encode(kh, 4, tok);
 
     save_token(STORE_KEY(hostport), key, tok, client_name);
+    drop_pending_key(STORE_KEY(hostport));
     fprintf(g_pair_implicit ? stderr : stdout,
             "paired — tok=%s (key cached in ~/.loopctrl/token.json)\n", tok);
     buf_free(&resp);

@@ -830,9 +830,13 @@ class JSONRPCServer {
 
         // Shown on the prompt and printed by the client, so a request from an
         // impostor on the network can be told apart from the user's own.
-        let fingerprint = clientPub.map { Data(SHA256.hash(data: $0).prefix(4)).hexString }
+        let fingerprint = clientPub.map(PairRequestLedger.fingerprint(forPublicKey:))
+        // What an after-the-fact approval is bound to: the whole key, not the
+        // 8-hex fingerprint above (see PairRequestLedger).
+        let keyID = clientPub.map(PairRequestLedger.keyID(forPublicKey:))
         AuthManager.shared.requestAuth(clientName: clientName, nearby: nearby, local: isLoopback,
-                                       fingerprint: fingerprint) { [weak self] outcome in
+                                       fingerprint: fingerprint, keyID: keyID,
+                                       peer: Self.peer(of: connection)) { [weak self] outcome in
             guard let self = self else { return }
             let session: AuthSession
             switch outcome {

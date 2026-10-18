@@ -18,7 +18,37 @@ final class RunnerAdmin: ObservableObject {
         let lastVia: String?
     }
 
+    /// A pairing request as the runner reports it (`config` → `pairing`).
+    struct PairRequest: Identifiable, Equatable {
+        enum Outcome: String { case pending, allowed, denied, timedOut = "timed_out" }
+        enum Grant: Equatable { case none, armed(until: Date), used }
+
+        let id: String
+        let clientName: String
+        /// `PeerSource` raw value, or "tailnet".
+        let source: String
+        let address: String?
+        let fingerprint: String?
+        let requestedAt: Date?
+        /// When a pending request is refused if nobody answers.
+        let deadline: Date?
+        let resolvedAt: Date?
+        let outcome: Outcome
+        /// The runner says it can still be allowed from the list.
+        let canAllow: Bool
+        let grant: Grant
+        /// Let in on retry by an earlier after-the-fact approval.
+        let autoApproved: Bool
+    }
+
     @Published private(set) var isPaired: Bool
+    /// The request waiting for an answer, if any (one per slot on the runner,
+    /// so at most two: this device and everyone else).
+    @Published private(set) var pendingRequests: [PairRequest] = []
+    /// Answered or timed out in the last ten minutes, newest first.
+    @Published private(set) var recentRequests: [PairRequest] = []
+    /// A pair_respond / pair_allow_recent call is in flight.
+    @Published private(set) var answering = false
     @Published private(set) var pairing = false
     /// Why the last operation failed, in the user's language; nil when fine.
     @Published private(set) var notice: String?
@@ -82,6 +112,7 @@ final class RunnerAdmin: ObservableObject {
             let result = try await client.call("config")
             clients = Self.parseClients(result["sessions"])
             visibility = Self.parseVisibility(result)
+            applyPairing(result["pairing"])
             let nearby = result["nearby"] as? [String: Any]
             nearbyPending = (nearby?["enabled"] as? Bool) == true && (nearby?["advertising"] as? Bool) != true
             localNetworkDenied = (result["nearby"] as? [String: Any])?["local_network"] as? String == "denied"
@@ -89,6 +120,69 @@ final class RunnerAdmin: ObservableObject {
             notice = nil
         } catch {
             handle(error)
+        }
+    }
+
+    // MARK: - Pairing requests
+
+    /// Answer the waiting request, as the runner's notification would.
+    func respond(to request: PairRequest, allow: Bool) async {
+        await answer(["pair_respond": ["request_id": request.id, "allow": allow]])
+        loopctrlLog("Runner admin: \(allow ? "allowed" : "denied") pairing request from \(request.clientName)")
+    }
+
+    /// Allow a refused or timed-out client after the fact: the runner lets its
+    /// next request with the same key in once, without asking.
+    func allowAfterTheFact(_ request: PairRequest) async {
+        await answer(["pair_allow_recent": request.id])
+        loopctrlLog("Runner admin: allowed \(request.clientName) after the fact")
+    }
+
+    private func answer(_ params: [String: Any]) async {
+        guard !answering else { return }
+        answering = true
+        defer { answering = false }
+        do {
+            let result = try await client.call("config", params)
+            clients = Self.parseClients(result["sessions"])
+            applyPairing(result["pairing"])
+            notice = nil
+        } catch {
+            handle(error)
+        }
+    }
+
+    private func applyPairing(_ value: Any?) {
+        let pairing = value as? [String: Any]
+        let pending = Self.parseRequests(pairing?["pending"])
+        let recent = Self.parseRequests(pairing?["recent"])
+        if pending != pendingRequests { pendingRequests = pending }
+        if recent != recentRequests { recentRequests = recent }
+    }
+
+    private static func parseRequests(_ value: Any?) -> [PairRequest] {
+        let rows = value as? [[String: Any]] ?? []
+        let date = { (key: String, row: [String: Any]) in (row[key] as? String).flatMap(iso.date(from:)) }
+        return rows.compactMap { row in
+            guard let id = row["request_id"] as? String else { return nil }
+            let grant: PairRequest.Grant
+            switch row["grant"] as? String {
+            case "armed": grant = date("grant_until", row).map { .armed(until: $0) } ?? .none
+            case "used": grant = .used
+            default: grant = .none
+            }
+            return PairRequest(id: id,
+                               clientName: row["client_name"] as? String ?? "",
+                               source: row["source"] as? String ?? PeerSource.other.rawValue,
+                               address: row["address"] as? String,
+                               fingerprint: row["fingerprint"] as? String,
+                               requestedAt: date("requested_at", row),
+                               deadline: date("deadline", row),
+                               resolvedAt: date("resolved_at", row),
+                               outcome: PairRequest.Outcome(rawValue: row["outcome"] as? String ?? "") ?? .denied,
+                               canAllow: row["can_allow"] as? Bool ?? false,
+                               grant: grant,
+                               autoApproved: row["auto_approved"] as? Bool ?? false)
         }
     }
 
@@ -120,6 +214,8 @@ final class RunnerAdmin: ObservableObject {
         client.forget()
         isPaired = false
         clients = []
+        pendingRequests = []
+        recentRequests = []
         clientsLoaded = false
         visibility = nil
         logLines = []
@@ -273,11 +369,14 @@ final class RunnerAdmin: ObservableObject {
         switch error as? RunnerClient.Failure {
         case .notRunning:
             notice = L10n.t(.runnerNotRunningHint)
+            pendingRequests = []
         case .notPaired:
             isPaired = false
         case .keyRejected:
             isPaired = false
             clients = []
+            pendingRequests = []
+            recentRequests = []
             notice = L10n.t(.keyRejectedHint)
         case .pairDenied:
             notice = L10n.t(.pairDeniedHint)

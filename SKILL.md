@@ -25,7 +25,7 @@ $I call tap '{"ref":"<ref>"}'
 - Keep the client in `~/.loopctrl/bin` — **not** `/var/minis/workspace`, which ignores the exec bit ("Permission denied").
 - Elsewhere: `curl -o loopctrl_rpc.py http://<host>:8300/skill/clients/python`, then `python3 loopctrl_rpc.py --host <host>:8300 call …`. The CLI takes `--host`/`LOOPCTRL_HOST`.
 - **No address?** Have the user turn on *Nearby Discovery* (needs Remote Access, Wi-Fi on). `loopctrl_rpc.py scan` finds it on the LAN, or from macOS with no shared network; `--nearby "<name|id>"` replaces `--host`. First use pairs (one Allow).
-- Keys: `~/.loopctrl/token.json`, one per device (`/whoami` id) for USB, LAN, nearby; reuse (30-day idle expiry). Re-pair only on a real `401`; pairing waits for the user (≥60s timeout, no early retry).
+- Keys: `~/.loopctrl/token.json`, one per device (`/whoami` id) for USB, LAN, nearby; reuse (30-day idle expiry). Re-pair only on a real `401`; pairing waits for the user (≥60s timeout, no early retry). Missed it (`pair_denied`)? Ask the user to tap *Allow This Client* under LoopCtrl → Authorization → Recent Requests, then run `pair` again within 10 min: the clients reuse their key, and that retry goes through without a prompt.
 
 ## Rules — read these first
 

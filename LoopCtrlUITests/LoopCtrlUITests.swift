@@ -1641,6 +1641,37 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                                       data: nil))
         }
 
+        // Answering pairing requests is the device owner's call, so it is
+        // accepted only from this device: the LoopCtrl app (in-process, or
+        // over loopback in the two-IPA build) or a computer over USB. A client
+        // asking to pair holds no key and cannot reach `config` at all; this
+        // keeps an already-paired client on the network from approving others.
+        let fromThisDevice = params?[JSONRPCServer.peerSourceParam]?.stringValue == PeerSource.local.rawValue
+        let pairRespond = params?["pair_respond"]?.objectValue
+        let pairAllowRecent = params?["pair_allow_recent"]?.stringValue
+        if (pairRespond != nil || pairAllowRecent != nil) && !fromThisDevice {
+            return (nil, JSONRPCError(code: -32602,
+                                      message: "Pairing requests can be answered only on this device: the LoopCtrl app or the notification",
+                                      data: nil))
+        }
+        var pairingAnswer: Bool?
+        if let pairRespond {
+            guard let id = pairRespond["request_id"]?.stringValue,
+                  let allow = pairRespond["allow"]?.boolValue else {
+                return (nil, JSONRPCError(code: -32602, message: "pair_respond needs request_id and allow", data: nil))
+            }
+            pairingAnswer = AuthManager.shared.respondToPendingRequest(id: id, allow: allow)
+            Self.logBuffer.append(pairingAnswer == true
+                                  ? (allow ? "✅ Auth approved (LoopCtrl app)" : "❌ Auth denied (LoopCtrl app)")
+                                  : "⚠️ pair_respond: request no longer waiting")
+        }
+        if let id = pairAllowRecent {
+            pairingAnswer = AuthManager.shared.allowRecentRequest(id: id)
+            Self.logBuffer.append(pairingAnswer == true
+                                  ? "🔓 Client allowed after the fact — its next pairing with the same key is approved once"
+                                  : "⚠️ pair_allow_recent: request not found or not allowable")
+        }
+
         var restartNeeded = false
         var newPort = UInt16(server?.port ?? Self.persistedPort)
         var clearedSessions = 0
@@ -1797,6 +1828,14 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         if let revoked = revokedSession {
             result["revoked_session_id"] = .string(revoked)
         }
+        // Who is asking to pair: for the app's card and list only, so not
+        // shown to clients elsewhere on the network.
+        if fromThisDevice {
+            result["pairing"] = Self.pairingJSON()
+        }
+        if let pairingAnswer {
+            result["pairing_applied"] = .bool(pairingAnswer)
+        }
 
         // Per-action timing stats (ms).
         let timing: [JSONValue] = Self.logBuffer.timingStats().map { s in
@@ -1811,6 +1850,45 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         result["timing"] = .array(timing)
 
         return (result, nil)
+    }
+
+    /// The pending and recent pairing requests, as `config` reports them.
+    private static func pairingJSON() -> JSONValue {
+        let (pending, recent) = AuthManager.shared.pairingRequests()
+        let iso = ISO8601DateFormatter()
+        let now = Date()
+        func row(_ e: PairRequestLedger.Entry) -> JSONValue {
+            var o: [String: JSONValue] = [
+                "request_id": .string(e.id),
+                "client_name": .string(e.clientName),
+                "source": .string(e.source),
+                "address": e.address.map(JSONValue.string) ?? .null,
+                "fingerprint": e.fingerprint.map(JSONValue.string) ?? .null,
+                "requested_at": .string(iso.string(from: e.requestedAt)),
+                "outcome": .string(e.outcome.rawValue),
+                "can_allow": .bool(e.canAllow(now: now)),
+                "auto_approved": .bool(e.autoApproved),
+            ]
+            if e.outcome == .pending {
+                o["deadline"] = .string(iso.string(from: e.deadline))
+                o["seconds_left"] = .int(max(0, Int(e.deadline.timeIntervalSince(now).rounded(.up))))
+            }
+            if let resolved = e.resolvedAt { o["resolved_at"] = .string(iso.string(from: resolved)) }
+            switch e.grant {
+            case .none: o["grant"] = .string("none")
+            case .armed(let until):
+                o["grant"] = .string("armed")
+                o["grant_until"] = .string(iso.string(from: until))
+            case .used: o["grant"] = .string("used")
+            }
+            return .object(o)
+        }
+        return .object([
+            "pending": .array(pending.map(row)),
+            "recent": .array(recent.map(row)),
+            "approval_timeout": .int(Int(AuthManager.approvalTimeout)),
+            "recent_window": .int(Int(PairRequestLedger.recentWindow)),
+        ])
     }
 
     private func wireNewServer(_ newServer: JSONRPCServer) {
@@ -2493,6 +2571,16 @@ extension LoopCtrlUITests: AuthManagerDelegate {
         Self.logBuffer.append("🔐 Auth request from \"\(clientName)\"\(nearby ? " (nearby device)" : "")")
         sendAuthNotification(clientName: clientName, requestID: requestID, nearby: nearby, local: local,
                              fingerprint: fingerprint)
+    }
+
+    func authManager(_ manager: AuthManager, didWithdrawAuthRequest clientName: String, requestID: String) {
+        authLock.lock()
+        if currentAuthRequestID == requestID { currentAuthRequestID = nil }
+        pendingAuthCompletions.removeValue(forKey: requestID)
+        authLock.unlock()
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [requestID])
+        center.removeDeliveredNotifications(withIdentifiers: [requestID])
     }
 
     func authManager(_ manager: AuthManager, didExpireAuthRequest clientName: String, requestID: String) {
