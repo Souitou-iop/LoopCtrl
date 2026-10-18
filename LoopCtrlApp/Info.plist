@@ -9,6 +9,15 @@
 	     .../DeveloperDiskImages/16.4/DeveloperDiskImage.dmg.
 	     Files must be the ones pinned in DeveloperDiskImageStore: every
 	     download is checked against its SHA-256. Empty: no mirror of our own. -->
+	<!-- The languages the in-code string tables cover. Declared so system
+	     controls (PasteButton, pickers) and formatters follow the user's
+	     language instead of falling back to English: the app has no .lproj. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+		<string>zh-Hant</string>
+	</array>
 	<key>LoopCtrlDDIMirrors</key>
 	<array/>
 	<key>CFBundleURLTypes</key>

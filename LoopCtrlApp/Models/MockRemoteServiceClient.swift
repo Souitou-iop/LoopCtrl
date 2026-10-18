@@ -64,7 +64,9 @@ final class MockRemoteServiceClient: RemoteServiceClient {
         var operators = invite.operatorKeyIDs.enumerated().map { i, keyID in
             RemoteOperator(name: Self.operatorNames[i % Self.operatorNames.count], keyID: keyID)
         }
-        if operators.isEmpty { operators = [Self.demoOperator] }
+        if operators.isEmpty {
+            operators = [RemoteOperator(name: Self.operatorNames[0], keyID: Self.demoOperator.keyID)]
+        }
         if scenario == .fingerprintMismatch {
             // Same name, the server's own key: what a malicious relay would do.
             let forged = Data(SHA256.hash(data: Data((operators[0].keyID + "forged").utf8)))

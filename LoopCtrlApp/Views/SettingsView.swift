@@ -19,6 +19,8 @@ struct SettingsView: View {
     @State private var showMountSheet = false
     @State private var showOptions = false
     @State private var showAddRemote = false
+    /// DEBUG `-remoteShow list|connection`: a 远程服务 page pushed at launch.
+    @State private var debugRemotePage: String?
     @EnvironmentObject private var remote: RemoteServiceStore
     @StateObject private var runner = RunnerStatus()
     @EnvironmentObject private var runnerAdmin: RunnerAdmin
@@ -98,6 +100,23 @@ struct SettingsView: View {
         .onAppear {
             refresh()
             runner.startPolling()
+            #if DEBUG
+            // Screenshots without tapping: -remoteShow add|list|connection|settings
+            switch UserDefaults.standard.string(forKey: "remoteShow") {
+            case "add": showAddRemote = true
+            case "settings": showOptions = true
+            case let page?: debugRemotePage = page
+            case nil: break
+            }
+            #endif
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { debugRemotePage != nil }, set: { if !$0 { debugRemotePage = nil } })) {
+            if debugRemotePage == "connection", let id = remote.primary?.id {
+                RemoteConnectionDetailView(connectionID: id)
+            } else {
+                RemoteServiceView()
+            }
         }
         .onDisappear { runner.stopPolling() }
         .onReceive(NotificationCenter.default.publisher(

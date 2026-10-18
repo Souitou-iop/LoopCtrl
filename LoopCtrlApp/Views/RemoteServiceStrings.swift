@@ -25,7 +25,7 @@ extension L10n {
         case simulateOperator, simulateOperatorEnd, simulateDrop, simulateServerClose
         case mockEnabled, mockDisabled, relayOperatorsSection, relayOperatorsFooter
         // Errors
-        case errInvalidCode, errExpiredCode, errMismatch, errTLS, errPin, errUnreachable, errServerClosed, errResponse
+        case errInvalidCode, errExpiredCode, errCredential, errMismatch, errTLS, errPin, errUnreachable, errServerClosed, errResponse
         case parseNotInvite, parseVersion, parseMissingServer, parseInvalidServer, parseInsecure
         case parseMissingCode, parseInvalidCode, parseInvalidOperator, parseInvalidPin, parseExpired
         // Log
@@ -188,6 +188,9 @@ extension L10n {
         .errUnreachable: [.en: "Can't reach the server. Check the address and your network.",
                           .zhHans: "无法连接服务器，请检查地址和网络。",
                           .zhHant: "無法連線伺服器，請檢查位址和網路。"],
+        .errCredential: [.en: "This phone's key for this connection is missing. Unbind it and add it again with a new invite.",
+                         .zhHans: "本机在此连接的密钥已丢失。请解除绑定，再用新的邀请重新添加。",
+                         .zhHant: "本機在此連線的金鑰已遺失。請解除綁定，再用新的邀請重新新增。"],
         .errServerClosed: [.en: "The server ended the connection.", .zhHans: "服务器断开了连接。", .zhHant: "伺服器中斷了連線。"],
         .errResponse: [.en: "The server sent something unexpected.", .zhHans: "服务器返回了无法识别的内容。", .zhHant: "伺服器回傳了無法辨識的內容。"],
         .parseNotInvite: [.en: "That isn't a LoopCtrl connection invite.", .zhHans: "这不是 LoopCtrl 连接邀请。", .zhHant: "這不是 LoopCtrl 連線邀請。"],
@@ -232,6 +235,7 @@ enum RemoteServiceText {
         case .serverUnreachable: return L10n.rs(.errUnreachable)
         case .disconnectedByServer: return L10n.rs(.errServerClosed)
         case .invalidResponse: return L10n.rs(.errResponse)
+        case .credentialMissing: return L10n.rs(.errCredential)
         }
     }
 
@@ -270,6 +274,16 @@ enum RemoteServiceText {
         case .pinMismatch: return lang("Pin mismatch", "证书固定不一致", "憑證固定不一致")
         case .serverUnreachable: return lang("Server unreachable", "服务器不可达", "伺服器無法連線")
         case .disconnectedByServer: return lang("Server disconnects", "服务器主动断开", "伺服器主動中斷")
+        }
+    }
+
+    /// The app ships no .lproj, so formatters would fall back to English:
+    /// give them the language the in-code tables picked.
+    static var locale: Locale {
+        switch L10n.lang {
+        case .zhHans: return Locale(identifier: "zh-Hans")
+        case .zhHant: return Locale(identifier: "zh-Hant")
+        default: return Locale(identifier: "en")
         }
     }
 

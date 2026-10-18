@@ -14,12 +14,7 @@ struct RemoteServiceCard: View {
     var body: some View {
         Group {
             if let connection = store.primary {
-                NavigationLink {
-                    RemoteServiceView()
-                } label: {
-                    content(connection, store.machine(connection.id))
-                }
-                .buttonStyle(.plain)
+                content(connection, store.machine(connection.id))
             } else {
                 emptyState
             }
@@ -55,7 +50,9 @@ struct RemoteServiceCard: View {
     private func content(_ c: RemoteConnection, _ m: RemoteConnectionMachine) -> some View {
         switch m.phase {
         case .operated(let name, let since, _):
+            // 断开 sits outside the link, so a tap on it never navigates.
             VStack(alignment: .leading, spacing: 14) {
+                NavigationLink { RemoteServiceView() } label: {
                 HStack(spacing: 12) {
                     RemoteBadge(tint: .orange, systemImage: "hand.tap.fill")
                     VStack(alignment: .leading, spacing: 2) {
@@ -67,7 +64,13 @@ struct RemoteServiceCard: View {
                             .lineLimit(1)
                     }
                     Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundColor(Color(.tertiaryLabel))
                 }
+                .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
                 Button(role: .destructive) {
                     store.disconnect(c.id)
                 } label: {
@@ -81,7 +84,8 @@ struct RemoteServiceCard: View {
             .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
                         .strokeBorder(Color.orange.opacity(0.6), lineWidth: 1.5))
         default:
-            row(c, m)
+            NavigationLink { RemoteServiceView() } label: { row(c, m) }
+                .buttonStyle(.plain)
         }
     }
 
@@ -116,14 +120,7 @@ struct RemoteServiceCard: View {
     @ViewBuilder private func status(_ m: RemoteConnectionMachine) -> some View {
         switch m.phase {
         case .connected:
-            HStack(spacing: 6) {
-                Circle().fill(Color.green).frame(width: 8, height: 8)
-                if let ms = m.latencyMS {
-                    Text(String(format: L10n.rs(.latency), ms))
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundColor(.secondary)
-                }
-            }
+            Circle().fill(Color.green).frame(width: 10, height: 10)
         case .enrolling, .connecting, .reconnecting:
             ProgressView()
         default:
@@ -133,7 +130,9 @@ struct RemoteServiceCard: View {
 
     private func subtitle(_ c: RemoteConnection, _ m: RemoteConnectionMachine) -> String {
         switch m.phase {
-        case .connected: return c.organization
+        case .connected:
+            // Latency here, not beside the domain, so the domain keeps its width.
+            return m.latencyMS.map { "\(c.organization) · \(String(format: L10n.rs(.latency), $0))" } ?? c.organization
         case .enrolling, .connecting: return L10n.rs(.connecting)
         case .reconnecting(let attempt, _): return String(format: L10n.rs(.reconnecting), attempt)
         case .failed(let error): return RemoteServiceText.error(error)
@@ -504,14 +503,12 @@ struct InviteConfirmView: View {
     }
 
     private var codeLine: String {
-        let expires: String
-        if case .ready(let info, _) = stage, let at = info.codeExpiresAt ?? invite.expiresAt {
-            expires = RelativeDateTimeFormatter().localizedString(for: at, relativeTo: Date())
-        } else if let at = invite.expiresAt {
-            expires = RelativeDateTimeFormatter().localizedString(for: at, relativeTo: Date())
-        } else {
-            return invite.displayCode
-        }
+        var at = invite.expiresAt
+        if case .ready(let info, _) = stage { at = info.codeExpiresAt ?? at }
+        guard let at else { return invite.displayCode }
+        let f = RelativeDateTimeFormatter()
+        f.locale = RemoteServiceText.locale
+        let expires = f.localizedString(for: at, relativeTo: Date())
         return String(format: L10n.rs(.codeExpires), invite.displayCode, expires)
     }
 
@@ -813,11 +810,15 @@ private struct ConnectionRow: View {
         HStack(spacing: 12) {
             RemoteBadge(tint: tone == .good ? .green : .secondary, size: 34)
             VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: connection.serverDisplay).lineLimit(1).truncationMode(.middle)
+                Text(verbatim: connection.serverDisplay)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .truncationMode(.middle)
                 Text(verbatim: connection.organization).font(.caption).foregroundColor(.secondary)
             }
             Spacer(minLength: 8)
             StateChip(text: RemoteServiceView.phaseText(machine), tone: tone)
+                .layoutPriority(-1)
         }
     }
 
@@ -969,8 +970,7 @@ struct RemoteConnectionDetailView: View {
                     }
                 }
                 Button(role: .destructive) { confirmUnbind = true } label: {
-                    Label(L10n.rs(.unbind), systemImage: "link.badge.plus")
-                        .symbolRenderingMode(.hierarchical)
+                    Label(L10n.rs(.unbind), systemImage: "trash")
                 }
             } footer: {
                 Text(L10n.rs(.disconnectFooter))
@@ -1038,6 +1038,9 @@ struct RemoteConnectionDetailView: View {
         let f = DateComponentsFormatter()
         f.allowedUnits = seconds >= 3600 ? [.hour, .minute] : [.minute, .second]
         f.unitsStyle = .abbreviated
+        var calendar = Calendar.current
+        calendar.locale = RemoteServiceText.locale
+        f.calendar = calendar
         return f.string(from: max(0, seconds)) ?? "—"
     }
 }

@@ -106,6 +106,9 @@ enum RemoteServiceError: String, Error, Equatable, CaseIterable, Codable {
     case serverUnreachable = "server_unreachable"
     case disconnectedByServer = "disconnected_by_server"
     case invalidResponse = "invalid_response"
+    /// This phone's key for the connection is gone from the Keychain (a
+    /// restore to another phone, say): it can only be unbound and re-added.
+    case credentialMissing = "credential_missing"
 }
 
 /// The steps of 连接, in order, for the progress list.

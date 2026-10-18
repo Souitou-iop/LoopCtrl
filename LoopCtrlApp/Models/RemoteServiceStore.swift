@@ -47,7 +47,42 @@ final class RemoteServiceStore: ObservableObject {
                                  ? MockRemoteServiceClient() : UnavailableRemoteServiceClient())
         load()
         for c in connections where c.autoConnect { connect(c.id) }
+        #if DEBUG
+        applyDemoLaunchArgument()
+        #endif
     }
+
+    #if DEBUG
+    /// `-remoteDemo connected|operated|reconnecting|failed`: put the mock
+    /// connection in that state at launch, for screenshots without tapping.
+    /// `-remoteInvite <link>` opens that invite's confirmation, as if the
+    /// link had been tapped (no "Open in LoopCtrl?" prompt in between).
+    private func applyDemoLaunchArgument() {
+        if let link = UserDefaults.standard.string(forKey: "remoteInvite"), let url = URL(string: link) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { self.receive(link: url) }
+        }
+        guard let state = UserDefaults.standard.string(forKey: "remoteDemo"), let mock else { return }
+        let id = connections.first?.id ?? UUID().uuidString
+        if connections.isEmpty {
+            let op = RemoteOperator(name: L10n.rs(.mockOperatorA), keyID: MockRemoteServiceClient.demoOperator.keyID)
+            connections = [RemoteConnection(
+                id: id, serverURL: URL(string: "https://relay.example.com")!, organization: L10n.rs(.mockOrganization),
+                deviceID: "dev_8f3a1c22e1", operators: [op], preApprovedKeyIDs: [op.keyID], preApprovalSynced: true,
+                spkiPin: MockRemoteServiceClient.demoSPKI, enrolledAt: Date(), autoConnect: false)]
+            if RemoteDeviceKeyStore.load(connectionID: id) == nil { _ = RemoteDeviceKeyStore.create(connectionID: id) }
+        }
+        connect(id)
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            switch state {
+            case "operated": mock.simulateOperatorStarted(connectionID: id, name: L10n.rs(.mockOperatorA))
+            case "reconnecting": mock.simulateDrop(connectionID: id)
+            case "failed": mock.simulateServerClosed(connectionID: id)
+            default: break
+            }
+        }
+    }
+    #endif
 
     // MARK: - Reading
 
@@ -187,7 +222,7 @@ final class RemoteServiceStore: ObservableObject {
         guard let c = connections.first(where: { $0.id == id }) else { return }
         guard let key = RemoteDeviceKeyStore.load(connectionID: id) else {
             update(id, .open)
-            update(id, .fail(.invalidCode))
+            update(id, .fail(.credentialMissing))
             return
         }
         for other in connections where other.id != id && machine(other.id).isActive { disconnect(other.id) }
