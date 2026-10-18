@@ -115,6 +115,32 @@ product. A production relay client must be tested under:
 - low-power mode
 - process termination and relaunch
 
+### Live Activity is not a background transport
+
+An ActivityKit Live Activity is a presentation surface. It can show a
+connection state on the Lock Screen and Dynamic Island; it does not grant
+continuous execution, keep a TCP/TLS socket open, or create a network tunnel.
+It also cannot coexist with the assumption that the app process is always
+suspended or terminated.
+
+Useful roles for a Live Activity:
+
+- show relay connection health
+- display a one-tap disconnect or approval state
+- deep-link back into the app or pairing flow
+- preserve a short-lived enrollment/approval context while the user moves
+  between apps
+
+Non-solutions for transport:
+
+- a Live Activity timer or animation to keep the app alive
+- a push-to-start Live Activity as a substitute for an inbound socket
+- an ActivityKit state update as a wake-up signal for arbitrary network work
+
+The transport must be independently justified by a Network Extension,
+background-capable runtime, or a server-push design that is explicitly tested
+under lock, background, and termination.
+
 ### Distribution
 
 LoopCtrl already depends on developer tooling and test-runner behavior.
@@ -142,6 +168,8 @@ tokens quickly, and log only hashed token identifiers.
 
 Exit criterion: a real `/rpc` call succeeds after 30 minutes in the background
 and after a Wi-Fi/cellular switch, with the chosen runtime and entitlement.
+Add a lock-screen Live Activity as an observability layer, but keep it out of
+the success criterion for socket survival.
 
 ### Phase 1: enrollment
 
