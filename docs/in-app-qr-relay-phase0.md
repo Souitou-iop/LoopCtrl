@@ -15,7 +15,7 @@ operator (relay/relay_operator.py)
         v
 LoopCtrl relay (relay/loopctrl_relay_server.py)
         ^
-        | outbound long-poll, device bearer token
+        | outbound repeated poll, device bearer token
         |
 LoopCtrl on iPhone (LoopCtrlKit/RelayRPCClient.swift)
         |
@@ -41,15 +41,15 @@ All bodies are JSON. All authenticated calls use `Authorization: Bearer <token>`
 | `GET` | `/healthz` | anyone | liveness; no secrets |
 | `POST` | `/v1/admin/enrollments` | operator | mint a single-use enrollment token |
 | `POST` | `/v1/device/register` | device, enrollment token | exchange it for a short-lived device token |
-| `POST` | `/v1/device/poll` | device, device token | long-poll; `200` with work, `204` when idle |
+| `POST` | `/v1/device/poll` | device, device token | server-held poll; `200` with work, `204` when idle |
 | `POST` | `/v1/device/response` | device, device token | return the opaque response |
-| `POST` | `/v1/operator/devices/<id>/rpc` | operator | send an opaque request, block for its response |
+| `POST` | `/v1/operator/devices/<id>/rpc` | operator | send an opaque request, wait for its response |
 | `GET` | `/v1/admin/devices` | operator | list live sessions (ids, names, pending counts) |
 
 `POST /v1/device/poll` returns:
 
 ```json
-{"request_id": "<32 hex chars>", "body_b64": "<opaque request>", "expires_in": 180}
+{"request_id": "<32 hex chars>", "body_b64": "<opaque request>", "expires_in": 3600}
 ```
 
 `POST /v1/device/response` sends back:
@@ -59,8 +59,10 @@ All bodies are JSON. All authenticated calls use `Authorization: Bearer <token>`
 ```
 
 The device token is the only credential the relay gives a device. It is random,
-short-lived (`--device-ttl`, default 180 s), extended on every authenticated
-use, and stored by the relay as a SHA-256 digest — never in the clear.
+short-lived (`--device-ttl`, default 3600 s), extended on every authenticated
+use, and stored by the relay as a SHA-256 digest — never in the clear. The
+default deliberately exceeds Phase 0's 30-minute background criterion: a phone
+that is suspended for >3 minutes must not need to redeem a new enrollment token.
 Enrollment tokens are single-use: `register` removes the digest as it consumes
 it. Unknown, expired, and already-consumed tokens all answer a plain `401` with
 no distinction, so the relay does not confirm which tokens exist.
@@ -80,8 +82,35 @@ python3 relay/selftest.py
 ```
 
 Runs the relay in-process on a random loopback port and exercises enrollment,
-registration, single-use enforcement, a blocking long-poll, opaque byte
-forwarding, response return, and rejection of unknown operator/device tokens.
+registration, single-use enforcement, a server-held HTTP poll, opaque byte
+forwarding, response return, rejection of unknown operator/device tokens, and
+a simulated 31-minute no-poll gap.
+
+### Poll transport and timeout contract
+
+`POST /v1/device/poll` is not a WebSocket and not a persistent connection. Each
+poll is one ordinary HTTP request. The server may hold that request for up to
+its `poll_timeout` (default 25 s) while waiting for operator work, then answers
+`204 No Content`; the exchange closes. Repeat requests after each `204`.
+
+This prototype does **not** prove that a TCP/TLS socket survives iOS
+backgrounding. It only proves the request/response cycle and envelope forwarding.
+A background test must show that the app can *re-establish each poll request*
+after suspension; a held-open socket is neither required nor claimed.
+
+Registration returns `poll_timeout` so the client and server agree. The Swift
+client sets its poll `URLRequest.timeoutInterval` to the advertised
+`poll_timeout` plus a 15-second response grace (minimum 12 seconds). This is
+longer than the server hold by construction, avoiding a client timeout while
+the server is still legitimately waiting. Registration and response-upload
+requests use the independent 90-second `requestTimeout`.
+
+If the client's poll request times out before work is handed out, that cycle
+ends without a server response; the operator's request may still be pending for
+the server-side operator timeout. The next poll is a new HTTP request. The
+client never reuses a request ID, and the relay rejects a second response to
+the same ID. This is why the server-advertised wait plus grace is explicit and
+tested rather than implicit in a hardcoded timeout.
 
 ### 2. Relay + operator client by hand
 
@@ -122,8 +151,9 @@ service, and do not reuse the production Headscale host or its nginx config.
   by registration.
   Non-loopback endpoints must be `https`; a `http` origin is accepted only for
   `127.0.0.1`/`localhost`/`::1`. There is no path, query, or userinfo.
-- `start()` runs one register → poll → forward → respond loop with a capped
-  reconnect backoff. `stop()` cancels it.
+- `start()` runs one register → poll → forward → respond loop, where each poll
+  is a separate HTTP request, with a capped reconnect backoff. `stop()` cancels
+  the current request and the loop.
 - It forwards to `http://127.0.0.1:<rpcPort>/rpc` and returns the response
   verbatim. It does not parse, re-sign, or re-encrypt anything.
 - A failure to reach the local server still answers the relay with a generic
@@ -155,8 +185,8 @@ device the same keys via the Xcode scheme or a temporary debug-only field.
   device token proves "this device registered", not "this keypair enrolled".
 - **No production auth.** One shared operator token from the environment. No
   tenant model, no operator accounts, no rate limiting beyond the pending cap.
-- **No APNs / background wake.** The client is a foreground long-poll. See
-  below.
+- **No APNs / background wake.** The client is a foreground repeated-poll loop;
+  each cycle is a separate HTTP request, not a live socket. See below.
 - **No Tailscale integration and no Network Extension.** This is an application
   relay, not a VPN, and it does not compose with Shadowrocket's tunnel.
 - **No live activity and no reconnect telemetry.**
@@ -167,6 +197,7 @@ device the same keys via the Xcode scheme or a temporary debug-only field.
 | --- | --- | --- |
 | Relay, automated | `python3 relay/selftest.py` | run, passes |
 | Relay, syntax | `python3 -m py_compile relay/*.py` | run, passes |
+| Poll timing arithmetic | `relay/check_swift_timeout.sh` | run, passes |
 | Relay over TLS | see above, throwaway cert | not run here |
 | Swift, compile | `xcodebuild … -destination generic/platform=iOS build` | see below |
 | Swift, typecheck | `swiftc -typecheck` on the three files it needs | run, passes |
@@ -175,7 +206,10 @@ device the same keys via the Xcode scheme or a temporary debug-only field.
 ### Verified on this machine
 
 - `python3 relay/selftest.py` — PASS (registration, single-use enrollment,
-  long-poll forwarding, opaque request/response bytes, unknown-token rejection).
+  server-held poll forwarding, opaque request/response bytes, a simulated
+  31-minute no-poll gap, unknown-token rejection).
+- `relay/check_swift_timeout.sh` — PASS (`server poll_timeout + 15 s grace`,
+  with a 12-second floor).
 - `swiftc -typecheck RelayRPCClient.swift SecureEnvelope.swift ServerPort.swift
   -target arm64-apple-ios16.0 -sdk <iphoneos sdk>` — no diagnostics.
 
@@ -184,7 +218,9 @@ device the same keys via the Xcode scheme or a temporary debug-only field.
 - **Any real device run, background survival, or Wi-Fi/cellular switch.** Phase
   0's stated exit criterion — a real `/rpc` call after 30 minutes in the
   background and after a network switch — is *not* met by this commit. The
-  long-poll client is foreground-only and must not be described as always-on.
+  repeated-poll client is foreground-only and must not be described as
+  always-on. The 60-minute device TTL is a prerequisite, not a substitute, for
+  that device test.
 
 ### Full-build note
 
@@ -204,8 +240,10 @@ Release (all-in-one) succeeded. The symlink is not committed.
 
 ## What to do next, before Phase 1
 
-1. Run the full device test and record whether the socket survives backgrounding
-   and a Wi-Fi/cellular switch. Until that passes, this is a lab prototype.
+1. Run the full device test and record whether new poll requests can be issued
+   after backgrounding and a Wi-Fi/cellular switch. Check both the app and relay
+   logs for a request gap, since no persistent socket survival is assumed.
+   Until that passes, this is a lab prototype.
 2. Decide the enrollment credential's shape (device public key + short-lived
    token) so Phase 1 can bind it at registration.
 3. Add per-device and per-operator rate limits before any shared deployment.

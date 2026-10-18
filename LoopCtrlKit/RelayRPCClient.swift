@@ -26,7 +26,11 @@ final class RelayRPCClient {
         var enrollment: RelayEnrollment
         var clientName: String
         var rpcPort: UInt16
+        /// Fallback only. Registration's server-advertised `poll_timeout` takes
+        /// precedence, so the client cannot outlive the server wait by accident.
         var pollTimeout: TimeInterval
+        /// Allowance for response generation after any server-held poll wait.
+        var pollResponseGrace: TimeInterval
         var requestTimeout: TimeInterval
 
         init(
@@ -34,12 +38,14 @@ final class RelayRPCClient {
             clientName: String = "LoopCtrl",
             rpcPort: UInt16 = ServerPort.defaultPort,
             pollTimeout: TimeInterval = 25,
+            pollResponseGrace: TimeInterval = 15,
             requestTimeout: TimeInterval = 90
         ) {
             self.enrollment = enrollment
             self.clientName = clientName
             self.rpcPort = rpcPort
             self.pollTimeout = pollTimeout
+            self.pollResponseGrace = pollResponseGrace
             self.requestTimeout = requestTimeout
         }
     }
@@ -47,6 +53,7 @@ final class RelayRPCClient {
     private struct Registration {
         let deviceID: String
         let deviceToken: String
+        let pollTimeout: TimeInterval
     }
 
     private struct PollWork {
@@ -78,8 +85,8 @@ final class RelayRPCClient {
         lifetimeTask?.cancel()
     }
 
-    /// Starts a single long-poll loop. Calling this again while it is running
-    /// is harmless. `stop()` is the only way to end the loop.
+    /// Starts a loop of separate HTTP poll requests. Calling this again while
+    /// it is running is harmless. `stop()` is the only way to end the loop.
     func start() {
         queue.async { [weak self] in
             guard let self, !self.started else { return }
@@ -107,14 +114,9 @@ final class RelayRPCClient {
     private func runLoop() async {
         var registration: Registration?
         var reconnectAttempt = 0
-        var expiredDeviceToken = false
 
         while !Task.isCancelled && !isCancelled {
             if registration == nil {
-                if expiredDeviceToken {
-                    emit(.failed("relay device session expired; re-enroll"))
-                    break
-                }
                 emit(.registering)
                 do {
                     registration = try await register()
@@ -149,7 +151,7 @@ final class RelayRPCClient {
             guard let active = registration else { continue }
             emit(.polling)
             do {
-                guard let work = try await poll(deviceToken: active.deviceToken) else {
+                guard let work = try await poll(active) else {
                     continue
                 }
                 emit(.forwarding)
@@ -176,7 +178,7 @@ final class RelayRPCClient {
                 if case .unauthorized = error {
                     // The short-lived device token expired. The enrollment token
                     // is not reusable, so this loop cannot silently re-register.
-                    expiredDeviceToken = true
+                    emit(.failed("relay device session expired; re-enroll"))
                     break
                 }
                 registration = nil
@@ -217,6 +219,15 @@ final class RelayRPCClient {
         min(30, 2 * Double(max(attempt, 1)))
     }
 
+    /// The poll request must outlive the server's hold. Exposed as a static
+    /// function so a compile-time test can assert the arithmetic.
+    static func pollRequestTimeout(
+        serverPollTimeout: TimeInterval,
+        responseGrace: TimeInterval
+    ) -> TimeInterval {
+        max(serverPollTimeout + responseGrace, 12)
+    }
+
     private func sleep(seconds: TimeInterval) async throws {
         try await Task.sleep(nanoseconds: UInt64(max(seconds, 0) * 1_000_000_000))
     }
@@ -231,7 +242,8 @@ final class RelayRPCClient {
             method: "POST",
             path: "/v1/device/register",
             bearer: configuration.enrollment.token,
-            body: body
+            body: body,
+            timeout: configuration.requestTimeout
         )
         guard result.status == 201 || result.status == 200 else {
             if result.status == 401 || result.status == 403 {
@@ -250,16 +262,29 @@ final class RelayRPCClient {
         if let expected = configuration.enrollment.expectedDeviceID, expected != deviceID {
             throw RelayFailure.protocolFailure("relay device id does not match enrollment")
         }
-        log("relay device session registered")
-        return Registration(deviceID: deviceID, deviceToken: deviceToken)
+        let advertised = (object["poll_timeout"] as? NSNumber)?.doubleValue
+        let pollTimeout = advertised ?? configuration.pollTimeout
+        guard pollTimeout >= 0 else {
+            throw RelayFailure.protocolFailure("relay poll timeout is malformed")
+        }
+        log("relay device session registered (poll wait \(pollTimeout)s)")
+        return Registration(
+            deviceID: deviceID,
+            deviceToken: deviceToken,
+            pollTimeout: pollTimeout
+        )
     }
 
-    private func poll(deviceToken: String) async throws -> PollWork? {
+    private func poll(_ active: Registration) async throws -> PollWork? {
         let result = try await request(
             method: "POST",
             path: "/v1/device/poll",
-            bearer: deviceToken,
-            body: nil
+            bearer: active.deviceToken,
+            body: nil,
+            timeout: Self.pollRequestTimeout(
+                serverPollTimeout: active.pollTimeout,
+                responseGrace: configuration.pollResponseGrace
+            )
         )
         if result.status == 204 {
             return nil
@@ -314,7 +339,8 @@ final class RelayRPCClient {
             method: "POST",
             path: "/v1/device/response",
             bearer: deviceToken,
-            body: body
+            body: body,
+            timeout: configuration.requestTimeout
         )
         guard result.status == 200 else {
             if result.status == 401 || result.status == 404 {
@@ -328,7 +354,8 @@ final class RelayRPCClient {
         method: String,
         path: String,
         bearer: String,
-        body: Data?
+        body: Data?,
+        timeout: TimeInterval
     ) async throws -> HTTPResult {
         guard let url = URL(string: configuration.enrollment.baseURL.absoluteString
             .trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path) else {
@@ -336,7 +363,7 @@ final class RelayRPCClient {
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.timeoutInterval = max(configuration.pollTimeout + 15, 20)
+        request.timeoutInterval = max(timeout, 12)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         if let body {
