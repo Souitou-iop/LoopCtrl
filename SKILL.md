@@ -146,6 +146,13 @@ The method is `type`, not `type_text`. `tap` takes only `ref` or `x`+`y`, never 
 
 - **System alert** (`system_alert:true`) blocks the app's `ref` actions. Answer it: `find_element{element_id:"<button>", bundle_id:"com.apple.springboard"}` → `tap{ref}`. A permission is the user's choice unless the task decides it; "Don't Allow" / `不允许` is the safe default.
 - **`promo_popup`:** close it with one of `close_candidates`. Never claim the offer.
+- **Ads: cheapest way out first; a screenshot is the last step.**
+  1. **Splash ad on launch** (a countdown, `跳过`/`Skip`): `find_and_tap{element_id:"跳过", match:"contains"}`. If nothing matches, it ends by itself in ~3–5s: read again in the capped loop, don't screenshot it. `launch_app` on an app that is already running resumes it with no splash, so don't `terminate_app` unless you need a fresh start.
+  2. **Pop-up or interstitial:** use `close_candidates` if the read has them, else `find_and_tap{element_id:"关闭"|"close"|"跳过", match:"contains"}`.
+  3. **Unlabelled ×:** look in `page_source` for a small (≈16–48pt) Button/Image with no real label, at the top-right of the ad card, just below it, or in the top-right corner of the screen. Tap its centre.
+  4. Only then take one `screenshot{scale:1, quality:0.5}`, find the ×, and tap it.
+  - After closing, check that the ad is gone and `foreground_app` didn't change. A tap on the ad body opens a store or landing page: `launch_app` the target to come back. Never tap `立即下载`/`了解更多`/`去看看`.
+  - Once an ad is closed, append to the app's notes what it looked like and where its × was, so the next run skips steps 1–4.
 - **`blocked_by:"captcha"` or `"rate_limit"`:** never solve it; drags on it are refused. Back out, wait, or report the step as blocked.
 - **Login wall:** close it and go on as a guest if the task allows; else hand over.
 
