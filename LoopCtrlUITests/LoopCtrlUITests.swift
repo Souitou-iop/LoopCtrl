@@ -1653,7 +1653,10 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         // the user confirms an invite in the app, removed on 解除绑定. Same
         // rule: only from this device.
         let relayPreapprove = params?["relay_preapprove"]?.objectValue
-        let relayRevoke = params?["relay_revoke"]?.stringValue
+        // One id, or several (the app's batch 解除绑定).
+        let relayRevoke: [String]? = params?["relay_revoke"].flatMap { value in
+            value.stringValue.map { [$0] } ?? value.arrayValue?.compactMap(\.stringValue)
+        }
         if (relayPreapprove != nil || relayRevoke != nil) && !fromThisDevice {
             return (nil, JSONRPCError(code: -32602,
                                       message: "Remote service approvals can be changed only on this device, in the LoopCtrl app",
@@ -1671,7 +1674,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             AuthManager.shared.setRelayPreApprovals(connectionID: connectionID, operators: operators)
             Self.logBuffer.append("🔑 Remote service \(connectionID): \(operators.count) operator(s) pre-approved")
         }
-        if let connectionID = relayRevoke {
+        for connectionID in relayRevoke ?? [] {
             let revoked = AuthManager.shared.revokeRelayPreApprovals(connectionID: connectionID)
             Self.logBuffer.append("🧹 Remote service \(connectionID) unbound: pre-approvals removed, \(revoked) session(s) revoked")
         }

@@ -252,15 +252,25 @@ final class RunnerAdmin: ObservableObject {
     /// Unbind: the runner forgets the connection's pre-approvals and revokes
     /// the sessions they let in.
     func revokeRelay(connectionID: String) async -> Bool {
-        await relayCall(["relay_revoke": connectionID])
+        await revokeRelay(connectionIDs: [connectionID])
     }
+
+    /// Several at once, in one call.
+    func revokeRelay(connectionIDs: [String]) async -> Bool {
+        guard !connectionIDs.isEmpty else { return true }
+        return await relayCall(["relay_revoke": connectionIDs])
+    }
+
+    /// Short timeout: with no runner up, the in-process call only fails when
+    /// it times out, and the caller keeps the change pending anyway.
+    private static let relayCallTimeout: TimeInterval = 2
 
     private func relayCall(_ params: [String: Any]) async -> Bool {
         #if !LOOPCTRL_ALL_IN_ONE
         guard client.isPaired else { return false }
         #endif
         do {
-            let result = try await client.call("config", params)
+            let result = try await client.call("config", params, timeout: Self.relayCallTimeout)
             clients = Self.parseClients(result["sessions"])
             relayPreApprovals = Self.parseRelayPreApprovals(result["relay_preapprovals"])
             return true

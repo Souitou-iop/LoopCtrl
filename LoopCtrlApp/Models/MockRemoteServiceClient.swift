@@ -53,7 +53,12 @@ final class MockRemoteServiceClient: RemoteServiceClient {
     // MARK: - RemoteServiceClient
 
     func preview(_ invite: RemoteInvite) async throws -> RemoteServerInfo {
-        try await pause(0.9)
+        try await pause(0.6)
+        return try serverInfo(invite)
+    }
+
+    /// What the pretend server answers, without the network delay.
+    private func serverInfo(_ invite: RemoteInvite) throws -> RemoteServerInfo {
         switch scenario {
         case .invalidCode: throw RemoteServiceError.invalidCode
         case .expiredCode: throw RemoteServiceError.expiredCode
@@ -84,9 +89,9 @@ final class MockRemoteServiceClient: RemoteServiceClient {
     }
 
     func redeem(_ invite: RemoteInvite, devicePublicKey: Data, deviceName: String) async throws -> RemoteEnrollment {
-        try await pause(0.8)
+        try await pause(0.5)
         if scenario == .serverUnreachable { throw RemoteServiceError.serverUnreachable }
-        let info = try await preview(invite)
+        let info = try serverInfo(invite)
         let deviceID = "dev_" + Data(SHA256.hash(data: devicePublicKey)).prefix(5)
             .map { String(format: "%02x", $0) }.joined()
         return RemoteEnrollment(deviceID: deviceID, organization: info.organization,
@@ -136,7 +141,7 @@ final class MockRemoteServiceClient: RemoteServiceClient {
 
     func unbind(_ connection: RemoteConnection, deviceKey: Curve25519.Signing.PrivateKey) async throws {
         close(connectionID: connection.id)
-        try await pause(0.5)
+        try await pause(0.3)
     }
 
     func currentSPKI(_ connection: RemoteConnection) async throws -> Data {

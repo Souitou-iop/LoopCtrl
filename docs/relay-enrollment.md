@@ -266,7 +266,7 @@ these parameters only from this device (`_peer_source == local`), like
 | Param | Meaning |
 |---|---|
 | `relay_preapprove: {"connection_id": "…", "operators": [{"name": "…", "key_id": "<64 hex>"}]}` | Replace that connection's pre-approved operators. Entries that are not 64 hex characters are dropped. |
-| `relay_revoke: "<connection_id>"` | Unbind: drop that connection's entries and revoke their sessions. |
+| `relay_revoke: "<connection_id>"` or `["<id>", …]` | Unbind: drop those connections' entries and revoke their sessions. The app sends a batch 解除绑定 as one call. |
 
 From this device, the reply also carries
 `relay_preapprovals: [{connection_id, name, key_id}]`. Each session row carries

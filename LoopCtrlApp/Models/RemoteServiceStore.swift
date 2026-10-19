@@ -160,7 +160,7 @@ final class RemoteServiceStore: ObservableObject {
 
         // 1. The long-lived credential, made here and kept in the Keychain.
         let key = RemoteDeviceKeyStore.create(connectionID: id)
-        try? await Task.sleep(nanoseconds: 400_000_000)
+        try? await Task.sleep(nanoseconds: 200_000_000)
 
         // 2. Spend the one-time code.
         update(id, .advance(.redeemCode))
@@ -195,14 +195,16 @@ final class RemoteServiceStore: ObservableObject {
 
         // 3. The relay channel.
         update(id, .advance(.openRelay))
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        startChannel(connection, key: key)
+        try? await Task.sleep(nanoseconds: 250_000_000)
 
         // 4. Only the operators the invite named; everyone else still asks.
+        // Recorded on the connection now; handed to the runner in the
+        // background, so a stopped service doesn't hold up 连接 (it gets
+        // them when it starts, and the detail page shows them pending).
         update(id, .advance(.preApprove))
-        await syncPreApprovals(id, admin: admin)
-        try? await Task.sleep(nanoseconds: 400_000_000)
-
-        startChannel(connection, key: key)
+        Task { await self.syncPreApprovals(id, admin: admin) }
+        try? await Task.sleep(nanoseconds: 250_000_000)
         return id
     }
 
@@ -250,22 +252,38 @@ final class RemoteServiceStore: ObservableObject {
     /// 解除绑定: close, delete the credential, revoke the pre-approvals (and the
     /// sessions they let in) on the runner, and tell the server. Only the local
     /// part has to succeed.
-    func unbind(_ id: String, admin: RunnerAdmin) async {
-        guard let c = connections.first(where: { $0.id == id }) else { return }
-        disconnect(id)
-        if let key = RemoteDeviceKeyStore.load(connectionID: id) {
-            try? await client.unbind(c, deviceKey: key)
+    /// 解除绑定 for one or many. The local part is immediate: channels close,
+    /// keys leave the Keychain, rows leave the list. The rest goes on in the
+    /// background — every server is told at once, and the runner gets one
+    /// call for all of them. If the runner can't be reached its revocations
+    /// stay pending (`pendingRevocations`) and are sent when it comes up, so
+    /// nothing waits on a stopped service.
+    func unbind(_ ids: [String], admin: RunnerAdmin) {
+        let gone = connections.filter { ids.contains($0.id) }
+        guard !gone.isEmpty else { return }
+        // Keys read before they are deleted, for the servers' unbind calls.
+        let notices = gone.compactMap { c in RemoteDeviceKeyStore.load(connectionID: c.id).map { (c, $0) } }
+        for c in gone {
+            channelTasks.removeValue(forKey: c.id)?.cancel()
+            client.close(connectionID: c.id)
+            RemoteDeviceKeyStore.delete(connectionID: c.id)
+            machines[c.id] = nil
         }
-        RemoteDeviceKeyStore.delete(connectionID: id)
-        if !(await admin.revokeRelay(connectionID: id)) {
-            // Runner not reachable: it still holds the list. Clear it the next
-            // time it is (`pendingRevocations`).
-            pendingRevocations.insert(id)
-        }
-        connections.removeAll { $0.id == id }
-        machines[id] = nil
-        log.removeAll { $0.connectionID == id }
+        let goneIDs = Set(gone.map(\.id))
+        connections.removeAll { goneIDs.contains($0.id) }
+        log.removeAll { goneIDs.contains($0.connectionID) }
+        pendingRevocations.formUnion(goneIDs)
         save()
+
+        let client = self.client
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for (c, key) in notices {
+                    group.addTask { try? await client.unbind(c, deviceKey: key) }
+                }
+                group.addTask { @MainActor in await self.flushPendingRevocations(admin: admin) }
+            }
+        }
     }
 
     /// Unbound while the runner was down; revoked on the runner once it's up.
@@ -275,8 +293,9 @@ final class RemoteServiceStore: ObservableObject {
     }
 
     func flushPendingRevocations(admin: RunnerAdmin) async {
-        for id in pendingRevocations where await admin.revokeRelay(connectionID: id) {
-            pendingRevocations.remove(id)
+        let ids = Array(pendingRevocations)
+        if await admin.revokeRelay(connectionIDs: ids) {
+            pendingRevocations.subtract(ids)
         }
     }
 

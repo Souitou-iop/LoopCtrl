@@ -999,11 +999,9 @@ struct RemoteServiceView: View {
 
     private func unbind(_ ids: [String]) {
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
-        Task {
-            for id in ids { await store.unbind(id, admin: admin) }
-            selection.subtract(ids)
-            if selecting && store.connections.isEmpty { endSelecting() }
-        }
+        withAnimation { store.unbind(ids, admin: admin) }
+        selection.subtract(ids)
+        if selecting && store.connections.isEmpty { endSelecting() }
     }
 
     /// Release builds: the hidden switch for the mock relay. Takes effect on
@@ -1239,7 +1237,7 @@ struct RemoteConnectionDetailView: View {
         .animation(.default, value: m)
         .confirmationDialog(L10n.rs(.unbindConfirm), isPresented: $confirmUnbind, titleVisibility: .visible) {
             Button(L10n.rs(.unbind), role: .destructive) {
-                Task { await store.unbind(c.id, admin: admin) }
+                withAnimation { store.unbind([c.id], admin: admin) }
             }
             Button(L10n.rs(.cancel), role: .cancel) {}
         } message: {
