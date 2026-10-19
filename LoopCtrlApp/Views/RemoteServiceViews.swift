@@ -820,11 +820,21 @@ struct OperatorRow: View {
 /// relay — buttons that drive every state.
 struct RemoteServiceView: View {
     @EnvironmentObject var store: RemoteServiceStore
+    @EnvironmentObject var admin: RunnerAdmin
     @State private var showAdd = false
     @State private var mockToast: String?
+    /// Batch mode: rows get selection circles and a bottom bar of actions.
+    @State private var editMode = EditMode.inactive
+    @State private var selection = Set<String>()
+    /// Connections waiting for the 解除绑定 confirmation (one from a swipe,
+    /// several from batch mode).
+    @State private var pendingUnbind: [String] = []
+
+    private var selecting: Bool { editMode.isEditing }
+    private var activeIDs: [String] { store.connections.filter { store.machine($0.id).isActive }.map(\.id) }
 
     var body: some View {
-        List {
+        List(selection: $selection) {
             Section {
                 ForEach(store.connections) { c in
                     NavigationLink {
@@ -832,11 +842,17 @@ struct RemoteServiceView: View {
                     } label: {
                         ConnectionRow(connection: c, machine: store.machine(c.id))
                     }
+                    .tag(c.id)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        swipeButtons(c)
+                    }
                 }
-                Button {
-                    showAdd = true
-                } label: {
-                    Label(L10n.rs(.addConnection), systemImage: "plus.circle")
+                if !selecting {
+                    Button {
+                        showAdd = true
+                    } label: {
+                        Label(L10n.rs(.addConnection), systemImage: "plus.circle")
+                    }
                 }
             } header: {
                 Text(L10n.rs(.connectionsSection))
@@ -845,19 +861,148 @@ struct RemoteServiceView: View {
                     .onLongPressGesture(minimumDuration: 2) { toggleHiddenMock() }
             }
 
-            if let mock = store.mock {
-                MockControls(mock: mock)
-            }
-
-            if let mockToast {
-                Section { Text(mockToast).foregroundColor(.secondary) }
+            if !selecting {
+                if let mock = store.mock {
+                    MockControls(mock: mock)
+                }
+                if let mockToast {
+                    Section { Text(mockToast).foregroundColor(.secondary) }
+                }
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle(L10n.rs(.title))
+        .environment(\.editMode, $editMode)
+        .animation(.default, value: selecting)
+        .animation(.default, value: store.connections.map(\.id))
+        .navigationTitle(selecting && !selection.isEmpty
+                         ? String(format: L10n.rs(.selectedCount), selection.count) : L10n.rs(.title))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { toolbar }
+        // An alert, centred: a confirmation dialog would pop over from the
+        // whole list and point at whichever row happens to be under it.
+        .alert(unbindTitle, isPresented: Binding(
+            get: { !pendingUnbind.isEmpty }, set: { if !$0 { pendingUnbind = [] } })) {
+            Button(L10n.rs(.unbind), role: .destructive) { unbind(pendingUnbind) }
+            Button(L10n.rs(.cancel), role: .cancel) {}
+        } message: {
+            Text(unbindMessage)
+        }
+        .onChange(of: store.connections.map(\.id)) { ids in
+            selection.formIntersection(ids)
+            if ids.isEmpty { editMode = .inactive }
+        }
         .sheet(isPresented: $showAdd) {
             AddConnectionSheet()
+        }
+    }
+
+    // MARK: Swipe
+
+    /// Like Mail and Notes: the destructive action outermost.
+    @ViewBuilder private func swipeButtons(_ c: RemoteConnection) -> some View {
+        Button {
+            pendingUnbind = [c.id]
+        } label: {
+            Label(L10n.rs(.unbind), systemImage: "trash.fill")
+        }
+        .tint(.red)
+        if store.machine(c.id).isActive {
+            Button {
+                withAnimation { store.disconnect(c.id) }
+            } label: {
+                Label(L10n.rs(.disconnect), systemImage: "pause.fill")
+            }
+            .tint(.orange)
+        } else {
+            Button {
+                withAnimation { store.connect(c.id) }
+            } label: {
+                Label(L10n.rs(.connect), systemImage: "play.fill")
+            }
+            .tint(.green)
+        }
+    }
+
+    // MARK: Toolbar
+
+    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarTrailing) {
+            if selecting {
+                Button(L10n.rs(.done)) { endSelecting() }
+                    .fontWeight(.semibold)
+            } else {
+                Menu {
+                    Button {
+                        withAnimation { editMode = .active }
+                    } label: {
+                        Label(L10n.rs(.selectConnections), systemImage: "checkmark.circle")
+                    }
+                    Divider()
+                    Button {
+                        withAnimation { activeIDs.forEach(store.disconnect) }
+                    } label: {
+                        Label(L10n.rs(.disconnectAll), systemImage: "pause.circle")
+                    }
+                    .disabled(activeIDs.isEmpty)
+                    Button(role: .destructive) {
+                        pendingUnbind = store.connections.map(\.id)
+                    } label: {
+                        Label(L10n.rs(.unbindAll), systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .accessibilityLabel(L10n.rs(.more))
+                .disabled(store.connections.isEmpty)
+            }
+        }
+        ToolbarItemGroup(placement: .bottomBar) {
+            if selecting {
+                let allSelected = selection.count == store.connections.count
+                Button(allSelected ? L10n.rs(.deselectAll) : L10n.rs(.selectAll)) {
+                    selection = allSelected ? [] : Set(store.connections.map(\.id))
+                }
+                Spacer()
+                Button(L10n.rs(.disconnect)) {
+                    withAnimation { selection.filter { store.machine($0).isActive }.forEach(store.disconnect) }
+                }
+                .disabled(!selection.contains { store.machine($0).isActive })
+                Button(L10n.rs(.unbind), role: .destructive) {
+                    pendingUnbind = store.connections.map(\.id).filter(selection.contains)
+                }
+                .tint(.red)
+                .disabled(selection.isEmpty)
+            }
+        }
+    }
+
+    private func endSelecting() {
+        withAnimation {
+            editMode = .inactive
+            selection.removeAll()
+        }
+    }
+
+    // MARK: Unbind
+
+    private var unbindTitle: String {
+        pendingUnbind.count > 1 ? String(format: L10n.rs(.unbindManyConfirm), pendingUnbind.count)
+                                : L10n.rs(.unbindConfirm)
+    }
+
+    private var unbindMessage: String {
+        if pendingUnbind.count == 1, let c = store.connections.first(where: { $0.id == pendingUnbind[0] }) {
+            return String(format: L10n.rs(.unbindBody), c.serverDisplay)
+        }
+        return L10n.rs(.unbindManyBody)
+    }
+
+    private func unbind(_ ids: [String]) {
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        Task {
+            for id in ids { await store.unbind(id, admin: admin) }
+            selection.subtract(ids)
+            if selecting && store.connections.isEmpty { endSelecting() }
         }
     }
 
@@ -888,8 +1033,10 @@ private struct ConnectionRow: View {
                 Text(verbatim: connection.organization).font(.caption).foregroundColor(.secondary)
             }
             Spacer(minLength: 8)
+            // The domain shrinks or truncates first; the state stays readable,
+            // also when selection circles take room in batch mode.
             StateChip(text: RemoteServiceView.phaseText(machine), tone: tone)
-                .layoutPriority(-1)
+                .fixedSize()
         }
     }
 

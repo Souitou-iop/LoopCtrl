@@ -64,12 +64,19 @@ final class RemoteServiceStore: ObservableObject {
         guard let state = UserDefaults.standard.string(forKey: "remoteDemo"), let mock else { return }
         let id = connections.first?.id ?? UUID().uuidString
         if connections.isEmpty {
+            // Three relays, so the list's swipe and batch actions have something to act on.
             let op = RemoteOperator(name: L10n.rs(.mockOperatorA), keyID: MockRemoteServiceClient.demoOperator.keyID)
-            connections = [RemoteConnection(
-                id: id, serverURL: URL(string: "https://relay.example.com")!, organization: L10n.rs(.mockOrganization),
-                deviceID: "dev_8f3a1c22e1", operators: [op], preApprovedKeyIDs: [op.keyID], preApprovalSynced: true,
-                spkiPin: MockRemoteServiceClient.demoSPKI, enrolledAt: Date(), autoConnect: false)]
-            if RemoteDeviceKeyStore.load(connectionID: id) == nil { _ = RemoteDeviceKeyStore.create(connectionID: id) }
+            let hosts = ["relay.example.com", "ops.example.net", "relay.self-hosted.dev"]
+            connections = hosts.enumerated().map { i, host in
+                RemoteConnection(
+                    id: i == 0 ? id : UUID().uuidString, serverURL: URL(string: "https://\(host)")!,
+                    organization: L10n.rs(.mockOrganization), deviceID: "dev_8f3a1c22e\(i)", operators: [op],
+                    preApprovedKeyIDs: [op.keyID], preApprovalSynced: true,
+                    spkiPin: MockRemoteServiceClient.demoSPKI, enrolledAt: Date(), autoConnect: false)
+            }
+            for c in connections where RemoteDeviceKeyStore.load(connectionID: c.id) == nil {
+                _ = RemoteDeviceKeyStore.create(connectionID: c.id)
+            }
         }
         connect(id)
         Task {

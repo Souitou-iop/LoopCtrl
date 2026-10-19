@@ -24,6 +24,8 @@ extension L10n {
         case unbindConfirm, unbindBody, disconnectFooter, mockSection, mockFooter
         case simulateOperator, simulateOperatorEnd, simulateDrop, simulateServerClose
         case mockEnabled, mockDisabled, relayOperatorsSection, relayOperatorsFooter
+        case more, selectConnections, selectAll, deselectAll, selectedCount, disconnectAll, unbindAll
+        case unbindManyConfirm, unbindManyBody
         // Errors
         case errInvalidCode, errExpiredCode, errCredential, errMismatch, errTLS, errPin, errUnreachable, errServerClosed, errResponse
         case parseNotInvite, parseVersion, parseMissingServer, parseInvalidServer, parseInsecure
@@ -170,6 +172,17 @@ extension L10n {
                                 .zhHans: "这些操作员通过中继、且使用与此完全一致的密钥时可直接配对。其他密钥，或同一密钥从别处连接，仍需你批准。",
                                 .zhHant: "這些操作員透過中繼、且使用與此完全一致的金鑰時可直接配對。其他金鑰，或同一金鑰從別處連線，仍需你批准。"],
 
+        .more: [.en: "More", .zhHans: "更多", .zhHant: "更多"],
+        .selectConnections: [.en: "Select Connections", .zhHans: "选择连接", .zhHant: "選擇連線"],
+        .selectAll: [.en: "Select All", .zhHans: "全选", .zhHant: "全選"],
+        .deselectAll: [.en: "Deselect All", .zhHans: "取消全选", .zhHant: "取消全選"],
+        .selectedCount: [.en: "%d Selected", .zhHans: "已选择 %d 项", .zhHant: "已選擇 %d 項"],
+        .disconnectAll: [.en: "Disconnect All", .zhHans: "全部断开", .zhHant: "全部中斷"],
+        .unbindAll: [.en: "Unbind All", .zhHans: "全部解除绑定", .zhHant: "全部解除綁定"],
+        .unbindManyConfirm: [.en: "Unbind %d connections?", .zhHans: "解除绑定 %d 个连接？", .zhHant: "解除綁定 %d 個連線？"],
+        .unbindManyBody: [.en: "This phone's keys for them are deleted, their operators lose their pre-approval and their keys are revoked, and each server is told. You'll need new invites to connect again.",
+                          .zhHans: "将删除本机在这些服务器上的密钥、撤销其操作员的预先授权并吊销其密钥，同时通知各服务器。之后需要新的邀请才能再连接。",
+                          .zhHant: "將刪除本機在這些伺服器上的金鑰、撤銷其操作員的預先授權並撤銷其金鑰，同時通知各伺服器。之後需要新的邀請才能再連線。"],
         .errInvalidCode: [.en: "The connection code isn't valid. Check it, or ask for a new invite.",
                           .zhHans: "连接码无效。请检查，或索取新的邀请。",
                           .zhHant: "連線碼無效。請檢查，或索取新的邀請。"],
