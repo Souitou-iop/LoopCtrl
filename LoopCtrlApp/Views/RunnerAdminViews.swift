@@ -159,6 +159,7 @@ struct ClientRow: View {
         case .lan: return L10n.t(.viaLAN)
         case .nearby: return L10n.t(.viaNearby)
         case .vpn: return L10n.t(.viaVPN)
+        case .tailnet: return L10n.t(.viaTailnet)
         case .cellular: return L10n.t(.viaCellular)
         case .other, nil: return L10n.t(.viaOther)
         }
@@ -170,6 +171,7 @@ struct ClientRow: View {
         case .lan: return "wifi"
         case .nearby: return "dot.radiowaves.left.and.right"
         case .vpn: return "lock.shield"
+        case .tailnet: return "point.3.connected.trianglepath.dotted"
         case .cellular: return "antenna.radiowaves.left.and.right"
         case .other, nil: return "network"
         }
@@ -180,6 +182,7 @@ struct ClientRow: View {
         case .lan: return .blue
         case .nearby: return .purple
         case .vpn: return .orange
+        case .tailnet: return .teal
         case .cellular: return .green
         default: return .gray
         }

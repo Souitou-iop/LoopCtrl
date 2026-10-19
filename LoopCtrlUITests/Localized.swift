@@ -95,7 +95,7 @@ enum L10n {
         case revokeOthersConfirm, disconnectThisApp, disconnectConfirmBody
         case noClients, pairedAt, lastActive, clientsFooter
         case liveLabel, pausedLabel, filterPlaceholder, noLogLines, copyButton, runnerLogsCaption, cancelButton
-        case viaLocal, viaLAN, viaNearby, viaVPN, viaCellular, viaOther
+        case viaLocal, viaLAN, viaNearby, viaVPN, viaTailnet, viaCellular, viaOther
         case visibilityLabel, visibilityLocal, visibilityLAN, visibilityLANNearby, visibilityNearbyPending, runnerLocalNetworkDenied
     }
 
@@ -388,6 +388,7 @@ enum L10n {
         .viaLAN: [.en: "LAN", .zhHans: "局域网", .zhHant: "區域網路"],
         .viaNearby: [.en: "Nearby (AWDL)", .zhHans: "近场 (AWDL)", .zhHant: "近場 (AWDL)"],
         .viaVPN: [.en: "VPN", .zhHans: "VPN", .zhHant: "VPN"],
+        .viaTailnet: [.en: "Tailnet", .zhHans: "Tailnet 组网", .zhHant: "Tailnet 組網"],
         .viaCellular: [.en: "Cellular", .zhHans: "蜂窝网络", .zhHant: "行動網路"],
         .viaOther: [.en: "Other", .zhHans: "其他", .zhHant: "其他"],
         .visibilityLabel: [.en: "Visibility", .zhHans: "可见性", .zhHant: "可見性"],
