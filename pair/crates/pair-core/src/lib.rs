@@ -1,7 +1,7 @@
 //! Core of LoopCtrl Pair: pairs an iPhone over USB, makes the pairing record
 //! LoopCtrl needs, writes it into the app and verifies it.
 //!
-//! UI-independent so the desktop app, a future CLI and the Android (OTG)
+//! UI-independent so the desktop app, the CLI (crates/cli) and the Android (OTG)
 //! version share it. See docs/architecture.md.
 
 pub mod app_match;
@@ -11,6 +11,7 @@ pub mod env;
 pub mod machine;
 mod model;
 pub mod models;
+pub mod ops;
 pub mod record;
 pub mod session;
 pub mod version;

@@ -110,6 +110,39 @@ pub struct EnvReport {
     /// Where we looked ("/var/run/usbmuxd", "127.0.0.1:27015").
     pub usbmux_addr: String,
     pub detail: Option<String>,
+    /// Which usbmuxd this is: "system", "builtIn" (the app's own, Android and
+    /// Linux) or "mock". Empty when the host app did not say.
+    #[serde(default)]
+    pub transport: String,
+    /// Linux only: what the environment screen explains.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linux: Option<LinuxEnv>,
+}
+
+/// Linux environment details. On Linux there are two ways to reach an
+/// iPhone: the system usbmuxd (a package the user installs; we never ship
+/// it) or the app's built-in usbmuxd over usbfs, which needs read-write
+/// access to `/dev/bus/usb` (the udev rule).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinuxEnv {
+    /// A usbmuxd binary or its udev rule is installed.
+    pub usbmuxd_installed: bool,
+    /// Something answers on the system socket (/var/run/usbmuxd).
+    pub usbmuxd_running: bool,
+    /// The built-in usbmuxd is in use.
+    pub built_in: bool,
+    /// Our udev rule (70-loopctrl-pair.rules) is installed.
+    pub udev_rule: bool,
+    /// Built-in mode: could every iPhone found be opened? `None` when no
+    /// iPhone is plugged in (or in system mode).
+    pub usb_access: Option<bool>,
+    /// iPhones seen on USB by the built-in host.
+    pub usb_devices: u32,
+    /// A conflict to explain: "systemTookDevice" (built-in mode, but the
+    /// system usbmuxd holds the iPhone), or "deviceBusy" (another program
+    /// holds it).
+    pub conflict: Option<String>,
 }
 
 /// Every failure the UI knows how to explain.

@@ -209,6 +209,24 @@ impl MockBackend {
         udid
     }
 
+    /// Plugs in a phone that does everything asked of it by itself (Trust,
+    /// the Developer Mode restart, "Turn On"), for demos and the CLI.
+    pub fn plug_auto(&self, scenario: Scenario) -> String {
+        let mut w = self.world.lock().unwrap();
+        let serial = w.next_serial;
+        w.next_serial += 1;
+        let mut p = Self::make_phone(serial, scenario);
+        p.auto = Some(AutoScript {
+            trust_after: Duration::from_millis(1500),
+            restart_after: Duration::from_millis(1000),
+            turn_on_after: Duration::from_millis(1000),
+        });
+        let udid = p.info.udid.clone();
+        w.phones.insert(udid.clone(), p);
+        Self::attach(&mut w, &udid);
+        udid
+    }
+
     /// Five phones on a hub that act on their own, like the approved demo:
     /// three finish, one needs Developer Mode, one lacks LoopCtrl.
     pub fn plug_batch(&self) -> Vec<String> {
@@ -348,6 +366,7 @@ impl Backend for MockBackend {
         let mut r = crate::env::host_os();
         r.usbmux_ok = !missing;
         r.usbmux_addr = "mock".into();
+        r.transport = "mock".into();
         r.detail = missing.then(|| "mock: Apple Devices not installed".into());
         r
     }

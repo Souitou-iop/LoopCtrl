@@ -4,7 +4,9 @@
 //!   Apple Devices (Microsoft Store) or iTunes. We cannot ship Apple's driver.
 //! * macOS: the system usbmuxd at /var/run/usbmuxd, always there.
 //! * Android: the app's built-in usbmuxd (crates/usbmux) on a private socket.
-//! * Linux: the `usbmuxd` package (unsupported, but works).
+//! * Linux: the system usbmuxd if the user installed it, otherwise the
+//!   app's built-in one over usbfs (crates/pair-host decides and fills in
+//!   [`LinuxEnv`](crate::LinuxEnv)).
 //!
 //! `USBMUXD_SOCKET_ADDRESS` overrides the address (idevice convention).
 
@@ -35,6 +37,8 @@ pub fn host_os() -> EnvReport {
         usbmux_ok: false,
         usbmux_addr: String::new(),
         detail: None,
+        transport: String::new(),
+        linux: None,
     }
 }
 
