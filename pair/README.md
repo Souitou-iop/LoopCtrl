@@ -1,8 +1,8 @@
 # LoopCtrl 配对助手（LoopCtrl Pair）
 
-iOS 27 以下的 iPhone 不能自己完成配对。用数据线把 iPhone 连一次电脑，助手会生成 LoopCtrl 需要的配对文件，写进 LoopCtrl 并校验。之后 LoopCtrl 只用手机。
+iOS 27 以下的 iPhone 不能自己完成配对。用数据线把 iPhone 连一次电脑（或一台支持 OTG 的安卓手机），助手会生成 LoopCtrl 需要的配对文件，写进 LoopCtrl 并校验。之后 LoopCtrl 只用手机。
 
-支持 Windows 10/11 和 macOS 12+，iPhone 需要 iOS 16 或更高版本。
+支持 Windows 10/11、macOS 12+ 和 Android 8+（需要 USB 主机 / OTG），iPhone 需要 iOS 16 或更高版本。Android 版见 [android/README.md](android/README.md)。
 
 ## 做什么
 
@@ -57,18 +57,18 @@ bun run licenses:check
 bun tauri build
 ```
 
-结构见 [docs/architecture.md](docs/architecture.md)。核心在 `crates/pair-core`，不依赖 Tauri，以后的命令行版和 Android（OTG）版复用它。
+结构见 [docs/architecture.md](docs/architecture.md)。核心在 `crates/pair-core`，不依赖 Tauri，桌面版和 Android 版共用。
 
 ## 许可证
 
-Apache-2.0，见 [LICENSE](LICENSE)。第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。底层用的是 [idevice](https://github.com/jkcoxson/idevice)（MIT）。界面参照 [miuix](https://github.com/compose-miuix-ui/miuix)（Apache-2.0）的设计取值用 CSS 重做，不含小米的字体、图标或标志。与 Apple、小米无关。
+Apache-2.0，见 [LICENSE](LICENSE)。第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。底层用的是 [idevice](https://github.com/jkcoxson/idevice)（MIT）。Android 版的内置 usbmuxd（`crates/usbmux`）和 USB 主机代码来自 [iloader](https://github.com/nab138/iloader) 的 Android 移植（MIT）。桌面界面参照 [miuix](https://github.com/compose-miuix-ui/miuix)（Apache-2.0）的设计取值用 CSS 重做，Android 版直接使用 miuix；不含小米的字体、图标或标志。与 Apple、小米无关。
 
 ---
 
 ## English
 
-LoopCtrl Pair is the one-time USB pairing tool for LoopCtrl on iPhones below iOS 27, which cannot start pairing by themselves. Plug the iPhone into a Windows or macOS computer once: the tool pairs (Trust), checks and guides Developer Mode, creates the pairing record (RemotePairing + lockdown on iOS 17.4+, lockdown only on iOS 16 and 17.0–17.3), writes it into LoopCtrl (`Documents/.pairing-dropbox/pairingFile.plist`, see [docs/handoff.md](docs/handoff.md)) and verifies it. Batch mode pairs several iPhones on a powered hub in parallel.
+LoopCtrl Pair is the one-time USB pairing tool for LoopCtrl on iPhones below iOS 27, which cannot start pairing by themselves. Plug the iPhone into a Windows or macOS computer, or an Android phone with USB OTG (see [android/README.md](android/README.md)), once: the tool pairs (Trust), checks and guides Developer Mode, creates the pairing record (RemotePairing + lockdown on iOS 17.4+, lockdown only on iOS 16 and 17.0–17.3), writes it into LoopCtrl (`Documents/.pairing-dropbox/pairingFile.plist`, see [docs/handoff.md](docs/handoff.md)) and verifies it. Batch mode pairs several iPhones on a powered hub in parallel.
 
 Development: `bun install`, then `bun tauri dev`. Set `LOOPCTRL_PAIR_MOCK=1` to run the whole flow against simulated iPhones. Tests: `cargo test --workspace`. License checks: `cargo deny check licenses bans sources` and `bun run licenses:check`. Release: `bun tauri build`. Architecture: [docs/architecture.md](docs/architecture.md).
 
-Apache-2.0. Built on [idevice](https://github.com/jkcoxson/idevice) (MIT). The UI recreates the miuix design language in CSS; no Xiaomi fonts or logos are included. Not affiliated with Apple or Xiaomi.
+Apache-2.0. Built on [idevice](https://github.com/jkcoxson/idevice) (MIT). The Android app's built-in usbmuxd (`crates/usbmux`) and USB host code come from [iloader](https://github.com/nab138/iloader)'s Android port (MIT). The desktop UI recreates the miuix design language in CSS; the Android app uses miuix itself. No Xiaomi fonts or logos are included. Not affiliated with Apple or Xiaomi.

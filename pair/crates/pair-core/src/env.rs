@@ -3,6 +3,7 @@
 //! * Windows: Apple Mobile Device Service on 127.0.0.1:27015, installed with
 //!   Apple Devices (Microsoft Store) or iTunes. We cannot ship Apple's driver.
 //! * macOS: the system usbmuxd at /var/run/usbmuxd, always there.
+//! * Android: the app's built-in usbmuxd (crates/usbmux) on a private socket.
 //! * Linux: the `usbmuxd` package (unsupported, but works).
 //!
 //! `USBMUXD_SOCKET_ADDRESS` overrides the address (idevice convention).
@@ -23,6 +24,8 @@ pub fn host_os() -> EnvReport {
         "windows"
     } else if cfg!(target_os = "macos") {
         "macos"
+    } else if cfg!(target_os = "android") {
+        "android"
     } else {
         "linux"
     };
@@ -45,8 +48,12 @@ fn describe(addr: &UsbmuxdAddr) -> String {
 
 /// Connects to usbmuxd and lists devices once.
 pub async fn check_usbmux() -> EnvReport {
+    check_usbmux_at(UsbmuxdAddr::from_env_var().unwrap_or_default()).await
+}
+
+/// Same, for a usbmuxd at `addr`.
+pub async fn check_usbmux_at(addr: UsbmuxdAddr) -> EnvReport {
     let mut r = host_os();
-    let addr = UsbmuxdAddr::from_env_var().unwrap_or_default();
     r.usbmux_addr = describe(&addr);
     let probe = async {
         let mut c = addr.connect(0).await?;

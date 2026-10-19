@@ -1,5 +1,5 @@
 //! The real backend: idevice over usbmuxd (macOS system daemon, Windows Apple
-//! Mobile Device Service).
+//! Mobile Device Service, the app's built-in one on Android).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -46,7 +46,12 @@ impl Default for RealBackend {
 
 impl RealBackend {
     pub fn new() -> Self {
-        Self { addr: UsbmuxdAddr::from_env_var().unwrap_or_default(), allow_network: false }
+        Self::at(UsbmuxdAddr::from_env_var().unwrap_or_default())
+    }
+
+    /// usbmuxd at `addr` (Android: the built-in one's private socket).
+    pub fn at(addr: UsbmuxdAddr) -> Self {
+        Self { addr, allow_network: false }
     }
 
     /// Testing only: also take Wi-Fi devices that usbmuxd already has a pair
@@ -75,7 +80,7 @@ impl Backend for RealBackend {
     type Conn = RealConn;
 
     async fn env_check(&self) -> EnvReport {
-        crate::env::check_usbmux().await
+        crate::env::check_usbmux_at(self.addr.clone()).await
     }
 
     async fn watch(&self, tx: UnboundedSender<WatchEvent>) -> Result<(), PairError> {

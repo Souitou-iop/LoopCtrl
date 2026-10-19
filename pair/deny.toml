@@ -1,11 +1,14 @@
 # cargo deny check — licenses, bans, sources. Run: cargo deny check
 [graph]
-# What we ship: macOS (Intel, Apple Silicon) and Windows.
+# What we ship: macOS (Intel, Apple Silicon), Windows and Android.
 targets = [
   "aarch64-apple-darwin",
   "x86_64-apple-darwin",
   "x86_64-pc-windows-msvc",
   "aarch64-pc-windows-msvc",
+  "aarch64-linux-android",
+  "armv7-linux-androideabi",
+  "x86_64-linux-android",
 ]
 all-features = false
 
@@ -28,8 +31,16 @@ allow = [
 ]
 confidence-threshold = 0.9
 # MPL-2.0 is file-level copyleft: fine for unmodified dependencies in a
-# commercial app, but only for these, which come with Tauri itself.
+# commercial app, but only for these: the first five come with Tauri, the
+# uniffi runtime with the Android bridge (android/bridge). uniffi's binding
+# generator (feature "cli") is a build tool and is not shipped.
 exceptions = [
+  { allow = ["MPL-2.0"], crate = "uniffi" },
+  { allow = ["MPL-2.0"], crate = "uniffi_core" },
+  { allow = ["MPL-2.0"], crate = "uniffi_internal_macros" },
+  { allow = ["MPL-2.0"], crate = "uniffi_macros" },
+  { allow = ["MPL-2.0"], crate = "uniffi_meta" },
+  { allow = ["MPL-2.0"], crate = "uniffi_pipeline" },
   { allow = ["MPL-2.0"], crate = "cssparser" },
   { allow = ["MPL-2.0"], crate = "cssparser-macros" },
   { allow = ["MPL-2.0"], crate = "dtoa-short" },

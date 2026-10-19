@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pair-core", "src-tauri"]
+members = ["crates/pair-core", "crates/usbmux", "src-tauri", "android/bridge"]
 
 [workspace.package]
 version = "0.1.0"

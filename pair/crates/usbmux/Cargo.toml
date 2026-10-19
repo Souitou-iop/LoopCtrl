@@ -1,0 +1,28 @@
+[package]
+name = "usbmux"
+description = "Built-in usbmuxd for Android: the host side of the iPhone USB mux protocol over usbfs, served on a private unix socket"
+version = "0.1.0"
+edition = "2024"
+# Taken from iloader's Android port (https://github.com/nab138/iloader), MIT.
+license = "MIT"
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+idevice = { version = "=0.1.68", default-features = false, features = ["ring", "usbmuxd", "pair"] }
+tokio = { version = "1", features = ["rt", "sync", "time", "net", "io-util", "macros"] }
+tracing = "0.1"
+thiserror = "2"
+plist.workspace = true
+serde.workspace = true
+uuid = { version = "1", features = ["v4"] }
+futures = "0.3"
+
+[target.'cfg(any(target_os = "android", target_os = "linux"))'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "net", "io-util", "macros", "test-util"] }
+
+[dev-dependencies.serde_json]
+workspace = true

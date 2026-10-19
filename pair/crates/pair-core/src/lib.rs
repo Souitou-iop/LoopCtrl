@@ -17,6 +17,8 @@ pub mod version;
 
 pub use backend::mock::{MockBackend, PhoneAction, Scenario};
 pub use backend::real::RealBackend;
+/// usbmuxd address type, for [`RealBackend::at`].
+pub use idevice::usbmuxd::UsbmuxdAddr;
 pub use machine::{Phase, Step};
 pub use model::*;
 pub use session::{Config, DeviceView, Event, ManagerHandle};

@@ -11,7 +11,7 @@ ui/ (Svelte 5 + Vite)  ──invoke / "pair-event"──▶  src-tauri/ (Tauri 2
                                                                            mock.rs  (fake phones)
 ```
 
-**pair-core** is the reusable part (desktop now; CLI and Android OTG later). It has no Tauri dependency.
+**pair-core** is the reusable part, shared by the desktop app and the Android app. It has no Tauri dependency.
 
 - `machine.rs`: one pure state machine per phone. Inputs are operation results, usbmuxd attach/detach and user commands; outputs are the next action. Phases: `detected → trusting → checkingDevMode → [revealingDevMode → devModeGuide → rebooting → confirmingDevMode] → generating → findingApp → writing → verifying → done`, or `failed` with the step it failed at, which is where Retry resumes. Replugging a failed phone retries it.
 - `session.rs`: the manager. One thread with a single-threaded tokio runtime; a usbmuxd watcher (reconnects every 2 s) and one worker task per phone, so batch mode is just several workers. A worker runs the action the machine asks for, cancels it when the phone is unplugged or a command arrives, and emits a `DeviceView` after every step.
@@ -22,6 +22,17 @@ ui/ (Svelte 5 + Vite)  ──invoke / "pair-event"──▶  src-tauri/ (Tauri 2
 **src-tauri** holds the manager, forwards events, and exposes commands (`device_command`, `set_auto_begin`, mock controls, `check_update`). Mock mode: `LOOPCTRL_PAIR_MOCK=1`, or Settings › 开发者选项 (shown in debug builds, or with `LOOPCTRL_PAIR_DEV=1`).
 
 **ui** keeps only what pair-core does not know: the page, which phone single mode is following, the phones paired this session, theme and language. Screens map 1:1 to the approved miuix demo.
+
+## Android
+
+```
+android/app (Compose + miuix) ──UniFFI──▶ android/bridge (PairBridge)
+   UsbHost.kt: UsbManager, permission,          ├─ crates/usbmux: built-in usbmuxd (usbfs bulk
+   configuration, claim, fd ───────────────────▶│   transfers, mux protocol, private unix socket)
+                                                 └─ pair-core ManagerHandle + RealBackend::at(socket)
+```
+
+Android has no usbmuxd, so the bridge runs one in-process (`crates/usbmux`, from iloader's Android port, MIT) and points `RealBackend` at its socket; pair-core works unchanged. The muxer keeps lockdown records and its SystemBUID in `files/lockdown/`, pair-core its cache in `files/pair/`. Views and events cross the bridge as pair-core's JSON. The muxer's own auto-pairing (`usbmux::pairing`) is not used: pair-core does Trust itself. Details: android/README.md.
 
 ## Updates
 

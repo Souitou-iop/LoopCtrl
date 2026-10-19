@@ -102,7 +102,7 @@ pub enum TrustOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvReport {
-    /// "windows", "macos" or "linux".
+    /// "windows", "macos", "android" or "linux".
     pub os: String,
     pub os_version: String,
     /// usbmuxd (macOS/Linux) or Apple Mobile Device Service (Windows) answers.
