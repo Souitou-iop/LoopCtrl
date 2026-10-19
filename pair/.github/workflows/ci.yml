@@ -21,10 +21,11 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   # What Tauri needs on Debian/Ubuntu to build (the .deb then depends on the
-  # runtime parts); libfuse2 and xdg-utils are for the AppImage tooling.
+  # runtime parts). Linux ships as .deb and CLI only: no AppImage, which would
+  # bundle GTK/WebKitGTK (LGPL).
   LINUX_DEPS: >-
     libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev
-    libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2 xdg-utils
+    libayatana-appindicator3-dev librsvg2-dev
 
 jobs:
   check:
@@ -91,10 +92,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - name: Desktop app (.deb, AppImage)
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: bun tauri build --bundles deb,appimage
+      - name: Desktop app (.deb)
+        run: bun tauri build --bundles deb
       - name: CLI
         run: cargo build --release --locked -p loopctrl-pair-cli
       - name: Collect
@@ -102,7 +101,6 @@ jobs:
           V=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name=="pair-core") | .version')
           mkdir -p out cli/loopctrl-pair-$V-linux-${{ matrix.arch }}
           cp target/release/bundle/deb/*.deb out/LoopCtrl-Pair-$V-linux-${{ matrix.deb }}.deb
-          cp target/release/bundle/appimage/*.AppImage out/LoopCtrl-Pair-$V-linux-${{ matrix.arch }}.AppImage
           d=cli/loopctrl-pair-$V-linux-${{ matrix.arch }}
           cp target/release/loopctrl-pair packaging/linux/70-loopctrl-pair.rules LICENSE THIRD_PARTY_NOTICES.md $d/
           tar -C cli -czf out/loopctrl-pair-cli-$V-linux-${{ matrix.arch }}.tar.gz $(basename $d)
@@ -225,12 +223,8 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-          # AppImages bundle GTK/WebKitGTK (LGPL); attached only once the
-          # owner allows it (repository variable RELEASE_APPIMAGE=true).
-          RELEASE_APPIMAGE: ${{ vars.RELEASE_APPIMAGE }}
         run: |
           cd dist
-          if [ "$RELEASE_APPIMAGE" != "true" ]; then rm -f *.AppImage; fi
           sha256sum * > SHA256SUMS.txt
           ls -l
           tag="$GITHUB_REF_NAME"

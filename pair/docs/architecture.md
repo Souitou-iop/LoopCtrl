@@ -43,7 +43,7 @@ pair-core RealBackend ──usbmuxd protocol──▶ either     ├─ /var/run
 - Permissions: `packaging/linux/70-loopctrl-pair.rules` (uaccess + plugdev). EACCES → `UsbState::PermissionDenied` → `usbAccess: false` → the UI's "no permission" dialog, which can install the rule through pkexec.
 - Conflict: an interface already bound to `usbfs` (another program, normally usbmuxd) is never taken; it is reported as `Busy` → `conflict: "systemTookDevice"` when the system socket answers. In auto mode the app switches to the system usbmuxd on the next environment check.
 - Pair records of the built-in usbmuxd live in `<data dir>/lockdown/`; the system usbmuxd keeps its own in `/var/lib/lockdown`.
-- Bundles: `.deb` (installs the udev rule, postinst reloads udev) and AppImage, x86_64 and aarch64, built by CI. The CLI is a separate tarball.
+- Bundles: `.deb` (installs the udev rule, postinst reloads udev), x86_64 and aarch64, built by CI, plus the CLI tarball. No AppImage: it would bundle GTK/WebKitGTK (LGPL); the .deb uses the distribution's copies.
 
 ## Transports and external helpers
 
@@ -70,7 +70,7 @@ Android has no usbmuxd, so the bridge runs one in-process (`crates/usbmux`, from
 
 ## CI and releases
 
-`.github/workflows/ci.yml`: on pushes and PRs, a Linux check job (fmt, clippy `-D warnings`, tests, the CLI against the mock backend and the built-in usbmuxd, cargo-deny, the JS license check, notices up to date), then bundles for Linux x86_64 and aarch64 (native arm runner), macOS universal, Windows x64 (NSIS) and Android (debug APK). A `v*` tag adds a release job that attaches everything with SHA256SUMS (pre-release when the tag has a `-`; notes from `docs/release-notes/<tag>.md` if present). AppImages bundle GTK/WebKitGTK (LGPL), so they are attached only when the repository variable `RELEASE_APPIMAGE` is `true`.
+`.github/workflows/ci.yml`: on pushes and PRs, a Linux check job (fmt, clippy `-D warnings`, tests, the CLI against the mock backend and the built-in usbmuxd, cargo-deny, the JS license check, notices up to date), then bundles for Linux x86_64 and aarch64 (native arm runner), macOS universal, Windows x64 (NSIS) and Android (debug APK). A `v*` tag adds a release job that attaches everything with SHA256SUMS (pre-release when the tag has a `-`; notes from `docs/release-notes/<tag>.md` if present).
 
 ## Licenses
 

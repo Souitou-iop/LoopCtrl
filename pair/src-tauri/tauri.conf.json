@@ -66,9 +66,6 @@
         },
         "postInstallScript": "../packaging/linux/postinst.sh",
         "postRemoveScript": "../packaging/linux/postrm.sh"
-      },
-      "appimage": {
-        "bundleMediaFramework": false
       }
     },
     "longDescription": "One-time USB pairing for LoopCtrl: makes the pairing file LoopCtrl needs on iOS 16 and later and writes it into the app."

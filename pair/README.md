@@ -26,7 +26,7 @@ Linux 上有两种方式连接 iPhone，助手自动选择（`LOOPCTRL_PAIR_MUX=
 | **系统 usbmuxd** | 装了 `usbmuxd` 包（正在运行，或插上 iPhone 时由 udev 启动）就优先用它 | 自己用包管理器安装，例如 `sudo apt install usbmuxd`。助手不附带它（GPL） |
 | **内置 usbmuxd** | 没装系统 usbmuxd 时 | 直接通过 usbfs 访问 `/dev/bus/usb`，需要安装 udev 规则 |
 
-udev 规则（`packaging/linux/70-loopctrl-pair.rules`，Apple 厂商号 05ac、usbmux 设备）让当前登录用户（`uaccess`）和 `plugdev` 组可以读写 iPhone。`.deb` 安装时会自动装好；用 AppImage 或命令行时，在助手的环境检查里点「安装」（通过 pkexec 要系统密码），或者手动安装：
+udev 规则（`packaging/linux/70-loopctrl-pair.rules`，Apple 厂商号 05ac、usbmux 设备）让当前登录用户（`uaccess`）和 `plugdev` 组可以读写 iPhone。`.deb` 安装时会自动装好；只用命令行时，在助手的环境检查里点「安装」（通过 pkexec 要系统密码），或者手动安装：
 
 ```bash
 loopctrl-pair udev-rule | sudo tee /etc/udev/rules.d/70-loopctrl-pair.rules
@@ -38,7 +38,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 装好后拔掉 iPhone 再插上。没有权限时，环境检查会显示「USB 访问：被拒绝」并弹出说明；系统 usbmuxd 抢占了 iPhone 时会提示冲突，点「重新检测」就改用系统 usbmuxd。
 
-桌面版需要 WebKitGTK 4.1（`.deb` 会自动安装依赖）。安装包：
+Linux 用 `.deb`（桌面版，Debian / Ubuntu 22.04+ 等）或命令行压缩包安装，不提供 AppImage（它会把 LGPL 的 GTK / WebKitGTK 打包进去）。桌面版需要 WebKitGTK 4.1，`.deb` 会自动安装依赖：
 
 ```bash
 sudo apt install ./LoopCtrl-Pair-0.1.1-linux-amd64.deb
@@ -129,7 +129,7 @@ Apache-2.0，见 [LICENSE](LICENSE)。第三方组件见 [THIRD_PARTY_NOTICES.md
 
 LoopCtrl Pair is the one-time USB pairing tool for LoopCtrl on iPhones below iOS 27, which cannot start pairing by themselves. Plug the iPhone into a Windows, macOS or Linux computer, or an Android phone with USB OTG (see [android/README.md](android/README.md)), once: the tool pairs (Trust), checks and guides Developer Mode, creates the pairing record (RemotePairing + lockdown on iOS 17.4+, lockdown only on iOS 16 and 17.0–17.3), writes it into LoopCtrl (`Documents/.pairing-dropbox/pairingFile.plist`, see [docs/handoff.md](docs/handoff.md)) and verifies it. Batch mode pairs several iPhones on a powered hub in parallel.
 
-**Linux.** The app uses the system usbmuxd when it runs or is installed (`sudo apt install usbmuxd`; it is GPL and never bundled), and otherwise its own built-in usbmuxd over usbfs, which needs the udev rule `packaging/linux/70-loopctrl-pair.rules` (Apple VID 05ac; `uaccess` for the desktop user, `plugdev` for headless use). The .deb installs it; otherwise click Install in the environment check (pkexec) or run `loopctrl-pair udev-rule | sudo tee /etc/udev/rules.d/70-loopctrl-pair.rules` and `sudo udevadm control --reload-rules && sudo udevadm trigger`, then replug. Denied USB access and a usbmuxd that holds the iPhone are explained on screen. Force a mode with `LOOPCTRL_PAIR_MUX=system|builtin`.
+**Linux.** The app uses the system usbmuxd when it runs or is installed (`sudo apt install usbmuxd`; it is GPL and never bundled), and otherwise its own built-in usbmuxd over usbfs, which needs the udev rule `packaging/linux/70-loopctrl-pair.rules` (Apple VID 05ac; `uaccess` for the desktop user, `plugdev` for headless use). Linux ships as a .deb (desktop app) or the CLI tarball; there is no AppImage, which would bundle LGPL GTK/WebKitGTK. The .deb installs the rule; otherwise click Install in the environment check (pkexec) or run `loopctrl-pair udev-rule | sudo tee /etc/udev/rules.d/70-loopctrl-pair.rules` and `sudo udevadm control --reload-rules && sudo udevadm trigger`, then replug. Denied USB access and a usbmuxd that holds the iPhone are explained on screen. Force a mode with `LOOPCTRL_PAIR_MUX=system|builtin`.
 
 **CLI.** `loopctrl-pair devices | pair [--all] | write | verify | env | udev-rule`, with `--json`, `--udid`, `--file`, `--out`, `--mock`, `--mux`, `--bridge-listen`. Exit codes: 0 ok, 1 failed, 2 usage, 3 no usbmuxd / USB access, 4 timed out. Same data folder as the desktop app. For kiosks and Raspberry Pi; external USB helpers such as an ESP32-S3: [docs/hardware-helpers.md](docs/hardware-helpers.md) (design; host side implemented).
 
