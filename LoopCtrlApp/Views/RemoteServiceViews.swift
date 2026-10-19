@@ -408,6 +408,8 @@ struct InviteConfirmView: View {
     @Environment(\.dismiss) private var dismiss
     let invite: RemoteInvite
     let onFinished: () -> Void
+    /// Lets the floating glass buttons morph into each other (iOS 26).
+    @Namespace private var glassNamespace
 
     private enum Stage: Equatable {
         case loading
@@ -421,6 +423,7 @@ struct InviteConfirmView: View {
     @State private var stage = Stage.loading
 
     var body: some View {
+        ScrollViewReader { proxy in
         List {
             serverSection
             switch stage {
@@ -449,10 +452,24 @@ struct InviteConfirmView: View {
                 progressSection(nil)
             }
         }
+        // 连接 adds the steps below the fold: bring the last one into view
+        // (a Section id only scrolls to the section's top).
+        // After the section has been laid out (scrolling while it is still
+        // being inserted stops short), and again once connected.
+        .onChange(of: progressScrollKey) { key in
+            guard key > 0 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                withAnimation(Self.stageAnimation) { proxy.scrollTo(EnrollmentStep.preApprove, anchor: .center) }
+            }
+        }
+        }
         .listStyle(.insetGrouped)
         .navigationTitle(L10n.rs(.confirmTitle))
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) { buttons }
+        // The buttons float as glass over the list; iOS 26's bottom scroll
+        // edge effect would lay an opaque band behind them instead.
+        .bottomScrollEdgeEffectHidden()
         // The enrolment steps advance in the store, outside setStage.
         .animation(Self.stageAnimation, value: store.machines)
         .task { if stage == .loading { await load() } }
@@ -590,6 +607,15 @@ struct InviteConfirmView: View {
         }
     }
 
+    /// 0 before 连接, 1 while connecting, 2 when connected.
+    private var progressScrollKey: Int {
+        switch stage {
+        case .enrolling: return 1
+        case .done: return 2
+        default: return 0
+        }
+    }
+
     private enum StepState { case waiting, running, done, failed }
 
     private func stepState(_ step: EnrollmentStep, _ phase: RemoteConnectionMachine.Phase?) -> StepState {
@@ -693,14 +719,18 @@ struct InviteConfirmView: View {
             HStack(spacing: 10) {
                 Spacer(minLength: 0)
                 if showsCancel {
-                    Button(role: .cancel) { onFinished() } label: {
+                    FloatingCapsuleButton(prominent: false, tint: .primary, glassID: "cancel",
+                                          namespace: glassNamespace, role: .cancel) {
+                        onFinished()
+                    } label: {
                         Text(L10n.rs(.cancel))
                     }
-                    .floatingAction(prominent: false, tint: .primary)
-                    .transition(.scale(scale: 0.5, anchor: .trailing).combined(with: .opacity))
                 }
                 if let primary {
-                    Button { primaryTapped() } label: {
+                    FloatingCapsuleButton(prominent: true, tint: primary.tint, glassID: "primary",
+                                          namespace: glassNamespace) {
+                        primaryTapped()
+                    } label: {
                         HStack(spacing: 8) {
                             if primary.kind == .connecting {
                                 ProgressView()
@@ -719,10 +749,8 @@ struct InviteConfirmView: View {
                         .fontWeight(.semibold)
                         .clipped()
                     }
-                    .floatingAction(prominent: true, tint: primary.tint)
                     // Not .disabled while connecting: that would grey it out.
                     .allowsHitTesting(primary.kind != .connecting)
-                    .transition(.scale(scale: 0.5, anchor: .trailing).combined(with: .opacity))
                 }
             }
         }

@@ -106,3 +106,53 @@ struct FloatingGlassGroup<Content: View>: View {
         }
     }
 }
+
+/// A compact capsule button floating over content. On iOS 26 it is Liquid
+/// Glass drawn with `glassEffect` itself (not a glass button style), so it can
+/// carry a `glassEffectID`: inside a `FloatingGlassGroup`, a button that
+/// appears or goes away melts into its neighbour instead of popping, and a
+/// change of width or tint animates on the glass. Ordinary transitions can't
+/// do that — glass is rendered apart from the view's opacity and scale, so it
+/// would sit unchanged through the animation and vanish on the last frame.
+/// Before iOS 26 it is a material/bordered capsule with a scale-and-fade.
+struct FloatingCapsuleButton<Label: View>: View {
+    let prominent: Bool
+    let tint: Color
+    let glassID: String
+    let namespace: Namespace.ID
+    var role: ButtonRole? = nil
+    let action: () -> Void
+    @ViewBuilder let label: Label
+
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            Button(role: role, action: action) {
+                label
+                    .font(.body)
+                    .foregroundStyle(prominent ? Color.white : Color.primary)
+                    .padding(.horizontal, 20)
+                    .frame(minHeight: 50)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .glassEffect(prominent ? .regular.tint(tint).interactive() : .regular.interactive(), in: .capsule)
+            .glassEffectID(glassID, in: namespace)
+            .glassEffectTransition(.matchedGeometry)
+        } else {
+            Button(role: role, action: action) { label }
+                .floatingAction(prominent: prominent, tint: tint)
+                .transition(.scale(scale: 0.5, anchor: .trailing).combined(with: .opacity))
+        }
+    }
+}
+
+extension View {
+    /// Hide iOS 26's bottom scroll edge effect (no-op before iOS 26).
+    @ViewBuilder func bottomScrollEdgeEffectHidden() -> some View {
+        if #available(iOS 26.0, *) {
+            self.scrollEdgeEffectHidden(true, for: .bottom)
+        } else {
+            self
+        }
+    }
+}
