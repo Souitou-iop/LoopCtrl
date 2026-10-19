@@ -287,7 +287,8 @@ help:
 	@echo "  make build   Build both apps with Xcode signing"
 	@echo "  make ipa     Build + package both IPAs"
 	@echo "  make ipa UNSIGNED=1   Same, ad-hoc signed (no team/device needed)"
-	@echo "  Scripts/package-release.sh   Strip profiles/team ids into release/"
+	@echo "  make ipa-allinone   Build + package the all-in-one IPA (what releases ship)"
+	@echo "  Scripts/package-release.sh [--two-app]   Strip profiles/team ids into release/"
 	@echo "  make clean   Remove build artifacts"
 
 # The idevice xcframework is built from source with Patches/idevice applied
