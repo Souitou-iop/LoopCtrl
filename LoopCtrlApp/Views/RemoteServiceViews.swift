@@ -453,16 +453,18 @@ struct InviteConfirmView: View {
         .navigationTitle(L10n.rs(.confirmTitle))
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) { buttons }
+        // The enrolment steps advance in the store, outside setStage.
+        .animation(Self.stageAnimation, value: store.machines)
         .task { if stage == .loading { await load() } }
     }
 
     private func load() async {
-        stage = .loading
+        setStage(.loading)
         do {
             let (info, check) = try await store.preview(invite)
-            stage = .ready(info, check)
+            setStage(.ready(info, check))
         } catch {
-            stage = .failed(error as? RemoteServiceError ?? .serverUnreachable)
+            setStage(.failed(error as? RemoteServiceError ?? .serverUnreachable))
         }
     }
 
@@ -504,7 +506,12 @@ struct InviteConfirmView: View {
 
     private var codeLine: String {
         var at = invite.expiresAt
-        if case .ready(let info, _) = stage { at = info.codeExpiresAt ?? at }
+        switch stage {
+        case .ready(let info, _), .enrolling(_, let info, _), .enrollFailed(_, let info, _), .done(let info, _):
+            at = info.codeExpiresAt ?? at
+        case .loading, .failed:
+            break
+        }
         guard let at else { return invite.displayCode }
         let f = RelativeDateTimeFormatter()
         f.locale = RemoteServiceText.locale
@@ -622,6 +629,8 @@ struct InviteConfirmView: View {
                     case .failed: Image(systemName: "xmark.circle.fill").foregroundColor(.red)
                     }
                 }
+                .id(state)
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
                 .frame(width: 22)
                 Text(title).foregroundColor(state == .waiting ? .secondary : .primary)
             }
@@ -630,44 +639,109 @@ struct InviteConfirmView: View {
 
     // MARK: Buttons
 
-    /// Floating, right-aligned capsules over the list (Liquid Glass on iOS 26),
-    /// so the details keep the screen: 取消 then the one action.
-    @ViewBuilder private var buttons: some View {
-        HStack(spacing: 10) {
-            Spacer(minLength: 0)
-            switch stage {
-            case .ready(_, let check), .enrollFailed(_, _, let check):
-                cancelButton
-                if case .mismatch = check {} else {
-                    Button { Task { await enroll(check) } } label: {
-                        Label(L10n.rs(.connect), systemImage: "link").fontWeight(.semibold)
+    static let stageAnimation = Animation.spring(response: 0.42, dampingFraction: 0.82)
+
+    /// Every stage change animates: sections slide in, the buttons morph.
+    private func setStage(_ next: Stage) {
+        if case .done = next {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } else if case .enrollFailed = next {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+        }
+        withAnimation(Self.stageAnimation) { stage = next }
+    }
+
+    /// What the one prominent button says now. It stays the same view
+    /// through 连接 → 正在连接 → 已连接, so it resizes and recolours smoothly
+    /// instead of being swapped for another button.
+    private struct Primary: Equatable {
+        enum Kind: Equatable { case connect, connecting, done }
+        let kind: Kind
+        var title: String {
+            switch kind {
+            case .connect: return L10n.rs(.connect)
+            case .connecting: return L10n.rs(.connecting)
+            case .done: return L10n.rs(.connectedDone)
+            }
+        }
+        var symbol: String { kind == .done ? "checkmark" : "link" }
+        var tint: Color { kind == .done ? .green : .accentColor }
+    }
+
+    private var primary: Primary? {
+        switch stage {
+        case .ready(_, let check), .enrollFailed(_, _, let check):
+            if case .mismatch = check { return nil }
+            return Primary(kind: .connect)
+        case .enrolling: return Primary(kind: .connecting)
+        case .done: return Primary(kind: .done)
+        case .loading, .failed: return nil
+        }
+    }
+
+    private var showsCancel: Bool {
+        switch stage {
+        case .enrolling, .done: return false
+        default: return true
+        }
+    }
+
+    /// Floating, right-aligned capsules over the list (Liquid Glass on iOS 26,
+    /// where neighbouring glass shapes also merge and split as they change).
+    private var buttons: some View {
+        FloatingGlassGroup {
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                if showsCancel {
+                    Button(role: .cancel) { onFinished() } label: {
+                        Text(L10n.rs(.cancel))
                     }
-                    .floatingAction(prominent: true, tint: .accentColor)
+                    .floatingAction(prominent: false, tint: .primary)
+                    .transition(.scale(scale: 0.5, anchor: .trailing).combined(with: .opacity))
                 }
-            case .enrolling:
-                Button {} label: {
-                    HStack(spacing: 8) { ProgressView(); Text(L10n.rs(.connecting)) }
+                if let primary {
+                    Button { primaryTapped() } label: {
+                        HStack(spacing: 8) {
+                            if primary.kind == .connecting {
+                                ProgressView()
+                                    .tint(.white)
+                                    .transition(.scale(scale: 0.3).combined(with: .opacity))
+                            } else {
+                                Image(systemName: primary.symbol)
+                                    .id(primary.symbol)
+                                    .transition(.scale(scale: 0.3).combined(with: .opacity))
+                            }
+                            Text(primary.title)
+                                .id(primary.title)
+                                .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                                        removal: .move(edge: .top).combined(with: .opacity)))
+                        }
+                        .fontWeight(.semibold)
+                        .clipped()
+                    }
+                    .floatingAction(prominent: true, tint: primary.tint)
+                    // Not .disabled while connecting: that would grey it out.
+                    .allowsHitTesting(primary.kind != .connecting)
+                    .transition(.scale(scale: 0.5, anchor: .trailing).combined(with: .opacity))
                 }
-                .floatingAction(prominent: true, tint: .accentColor)
-                .disabled(true)
-            case .done:
-                Button { onFinished() } label: {
-                    Label(L10n.rs(.connectedDone), systemImage: "checkmark").fontWeight(.semibold)
-                }
-                .floatingAction(prominent: true, tint: .green)
-            case .loading, .failed:
-                cancelButton
             }
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 8)
+        .animation(Self.stageAnimation, value: primary)
+        .animation(Self.stageAnimation, value: showsCancel)
     }
 
-    private var cancelButton: some View {
-        Button(role: .cancel) { onFinished() } label: {
-            Text(L10n.rs(.cancel))
+    private func primaryTapped() {
+        switch stage {
+        case .ready(_, let check), .enrollFailed(_, _, let check):
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            Task { await enroll(check) }
+        case .done:
+            onFinished()
+        default:
+            break
         }
-        .floatingAction(prominent: false, tint: .primary)
     }
 
     private func enroll(_ check: OperatorCheck) async {
@@ -678,14 +752,14 @@ struct InviteConfirmView: View {
     }
 
     private func run(_ info: RemoteServerInfo, _ check: OperatorCheck) async {
-        stage = .enrolling(nil, info, check)
+        setStage(.enrolling(nil, info, check))
         // Poll the store for the new connection's id so the steps can follow it.
         let before = Set(store.machines.keys)
         let watcher = Task { @MainActor in
             while !Task.isCancelled {
                 if let id = store.machines.keys.first(where: { !before.contains($0) }),
                    case .enrolling(nil, _, _) = stage {
-                    stage = .enrolling(id, info, check)
+                    setStage(.enrolling(id, info, check))
                 }
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
@@ -693,11 +767,11 @@ struct InviteConfirmView: View {
         defer { watcher.cancel() }
         do {
             let id = try await store.enroll(invite, check: check, admin: admin)
-            stage = .enrolling(id, info, check)
+            setStage(.enrolling(id, info, check))
             try? await Task.sleep(nanoseconds: 300_000_000)
-            stage = .done(info, check)
+            setStage(.done(info, check))
         } catch {
-            stage = .enrollFailed(error as? RemoteServiceError ?? .serverUnreachable, info, check)
+            setStage(.enrollFailed(error as? RemoteServiceError ?? .serverUnreachable, info, check))
         }
     }
 }

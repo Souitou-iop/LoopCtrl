@@ -91,3 +91,18 @@ struct AppIconImage: View {
         }
     }
 }
+
+/// Groups floating glass buttons so that, on iOS 26, their shapes blend and
+/// morph into each other as buttons appear, disappear or resize. Before
+/// iOS 26 it is a plain container.
+struct FloatingGlassGroup<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: 12) { content }
+        } else {
+            content
+        }
+    }
+}
