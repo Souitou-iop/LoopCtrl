@@ -63,11 +63,16 @@ jobs:
       - name: Licenses (cargo-deny)
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
+          # Not the action's default --all-features: the Android bridge's
+          # "cli" feature is a build tool (uniffi-bindgen) that never ships;
+          # deny.toml sets all-features = false.
+          arguments: --workspace
           command: check licenses bans sources
       - name: Advisories (informational)
         uses: EmbarkStudios/cargo-deny-action@v2
         continue-on-error: true
         with:
+          arguments: --workspace
           command: check advisories
       - name: Licenses (JS)
         run: bun run licenses:check
