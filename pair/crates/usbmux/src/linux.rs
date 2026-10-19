@@ -698,6 +698,8 @@ mod tests {
         fake_sysfs(&tmp, "3-1", "05ac", "12a8");
         fake_sysfs(&tmp, "3-2", "046d", "c52b"); // a mouse
         fake_sysfs(&tmp, "3-3", "05ac", "8600"); // an Apple keyboard hub
+        // An interface entry, skipped by the scan (no colons in names on Windows).
+        #[cfg(unix)]
         std::fs::create_dir_all(tmp.join("3-1:4.1")).unwrap();
         let found = scan(&tmp);
         assert_eq!(found.len(), 1);
