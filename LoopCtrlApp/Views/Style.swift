@@ -15,6 +15,25 @@ extension View {
         }
     }
 
+    /// A compact capsule that floats over scrolling content: Liquid Glass on
+    /// iOS 26, a material capsule before that.
+    @ViewBuilder func floatingAction(prominent: Bool, tint: Color) -> some View {
+        if #available(iOS 26.0, *) {
+            if prominent {
+                self.buttonStyle(.glassProminent).tint(tint).controlSize(.large)
+            } else {
+                self.buttonStyle(.glass).tint(tint).controlSize(.large)
+            }
+        } else if prominent {
+            self.buttonStyle(.borderedProminent).buttonBorderShape(.capsule).tint(tint).controlSize(.large)
+                .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+        } else {
+            self.buttonStyle(.bordered).buttonBorderShape(.capsule).tint(tint).controlSize(.large)
+                .background(.regularMaterial, in: Capsule())
+                .shadow(color: .black.opacity(0.1), radius: 8, y: 3)
+        }
+    }
+
     /// The one prominent action on a screen.
     @ViewBuilder func primaryAction(_ tint: Color) -> some View {
         if #available(iOS 26.0, *) {

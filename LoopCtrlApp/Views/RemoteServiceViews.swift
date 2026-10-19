@@ -630,47 +630,44 @@ struct InviteConfirmView: View {
 
     // MARK: Buttons
 
+    /// Floating, right-aligned capsules over the list (Liquid Glass on iOS 26),
+    /// so the details keep the screen: 取消 then the one action.
     @ViewBuilder private var buttons: some View {
-        VStack(spacing: 10) {
+        HStack(spacing: 10) {
+            Spacer(minLength: 0)
             switch stage {
             case .ready(_, let check), .enrollFailed(_, _, let check):
-                if case .mismatch = check {
-                    cancelButton(prominent: true)
-                } else {
+                cancelButton
+                if case .mismatch = check {} else {
                     Button { Task { await enroll(check) } } label: {
-                        Text(L10n.rs(.connect)).font(.headline).frame(maxWidth: .infinity)
+                        Label(L10n.rs(.connect), systemImage: "link").fontWeight(.semibold)
                     }
-                    .primaryAction(.accentColor)
-                    cancelButton(prominent: false)
+                    .floatingAction(prominent: true, tint: .accentColor)
                 }
             case .enrolling:
                 Button {} label: {
-                    HStack { ProgressView(); Text(L10n.rs(.connecting)) }.frame(maxWidth: .infinity)
+                    HStack(spacing: 8) { ProgressView(); Text(L10n.rs(.connecting)) }
                 }
-                .primaryAction(.accentColor)
+                .floatingAction(prominent: true, tint: .accentColor)
                 .disabled(true)
             case .done:
                 Button { onFinished() } label: {
-                    Label(L10n.rs(.connectedDone), systemImage: "checkmark")
-                        .font(.headline).frame(maxWidth: .infinity)
+                    Label(L10n.rs(.connectedDone), systemImage: "checkmark").fontWeight(.semibold)
                 }
-                .primaryAction(.green)
+                .floatingAction(prominent: true, tint: .green)
             case .loading, .failed:
-                cancelButton(prominent: false)
+                cancelButton
             }
         }
-        .padding(.horizontal)
-        .padding(.top, 10)
-        .padding(.bottom, 6)
-        .background(.bar)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 8)
     }
 
-    private func cancelButton(prominent: Bool) -> some View {
+    private var cancelButton: some View {
         Button(role: .cancel) { onFinished() } label: {
-            Text(L10n.rs(.cancel)).frame(maxWidth: .infinity)
+            Text(L10n.rs(.cancel))
         }
-        .buttonStyle(.bordered)
-        .controlSize(.large)
+        .floatingAction(prominent: false, tint: .primary)
     }
 
     private func enroll(_ check: OperatorCheck) async {
