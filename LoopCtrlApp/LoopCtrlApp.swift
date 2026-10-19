@@ -54,6 +54,9 @@ struct LoopCtrlApp: App {
                     return
                 }
                 #endif
+                #if DEBUG
+                if appState.handleRelayDebugURL(url) { return }
+                #endif
                 guard url.isFileURL else { return }
                 let name = url.lastPathComponent
                 do {
