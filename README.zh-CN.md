@@ -212,8 +212,15 @@ Tailnet 来源，并且一律按远程处理，不会被当成本机。Shadowroc
 <a id="self-hosting"></a>
 ## 自行部署
 
-参考中继和 Headscale 部署配置在 [LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server)。
-也可以按照 [docs/relay-enrollment.md](docs/relay-enrollment.md) 自己实现中继 API。
+[LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server) 提供自己搭建连接层所需的一切：
+
+- **中继**，用于远程服务，附带容器镜像：
+  [docs/self-host-relay.md](https://github.com/Souitou-iop/LoopCtrl-Server/blob/main/docs/self-host-relay.md)。
+- **Headscale**，配合自建 DERP 服务器，用于 Tailnet 组网：
+  [docs/self-host-headscale.md](https://github.com/Souitou-iop/LoopCtrl-Server/blob/main/docs/self-host-headscale.md)。
+- 操作员命令行工具，用来通过中继操作手机。
+
+App 一侧的中继约定见 [docs/relay-enrollment.md](docs/relay-enrollment.md)，也可以照着它自己实现中继。
 
 <a id="developers"></a>
 ## Agent 与开发者

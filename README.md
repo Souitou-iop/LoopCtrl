@@ -275,9 +275,18 @@ juggling two VPNs.
 <a id="self-hosting"></a>
 ## Self-hosting
 
-The reference relay and a Headscale deployment live in
-[LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server). Anyone can
-also implement the relay API from [docs/relay-enrollment.md](docs/relay-enrollment.md).
+[LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server) has what you
+need to run your own connection layer:
+
+- **Relay** for the remote service, with a container image:
+  [docs/self-host-relay.md](https://github.com/Souitou-iop/LoopCtrl-Server/blob/main/docs/self-host-relay.md).
+- **Headscale** with your own DERP server, for a tailnet:
+  [docs/self-host-headscale.md](https://github.com/Souitou-iop/LoopCtrl-Server/blob/main/docs/self-host-headscale.md).
+- An operator CLI for driving a phone through the relay.
+
+The app's side of the relay contract is
+[docs/relay-enrollment.md](docs/relay-enrollment.md), so you can also write
+a relay of your own.
 
 <a id="developers"></a>
 ## For agents and developers
