@@ -18,6 +18,10 @@ struct SettingsView: View {
     @State private var launchFailed = false
     @State private var showMountSheet = false
     @State private var showOptions = false
+    @State private var showAddRemote = false
+    /// DEBUG `-remoteShow list|connection`: a 远程服务 page pushed at launch.
+    @State private var debugRemotePage: String?
+    @EnvironmentObject private var remote: RemoteServiceStore
     @StateObject private var runner = RunnerStatus()
     @EnvironmentObject private var runnerAdmin: RunnerAdmin
 
@@ -61,9 +65,10 @@ struct SettingsView: View {
                         statusCard
                         if runner.isRunning {
                             connectionCard
-                            if runnerAdmin.isPaired {
-                                AuthorizationEntryRow()
-                            }
+                        }
+                        RemoteServiceCard { showAddRemote = true }
+                        if runner.isRunning && runnerAdmin.isPaired {
+                            AuthorizationEntryRow()
                         }
                         primaryButton
                         hint
@@ -95,6 +100,23 @@ struct SettingsView: View {
         .onAppear {
             refresh()
             runner.startPolling()
+            #if DEBUG
+            // Screenshots without tapping: -remoteShow add|list|connection|settings
+            switch UserDefaults.standard.string(forKey: "remoteShow") {
+            case "add": showAddRemote = true
+            case "settings": showOptions = true
+            case let page?: debugRemotePage = page
+            case nil: break
+            }
+            #endif
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { debugRemotePage != nil }, set: { if !$0 { debugRemotePage = nil } })) {
+            if debugRemotePage == "connection", let id = remote.primary?.id {
+                RemoteConnectionDetailView(connectionID: id)
+            } else {
+                RemoteServiceView()
+            }
         }
         .onDisappear { runner.stopPolling() }
         .onReceive(NotificationCenter.default.publisher(
@@ -102,7 +124,7 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: PairingFileStore.didImport)) { _ in refresh() }
         .onOpenURL { url in
             // The runner bounced back: loopctrl-app://started?status=…&address=…
-            guard url.scheme == "loopctrl-app" else { return }
+            guard url.scheme == "loopctrl-app", !RemoteInvite.isInviteLink(url) else { return }
             // loopctrl-app://started or loopctrl-app://stopped
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let status = items.first { $0.name == "status" }?.value
@@ -119,6 +141,36 @@ struct SettingsView: View {
             OptionsView(runner: runner)
                 .environmentObject(appState)
                 .environmentObject(runnerAdmin)
+                .environmentObject(remote)
+        }
+        .sheet(isPresented: $showAddRemote, onDismiss: { remote.incomingInvite = nil }) {
+            AddConnectionSheet(initialInvite: remote.incomingInvite)
+                .environmentObject(remote)
+                .environmentObject(runnerAdmin)
+        }
+        // An invite opened as a link: straight to its confirmation.
+        .onReceive(remote.$incomingInvite) { invite in
+            guard invite != nil else { return }
+            if showOptions {
+                // One sheet at a time: let Settings go away first.
+                showOptions = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { showAddRemote = true }
+            } else {
+                showAddRemote = true
+            }
+        }
+        .alert(L10n.rs(.title), isPresented: Binding(
+            get: { remote.incomingInviteError != nil },
+            set: { if !$0 { remote.incomingInviteError = nil } })) {
+            Button(L10n.rs(.done), role: .cancel) {}
+        } message: {
+            Text(remote.incomingInviteError.map(RemoteServiceText.parse) ?? "")
+        }
+        // Pre-approvals confirmed while the service was down reach it now.
+        .task(id: runner.isRunning) {
+            guard runner.isRunning else { return }
+            await remote.syncAllPreApprovals(admin: runnerAdmin)
+            await remote.flushPendingRevocations(admin: runnerAdmin)
         }
     }
 

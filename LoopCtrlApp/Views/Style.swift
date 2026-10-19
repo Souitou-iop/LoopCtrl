@@ -15,6 +15,25 @@ extension View {
         }
     }
 
+    /// A compact capsule that floats over scrolling content: Liquid Glass on
+    /// iOS 26, a material capsule before that.
+    @ViewBuilder func floatingAction(prominent: Bool, tint: Color) -> some View {
+        if #available(iOS 26.0, *) {
+            if prominent {
+                self.buttonStyle(.glassProminent).tint(tint).controlSize(.large)
+            } else {
+                self.buttonStyle(.glass).tint(tint).controlSize(.large)
+            }
+        } else if prominent {
+            self.buttonStyle(.borderedProminent).buttonBorderShape(.capsule).tint(tint).controlSize(.large)
+                .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+        } else {
+            self.buttonStyle(.bordered).buttonBorderShape(.capsule).tint(tint).controlSize(.large)
+                .background(.regularMaterial, in: Capsule())
+                .shadow(color: .black.opacity(0.1), radius: 8, y: 3)
+        }
+    }
+
     /// The one prominent action on a screen.
     @ViewBuilder func primaryAction(_ tint: Color) -> some View {
         if #available(iOS 26.0, *) {
@@ -69,6 +88,21 @@ struct AppIconImage: View {
                         .font(.system(size: size * 0.42, weight: .semibold))
                         .foregroundColor(.white)
                 )
+        }
+    }
+}
+
+/// Groups floating glass buttons so that, on iOS 26, their shapes blend and
+/// morph into each other as buttons appear, disappear or resize. Before
+/// iOS 26 it is a plain container.
+struct FloatingGlassGroup<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: 12) { content }
+        } else {
+            content
         }
     }
 }

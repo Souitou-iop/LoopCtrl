@@ -53,6 +53,7 @@ targets:
         # iOS denies UIApplication.open() for these schemes with no error, which
         # would break the Start button and the StikDebug shortcut.
         INFOPLIST_FILE: LoopCtrlApp/Info.plist
+        INFOPLIST_KEY_NSCameraUsageDescription: "LoopCtrl uses the camera only to scan a remote service connection invite (QR code)."
 
   # SPIKE (docs/runner-merge-spike.md): LoopCtrl and the runner as ONE app. The
   # main executable is LoopCtrl's own, so it launches with no DDI; the test bundle
@@ -93,6 +94,7 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: "LoopCtrl pairs with this device from Settings, reaches its debug service through LocalDevVPN or Shadowrocket to mount the Developer Disk Image, and serves the automation API on your network."
         INFOPLIST_FILE: LoopCtrlApp/AllInOne-Info.plist
+        INFOPLIST_KEY_NSCameraUsageDescription: "LoopCtrl uses the camera only to scan a remote service connection invite (QR code)."
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOOPCTRL_ALL_IN_ONE"
         # XCTRunner's own LC_RPATHs. Nothing is linked through them at launch
         # (the app does not link XCTest), so a missing DDI costs nothing; they
@@ -153,7 +155,7 @@ targets:
           echo "✅ Frameworks stripped"
 
   # Logic tests for LoopCtrlKit code that needs nothing from iOS (pairing
-  # request bookkeeping). macOS, so they run without a simulator or device:
+  # request bookkeeping, remote service invites and connection state). macOS, so they run without a simulator or device:
   #   xcodebuild test -scheme LoopCtrlKitTests -destination platform=macOS
   LoopCtrlKitTests:
     type: bundle.unit-test
@@ -161,6 +163,8 @@ targets:
     deploymentTarget: "13.0"
     sources:
       - path: LoopCtrlKit/PairRequestLedger.swift
+      - path: LoopCtrlKit/RemoteInvite.swift
+      - path: LoopCtrlKit/RemoteService.swift
       - path: Tests/LoopCtrlKitTests
     settings:
       base:

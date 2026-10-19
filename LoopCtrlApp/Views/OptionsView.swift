@@ -8,6 +8,7 @@ struct OptionsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var runnerAdmin: RunnerAdmin
+    @EnvironmentObject private var remote: RemoteServiceStore
     @ObservedObject var runner: RunnerStatus
 
     @State private var ddi = DeveloperDiskImage.status()
@@ -40,6 +41,7 @@ struct OptionsView: View {
                 .listRowBackground(Color.clear)
 
                 connectionSection
+                remoteServiceSection
                 setupSection
                 clientsSection
                 diagnosticsSection
@@ -153,6 +155,26 @@ struct OptionsView: View {
     }
 
     private var busy: Bool { runnerAdmin.pairing || runnerAdmin.changingVisibility }
+
+    /// Settings › 远程服务: relays this phone is bound to.
+    private var remoteServiceSection: some View {
+        Section {
+            NavigationLink {
+                RemoteServiceView()
+            } label: {
+                HStack {
+                    Label(L10n.rs(.title), systemImage: "server.rack")
+                    Spacer(minLength: 8)
+                    if let c = remote.primary {
+                        let m = remote.machine(c.id)
+                        StateChip(text: RemoteServiceView.phaseText(m), tone: RemoteServiceView.phaseTone(m))
+                    } else {
+                        Text(L10n.rs(.addConnection)).foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+    }
 
     private var connectionSection: some View {
         Section {

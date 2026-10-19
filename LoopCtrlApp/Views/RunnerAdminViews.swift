@@ -177,6 +177,7 @@ enum SourceStyle {
         case .nearby: return L10n.t(.viaNearby)
         case .vpn: return L10n.t(.viaVPN)
         case .cellular: return L10n.t(.viaCellular)
+        case .relay: return L10n.rs(.viaRelay)
         case .other, nil: return L10n.t(.viaOther)
         }
     }
@@ -189,6 +190,7 @@ enum SourceStyle {
         case .nearby: return "dot.radiowaves.left.and.right"
         case .vpn: return "lock.shield"
         case .cellular: return "antenna.radiowaves.left.and.right"
+        case .relay: return "server.rack"
         case .other, nil: return "network"
         }
     }
@@ -200,6 +202,7 @@ enum SourceStyle {
         case .nearby: return .purple
         case .vpn: return .orange
         case .cellular: return .green
+        case .relay: return .indigo
         default: return .gray
         }
     }

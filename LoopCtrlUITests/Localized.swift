@@ -37,7 +37,7 @@ enum L10n {
         // ── Notifications (posted by the runner) ──
         //
         // Title "LoopCtrl"; state and address in the subtitle; the body only for
-        // what matters next. Words match the app's (服务, 远程访问, 本机, 局域网, 近场).
+        // what matters next. Words match the app's (服务, 局域网访问, 本机, 局域网, 近场).
         case allow, deny, enableRemote, disableRemote, enableNearby, disableNearby, stopServer, copyLogs
         // Status notification: subtitle, then body lines.
         case statusRunning          // %@ = address:port
@@ -106,10 +106,10 @@ enum L10n {
                  .ko: "허용", .es: "Permitir", .de: "Zulassen", .ru: "Разрешить"],
         .deny: [.en: "Deny", .zhHans: "拒绝", .zhHant: "拒絕", .ja: "拒否",
                 .ko: "거부", .es: "Denegar", .de: "Ablehnen", .ru: "Отклонить"],
-        .enableRemote: [.en: "Turn On Remote Access", .zhHans: "开启远程访问", .zhHant: "開啟遠端存取", .ja: "リモートアクセスをオン",
-                        .ko: "원격 접속 켜기", .es: "Activar acceso remoto", .de: "Fernzugriff einschalten", .ru: "Включить удалённый доступ"],
-        .disableRemote: [.en: "Turn Off Remote Access", .zhHans: "关闭远程访问", .zhHant: "關閉遠端存取", .ja: "リモートアクセスをオフ",
-                         .ko: "원격 접속 끄기", .es: "Desactivar acceso remoto", .de: "Fernzugriff ausschalten", .ru: "Выключить удалённый доступ"],
+        .enableRemote: [.en: "Turn On LAN Access", .zhHans: "开启局域网访问", .zhHant: "開啟區域網路存取", .ja: "LANアクセスをオン",
+                        .ko: "LAN 접속 켜기", .es: "Activar acceso LAN", .de: "LAN-Zugriff einschalten", .ru: "Включить доступ по LAN"],
+        .disableRemote: [.en: "Turn Off LAN Access", .zhHans: "关闭局域网访问", .zhHant: "關閉區域網路存取", .ja: "LANアクセスをオフ",
+                         .ko: "LAN 접속 끄기", .es: "Desactivar acceso LAN", .de: "LAN-Zugriff ausschalten", .ru: "Выключить доступ по LAN"],
         .enableNearby: [.en: "Turn On Nearby", .zhHans: "开启近场发现", .zhHant: "開啟近場探索", .ja: "近距離検出をオン",
                         .ko: "근거리 검색 켜기", .es: "Activar detección cercana", .de: "Nahbereich einschalten", .ru: "Включить поиск поблизости"],
         .disableNearby: [.en: "Turn Off Nearby", .zhHans: "关闭近场发现", .zhHant: "關閉近場探索", .ja: "近距離検出をオフ",
@@ -140,8 +140,8 @@ enum L10n {
                           .ko: "근거리 검색 준비 안 됨 · 재시도 중", .es: "Detección cercana no lista · reintentando", .de: "Nahbereich nicht bereit · neuer Versuch", .ru: "Поиск поблизости не готов · повтор"],
         .statusUptime: [.en: "%d connected · up %@", .zhHans: "已连接 %d 个 · 已运行 %@", .zhHant: "已連線 %d 個 · 已執行 %@", .ja: "接続 %d 件 · 稼働 %@",
                         .ko: "연결 %d개 · 실행 %@", .es: "%d conectados · activo %@", .de: "%d verbunden · läuft seit %@", .ru: "Подключено: %d · работает %@"],
-        .remoteDisabledNote: [.en: "Remote access turned off", .zhHans: "远程访问已关闭", .zhHant: "遠端存取已關閉", .ja: "リモートアクセスをオフにしました",
-                              .ko: "원격 접속을 껐습니다", .es: "Acceso remoto desactivado", .de: "Fernzugriff ausgeschaltet", .ru: "Удалённый доступ выключен"],
+        .remoteDisabledNote: [.en: "LAN access turned off", .zhHans: "局域网访问已关闭", .zhHant: "區域網路存取已關閉", .ja: "LANアクセスをオフにしました",
+                              .ko: "LAN 접속을 껐습니다", .es: "Acceso LAN desactivado", .de: "LAN-Zugriff ausgeschaltet", .ru: "Доступ по LAN выключен"],
 
         // ── Server failed / stopped, remote access failed ──
         .serverFailedSubtitle: [.en: "Couldn't start · port %@", .zhHans: "服务启动失败 · 端口 %@", .zhHant: "服務啟動失敗 · 連接埠 %@", .ja: "起動できません · ポート %@",
@@ -150,8 +150,8 @@ enum L10n {
                                  .ko: "서비스가 중지됨", .es: "Servicio detenido", .de: "Dienst gestoppt", .ru: "Сервис остановлен"],
         .longPressCopyLogs: [.en: "Long-press to copy the logs.", .zhHans: "长按可复制日志。", .zhHant: "長按可複製日誌。", .ja: "長押しでログをコピーできます。",
                              .ko: "길게 눌러 로그를 복사할 수 있습니다.", .es: "Mantén pulsado para copiar los registros.", .de: "Lang drücken, um die Logs zu kopieren.", .ru: "Удерживайте, чтобы скопировать логи."],
-        .remoteFailedSubtitle: [.en: "Remote access unreachable · %@", .zhHans: "远程访问不可用 · %@", .zhHant: "遠端存取無法使用 · %@", .ja: "リモートアクセス不可 · %@",
-                                .ko: "원격 접속 불가 · %@", .es: "Acceso remoto inaccesible · %@", .de: "Fernzugriff nicht erreichbar · %@", .ru: "Удалённый доступ недоступен · %@"],
+        .remoteFailedSubtitle: [.en: "LAN access unreachable · %@", .zhHans: "局域网访问不可用 · %@", .zhHant: "區域網路存取無法使用 · %@", .ja: "LANアクセス不可 · %@",
+                                .ko: "LAN 접속 불가 · %@", .es: "Acceso LAN inaccesible · %@", .de: "LAN-Zugriff nicht erreichbar · %@", .ru: "Доступ по LAN недоступен · %@"],
         .remoteFailedBody: [.en: "Allow Local Network: open LoopCtrl, accept the prompt, then reconnect. 127.0.0.1 still works.",
                             .zhHans: "请允许本地网络：打开 LoopCtrl，在弹出的提示中允许，然后重新连接。本机 127.0.0.1 仍可用。",
                             .zhHant: "請允許區域網路：開啟 LoopCtrl，在跳出的提示中允許，然後重新連線。本機 127.0.0.1 仍可使用。",

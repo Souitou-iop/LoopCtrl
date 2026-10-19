@@ -16,6 +16,8 @@ final class RunnerAdmin: ObservableObject {
         let lastAddress: String?
         /// `PeerSource` raw value: local, lan, nearby, vpn, cellular, other.
         let lastVia: String?
+        /// Let in by a remote service pre-approval for this connection.
+        var relayConnection: String? = nil
     }
 
     /// A pairing request as the runner reports it (`config` → `pairing`).
@@ -113,6 +115,8 @@ final class RunnerAdmin: ObservableObject {
             clients = Self.parseClients(result["sessions"])
             visibility = Self.parseVisibility(result)
             applyPairing(result["pairing"])
+            let relay = Self.parseRelayPreApprovals(result["relay_preapprovals"])
+            if relay != relayPreApprovals { relayPreApprovals = relay }
             let nearby = result["nearby"] as? [String: Any]
             nearbyPending = (nearby?["enabled"] as? Bool) == true && (nearby?["advertising"] as? Bool) != true
             localNetworkDenied = (result["nearby"] as? [String: Any])?["local_network"] as? String == "denied"
@@ -221,6 +225,66 @@ final class RunnerAdmin: ObservableObject {
         logLines = []
         logsLoaded = false
         loopctrlLog("Runner admin: disconnected")
+    }
+
+    // MARK: - Remote service pre-approvals
+
+    /// Operators pre-approved for remote service connections, as the runner
+    /// reports them (`config` → `relay_preapprovals`).
+    @Published private(set) var relayPreApprovals: [RelayPreApproval] = []
+
+    struct RelayPreApproval: Equatable, Identifiable {
+        let connectionID: String
+        let name: String
+        let keyID: String
+        var id: String { connectionID + keyID }
+    }
+
+    /// Pre-approve a connection's operators on the runner (replacing that
+    /// connection's earlier list). Goes through `config`, which accepts it only
+    /// from this device. Returns false when the runner isn't reachable; the
+    /// caller tries again once it is.
+    func setRelayPreApprovals(connectionID: String, operators: [RemoteOperator]) async -> Bool {
+        let rows = operators.map { ["name": $0.name, "key_id": $0.keyID] }
+        return await relayCall(["relay_preapprove": ["connection_id": connectionID, "operators": rows]])
+    }
+
+    /// Unbind: the runner forgets the connection's pre-approvals and revokes
+    /// the sessions they let in.
+    func revokeRelay(connectionID: String) async -> Bool {
+        await revokeRelay(connectionIDs: [connectionID])
+    }
+
+    /// Several at once, in one call.
+    func revokeRelay(connectionIDs: [String]) async -> Bool {
+        guard !connectionIDs.isEmpty else { return true }
+        return await relayCall(["relay_revoke": connectionIDs])
+    }
+
+    /// Short timeout: with no runner up, the in-process call only fails when
+    /// it times out, and the caller keeps the change pending anyway.
+    private static let relayCallTimeout: TimeInterval = 2
+
+    private func relayCall(_ params: [String: Any]) async -> Bool {
+        #if !LOOPCTRL_ALL_IN_ONE
+        guard client.isPaired else { return false }
+        #endif
+        do {
+            let result = try await client.call("config", params, timeout: Self.relayCallTimeout)
+            clients = Self.parseClients(result["sessions"])
+            relayPreApprovals = Self.parseRelayPreApprovals(result["relay_preapprovals"])
+            return true
+        } catch {
+            loopctrlLog("Runner admin: relay pre-approval not applied: \(error)")
+            return false
+        }
+    }
+
+    private static func parseRelayPreApprovals(_ value: Any?) -> [RelayPreApproval] {
+        (value as? [[String: Any]] ?? []).compactMap { row in
+            guard let c = row["connection_id"] as? String, let k = row["key_id"] as? String else { return nil }
+            return RelayPreApproval(connectionID: c, name: row["name"] as? String ?? "", keyID: k)
+        }
     }
 
     // MARK: - Stopping
@@ -412,7 +476,8 @@ final class RunnerAdmin: ObservableObject {
                           grantedAt: (row["granted_at"] as? String).flatMap(iso.date(from:)),
                           lastActiveAt: (row["last_active_at"] as? String).flatMap(iso.date(from:)),
                           lastAddress: row["last_address"] as? String,
-                          lastVia: row["last_via"] as? String)
+                          lastVia: row["last_via"] as? String,
+                          relayConnection: row["relay_connection"] as? String)
         }
         .sorted { ($0.lastActiveAt ?? .distantPast) > ($1.lastActiveAt ?? .distantPast) }
     }

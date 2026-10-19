@@ -591,11 +591,10 @@ class JSONRPCServer {
             handleLogs(connection: connection)
 
         case ("POST", "/pair"):
-            handlePair(body: body, connection: connection, isLoopback: isLoopback(connection),
-                       nearby: isNearby(connection))
+            handlePair(body: body, exchange: exchange(connection))
 
         case ("POST", "/rpc"):
-            handleRPC(headers: headers, body: body, connection: connection)
+            handleRPC(body: body, exchange: exchange(connection))
 
         case ("OPTIONS", _):
             sendHTTPResponse(connection: connection, status: 200, headers: corsHeaders(), body: "")
@@ -802,11 +801,49 @@ class JSONRPCServer {
     ///     an ephemeral device key, so it is safe over the LAN.
     ///
     /// Blocks until the user taps Allow (or the alert times out).
-    private func handlePair(body: Data?, connection: NWConnection, isLoopback: Bool, nearby: Bool) {
+    /// One /pair or /rpc exchange: who sent it and where the reply goes — a
+    /// TCP connection, or a request the relay transport handed in.
+    private struct Exchange {
+        let peer: (address: String, via: String)?
+        let isLoopback: Bool
+        let nearby: Bool
+        /// The 远程服务 connection a relayed request came through.
+        let relayConnection: String?
+        let send: (_ status: Int, _ headers: [String: String], _ json: String) -> Void
+    }
+
+    private func exchange(_ connection: NWConnection) -> Exchange {
+        Exchange(peer: Self.peer(of: connection), isLoopback: isLoopback(connection),
+                 nearby: isNearby(connection), relayConnection: nil) { [weak self] status, headers, json in
+            self?.sendHTTPResponse(connection: connection, status: status, headers: headers,
+                                   contentType: "application/json", body: json)
+        }
+    }
+
+    /// A /pair or /rpc request an operator sent through a relay
+    /// (`InProcessRunnerControl.relayed`). Handled exactly like one from the
+    /// network — envelope, pairing prompt and all — except that its source
+    /// is `relay`, never loopback, so only the pre-approvals of the
+    /// connection it came through can let it in without a tap. `server` is
+    /// the relay's name, recorded as the peer address.
+    func handleRelayed(path: String, body: Data, connectionID: String, server: String,
+                       reply: @escaping (Int, Data) -> Void) {
+        let ex = Exchange(peer: (server, PeerSource.relay.rawValue), isLoopback: false, nearby: false,
+                          relayConnection: connectionID) { status, _, json in reply(status, Data(json.utf8)) }
+        queue.async { [weak self] in
+            switch path {
+            case "/pair": self?.handlePair(body: body, exchange: ex)
+            case "/rpc": self?.handleRPC(body: body, exchange: ex)
+            default: reply(404, Data(#"{"error":{"code":"not_found","message":"Only /pair and /rpc are relayed"}}"#.utf8))
+            }
+        }
+    }
+
+    private func handlePair(body: Data?, exchange ex: Exchange) {
         guard let body = body,
               let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let clientName = obj["client_name"] as? String, !clientName.isEmpty else {
-            sendPairError(connection, status: 400, code: "bad_request",
+            sendPairError(ex, status: 400, code: "bad_request",
                           message: "client_name is required")
             return
         }
@@ -816,14 +853,14 @@ class JSONRPCServer {
         if !isPlain {
             guard let pubB64 = obj["pub"] as? String,
                   let pub = Data(base64Encoded: pubB64), pub.count == 32 else {
-                sendPairError(connection, status: 400, code: "bad_request",
+                sendPairError(ex, status: 400, code: "bad_request",
                               message: "Provide plain:true (loopback only) or pub (base64 raw 32B X25519)")
                 return
             }
             clientPub = pub
         }
-        if isPlain && !isLoopback {
-            sendPairError(connection, status: 403, code: "plain_forbidden",
+        if isPlain && !ex.isLoopback {
+            sendPairError(ex, status: 403, code: "plain_forbidden",
                           message: "Plain grant is localhost/USB only; use X25519 mode")
             return
         }
@@ -834,32 +871,32 @@ class JSONRPCServer {
         // What an after-the-fact approval is bound to: the whole key, not the
         // 8-hex fingerprint above (see PairRequestLedger).
         let keyID = clientPub.map(PairRequestLedger.keyID(forPublicKey:))
-        AuthManager.shared.requestAuth(clientName: clientName, nearby: nearby, local: isLoopback,
+        AuthManager.shared.requestAuth(clientName: clientName, nearby: ex.nearby, local: ex.isLoopback,
                                        fingerprint: fingerprint, keyID: keyID,
-                                       peer: Self.peer(of: connection)) { [weak self] outcome in
+                                       peer: ex.peer, relayConnection: ex.relayConnection) { [weak self] outcome in
             guard let self = self else { return }
             let session: AuthSession
             switch outcome {
             case .approved(let s):
                 session = s
-                AuthManager.shared.recordPeer(sessionID: s.id, peer: Self.peer(of: connection))
+                AuthManager.shared.recordPeer(sessionID: s.id, peer: ex.peer)
             case .denied:
-                self.sendPairError(connection, status: 403, code: "pair_denied",
+                self.sendPairError(ex, status: 403, code: "pair_denied",
                                    message: "User rejected or approval timed out")
                 return
             case .busy(let retryAfter):
-                self.sendPairError(connection, status: 429, code: "pair_busy",
+                self.sendPairError(ex, status: 429, code: "pair_busy",
                                    message: "Another pairing request is waiting for approval on the device",
                                    retryAfter: retryAfter)
                 return
             case .coolingDown(let retryAfter):
-                self.sendPairError(connection, status: 429, code: "pair_cooldown",
+                self.sendPairError(ex, status: 429, code: "pair_cooldown",
                                    message: "A pairing request was just refused; try again in \(retryAfter)s",
                                    retryAfter: retryAfter)
                 return
             }
             guard let key = session.key else {
-                self.sendPairError(connection, status: 500, code: "internal",
+                self.sendPairError(ex, status: 500, code: "internal",
                                    message: "Session has no key")
                 return
             }
@@ -887,7 +924,7 @@ class JSONRPCServer {
                     response["token_ct"] = Data(zip(key, pad).map { $0 ^ $1 }).hexString
                 } catch {
                     AuthManager.shared.revokeSession(id: session.id)
-                    self.sendPairError(connection, status: 400, code: "bad_request",
+                    self.sendPairError(ex, status: 400, code: "bad_request",
                                        message: "X25519 key agreement failed")
                     return
                 }
@@ -897,13 +934,12 @@ class JSONRPCServer {
 
             if let data = try? JSONSerialization.data(withJSONObject: response, options: .prettyPrinted),
                let json = String(data: data, encoding: .utf8) {
-                self.sendHTTPResponse(connection: connection, status: 200,
-                                      contentType: "application/json", body: json)
+                ex.send(200, [:], json)
             }
         }
     }
 
-    private func sendPairError(_ connection: NWConnection, status: Int, code: String, message: String,
+    private func sendPairError(_ ex: Exchange, status: Int, code: String, message: String,
                                retryAfter: Int? = nil) {
         var error: [String: Any] = ["code": code, "message": message,
                                     "server_ts": Int(Date().timeIntervalSince1970)]
@@ -913,9 +949,7 @@ class JSONRPCServer {
             headers["Retry-After"] = String(retryAfter)
         }
         let data = (try? JSONSerialization.data(withJSONObject: ["error": error])) ?? Data("{}".utf8)
-        sendHTTPResponse(connection: connection, status: status, headers: headers,
-                         contentType: "application/json",
-                         body: String(data: data, encoding: .utf8) ?? "{}")
+        ex.send(status, headers, String(data: data, encoding: .utf8) ?? "{}")
     }
 
     /// GET /stream[.ts]?ticket=… — live H.264-in-MPEG-TS screen video.
@@ -1009,19 +1043,19 @@ class JSONRPCServer {
                          body: "Unauthorized: append ?ticket=<t> (mint one with the stream_ticket RPC over the encrypted channel).")
     }
 
-    private func handleRPC(headers: [String: String], body: Data?, connection: NWConnection) {
+    private func handleRPC(body: Data?, exchange ex: Exchange) {
         // Every /rpc call must arrive as a sealed v1 envelope. There is no
         // plaintext path: an unsealed body is rejected before it is even parsed
         // as JSON-RPC, so an unauthenticated caller learns nothing about the
         // method surface.
         guard let body = body,
               let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
-            sendAuthError(connection, status: 400, code: "bad_envelope",
+            sendAuthError(ex, status: 400, code: "bad_envelope",
                           message: "Body must be a v1 encrypted envelope")
             return
         }
         guard SecureEnvelope.looksLikeEnvelope(obj) else {
-            sendAuthError(connection, status: 401, code: "auth_required",
+            sendAuthError(ex, status: 401, code: "auth_required",
                           message: "Encrypted envelope required. POST /pair to obtain a key, "
                                  + "then wrap each JSON-RPC body per the v1 protocol (see /skill).")
             return
@@ -1029,26 +1063,26 @@ class JSONRPCServer {
 
         let opened: (tokId: String, plaintext: String, seal: (String) -> String)
         do {
-            opened = try AuthManager.shared.openEnvelope(obj, peer: Self.peer(of: connection))
+            opened = try AuthManager.shared.openEnvelope(obj, peer: ex.peer)
         } catch let failure as SecureEnvelope.Failure {
             // 401 for anything token/auth related so clients know to re-pair;
             // 400 only for a structurally broken envelope.
             let status = failure.code == "bad_envelope" ? 400 : 401
-            sendAuthError(connection, status: status, code: failure.code, message: failure.message)
+            sendAuthError(ex, status: status, code: failure.code, message: failure.message)
             return
         } catch {
-            sendAuthError(connection, status: 401, code: "auth_failed", message: "Authentication failed — this key is not usable. Re-pair to continue: POST /pair (the device user must tap Allow). Note a key is dropped after 30 days with no successful call, so a long-idle client must re-pair. If instead the clock is off you would get ts_skew, not this.")
+            sendAuthError(ex, status: 401, code: "auth_failed", message: "Authentication failed — this key is not usable. Re-pair to continue: POST /pair (the device user must tap Allow). Note a key is dropped after 30 days with no successful call, so a long-idle client must re-pair. If instead the clock is off you would get ts_skew, not this.")
             return
         }
 
         let seal = opened.seal
         guard let inner = opened.plaintext.data(using: .utf8),
               let rpcRequest = try? JSONDecoder().decode(JSONRPCRequest.self, from: inner) else {
-            sendSealed(connection, seal: seal, json: Self.errorJSON(nil, .parseError))
+            sendSealed(ex, seal: seal, json: Self.errorJSON(nil, .parseError))
             return
         }
         guard rpcRequest.jsonrpc == "2.0" else {
-            sendSealed(connection, seal: seal, json: Self.errorJSON(rpcRequest.id, .invalidRequest))
+            sendSealed(ex, seal: seal, json: Self.errorJSON(rpcRequest.id, .invalidRequest))
             return
         }
 
@@ -1059,7 +1093,7 @@ class JSONRPCServer {
             // Use the identity the envelope actually AUTHENTICATED as — never
             // re-read obj["tok"], which is unverified input.
             guard let issued = AuthManager.shared.issueStreamTicket(forTokenId: opened.tokId) else {
-                sendSealed(connection, seal: seal,
+                sendSealed(ex, seal: seal,
                            json: Self.errorJSON(rpcRequest.id, .internalError))
                 return
             }
@@ -1069,12 +1103,12 @@ class JSONRPCServer {
                 "hint": .string("Append ?ticket=<ticket> to GET /stream or /logs. "
                               + "Single use, expires in \(issued.expiresIn)s."),
             ]
-            sendSealed(connection, seal: seal, json: Self.resultJSON(rpcRequest.id, result))
+            sendSealed(ex, seal: seal, json: Self.resultJSON(rpcRequest.id, result))
             return
         }
 
         guard let handler = onRPCRequest else {
-            sendSealed(connection, seal: seal, json: Self.errorJSON(rpcRequest.id, .internalError))
+            sendSealed(ex, seal: seal, json: Self.errorJSON(rpcRequest.id, .internalError))
             return
         }
 
@@ -1086,13 +1120,13 @@ class JSONRPCServer {
         // caller sent, so it cannot be claimed.
         if method == "config" {
             var p = params ?? [:]
-            p[Self.peerSourceParam] = .string(Self.peer(of: connection)?.via ?? PeerSource.other.rawValue)
+            p[Self.peerSourceParam] = .string(ex.peer?.via ?? PeerSource.other.rawValue)
             params = p
         }
         handler(method, params) { [weak self] result, error in
             let json = error.map { Self.errorJSON(rpcRequest.id, $0) }
                 ?? Self.resultJSON(rpcRequest.id, result ?? [:])
-            self?.sendSealed(connection, seal: seal, json: json)
+            self?.sendSealed(ex, seal: seal, json: json)
             // Latency shortcut: when a UI-mutating RPC finishes, tell the video
             // pipeline to grab an extra keyframe *now* instead of waiting for
             // the next 1/fps tick. Without this, a 2 fps tap can wait up to
@@ -1106,21 +1140,19 @@ class JSONRPCServer {
     /// Encrypt a JSON-RPC reply into a response envelope and write it out.
     /// Always HTTP 200: transport succeeded, and the real status is inside the
     /// sealed body (an eavesdropper shouldn't learn outcomes from status codes).
-    private func sendSealed(_ connection: NWConnection, seal: (String) -> String, json: String) {
-        sendHTTPResponse(connection: connection, status: 200,
-                         contentType: "application/json", body: seal(json))
+    private func sendSealed(_ ex: Exchange, seal: (String) -> String, json: String) {
+        ex.send(200, [:], seal(json))
     }
 
     /// Auth failures are sent in the CLEAR — the client has no usable key yet
     /// (or the one it used was rejected), so a sealed reply would be unreadable.
-    private func sendAuthError(_ connection: NWConnection, status: Int, code: String, message: String) {
+    private func sendAuthError(_ ex: Exchange, status: Int, code: String, message: String) {
         let payload: [String: Any] = [
             "error": ["code": code, "message": message,
                       "server_ts": Int(Date().timeIntervalSince1970)],
         ]
         let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
-        sendHTTPResponse(connection: connection, status: status, contentType: "application/json",
-                         body: String(data: data, encoding: .utf8) ?? "{}")
+        ex.send(status, [:], String(data: data, encoding: .utf8) ?? "{}")
     }
 
     private static func resultJSON(_ id: JSONValue?, _ result: [String: JSONValue]) -> String {
