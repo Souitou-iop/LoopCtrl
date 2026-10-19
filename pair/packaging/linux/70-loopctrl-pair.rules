@@ -1,0 +1,13 @@
+# LoopCtrl Pair: lets the built-in usbmuxd open iPhones, iPads and iPod touches
+# (Apple vendor id 05ac, the product ids usbmuxd handles) without root.
+#
+# - TAG+="uaccess": the user logged in at the seat gets read-write access
+#   (desktop sessions; needs to sort before 73-seat-late.rules).
+# - GROUP="plugdev", MODE="0660": for headless setups (kiosk, Raspberry Pi)
+#   run the CLI as a member of plugdev. Distros without that group ignore it.
+#
+# Install: sudo install -m 0644 70-loopctrl-pair.rules /etc/udev/rules.d/
+#          sudo udevadm control --reload-rules && sudo udevadm trigger
+# Then unplug and replug the iPhone.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="05ac", ATTR{idProduct}=="12[9a][0-9a-f]", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="05ac", ATTR{idProduct}=="190[1-5]", TAG+="uaccess", GROUP="plugdev", MODE="0660"

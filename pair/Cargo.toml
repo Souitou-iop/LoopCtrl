@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pair-core", "crates/usbmux", "src-tauri", "android/bridge"]
+members = ["crates/pair-core", "crates/usbmux", "crates/pair-host", "crates/cli", "src-tauri", "android/bridge"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +11,7 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 pair-core = { path = "crates/pair-core" }
+pair-host = { path = "crates/pair-host" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "macros", "time", "sync", "net"] }
