@@ -13,10 +13,12 @@ This page describes:
 Anyone self-hosting a relay can implement the API from this page.
 
 > Status: implemented on both sides. The app's client is
-> `RelayRemoteServiceClient`; `relay/loopctrl_relay_server.py` is a reference
-> relay (Python standard library only) that serves exactly this API, with
-> `relay/selftest.py` as its test and `relay/relay_operator.py` as an operator
-> client. The channel is a repeated HTTPS poll, not a WebSocket. Relayed
+> `RelayRemoteServiceClient`. The reference relay lives in
+> [LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server): `connect/relay/loopctrl_relay_server.py`
+> (Python standard library only) serves exactly this API, with
+> `connect/relay/selftest.py` as its test and `connect/relay/relay_operator.py`
+> as an operator client. **This page is the canonical contract**; LoopCtrl-Server
+> links here rather than keeping a copy. The channel is a repeated HTTPS poll, not a WebSocket. Relayed
 > requests reach the runner in-process, so only the all-in-one build can take
 > them for now.
 
@@ -276,7 +278,7 @@ reference relay uses one shared operator token
 | `POST /v1/operator/devices/{id}/pair`, `…/rpc` | Send one `/pair` or `/rpc` body to the phone and wait (90 s at most) for its answer, returned as the phone sent it. `503 device_offline` when the phone has no live channel, `504 device_timeout` when it didn't answer. |
 | `GET /healthz` | `{"ok": true, "api": 1, "server": "<its name>"}` |
 
-`relay/relay_operator.py` drives these: `enroll --name …` prints the invite
+LoopCtrl-Server's `connect/relay/relay_operator.py` (`cli/loopctrl relay …`) drives these: `enroll --name …` prints the invite
 with the operator's key ID in `op`, `pair` and `call` talk to the phone.
 
 ### Errors
@@ -376,7 +378,8 @@ Clients that paired through the relay show the same source.
   clicking through every screen and failure without a server. Off by default:
   long-press the footer of Settings › 远程服务 for 2 s to turn it on, then
   relaunch. In DEBUG the demo launch arguments turn it on too.
-- `relay/`: the reference relay, its self-test and an operator client.
+- [LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server) `connect/relay/`: the reference relay, its
+  self-test and an operator client.
 - `LoopCtrlApp/Models/RemoteServiceStore.swift`: enrollment, the channel and
   the log.
 - `LoopCtrlApp/Views/RemoteServiceViews.swift`:

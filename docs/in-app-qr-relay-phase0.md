@@ -5,7 +5,8 @@
 > and the app's 远程服务 screens use it through `RelayRemoteServiceClient`.
 > `RelayRPCClient`, the enrollment token and the `relay-debug` URL described
 > below are gone; relayed requests no longer go through 127.0.0.1. This page
-> is kept for the Phase 0 measurements and reasoning.
+> is kept for the Phase 0 measurements and reasoning. The `relay/` paths
+> below now live in [LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server) under `connect/relay/`.
 
 Status: prototype, not a product. It proves one path and nothing else.
 
