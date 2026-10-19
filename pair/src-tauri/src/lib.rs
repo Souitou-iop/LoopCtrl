@@ -7,6 +7,7 @@ use std::time::Duration;
 use pair_core::{
     Config, DeviceView, EnvReport, Event, ManagerHandle, MockBackend, PhoneAction, RealBackend, Scenario, UserCommand,
 };
+use pair_host::{Options, Transport};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -14,6 +15,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 struct Core {
     manager: Option<ManagerHandle>,
     mock: Option<MockBackend>,
+    /// Which usbmuxd the real backend talks to (the built-in one runs as
+    /// long as this is kept).
+    transport: Option<Transport>,
     auto_begin: bool,
 }
 
@@ -29,11 +33,15 @@ fn dev_options() -> bool {
     cfg!(debug_assertions) || env_mock() || matches!(std::env::var("LOOPCTRL_PAIR_DEV").as_deref(), Ok("1" | "true"))
 }
 
+fn data_dir(app: &AppHandle) -> std::path::PathBuf {
+    app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("LoopCtrl Pair"))
+}
+
 fn start(app: &AppHandle, core: &mut Core, mock: bool) {
     // Stop the old manager first: two usbmuxd listeners would both act.
     core.manager = None;
-    let dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("LoopCtrl Pair"));
-    let mut cfg = Config::new(dir);
+    let dir = data_dir(app);
+    let mut cfg = Config::new(dir.clone());
     cfg.auto_begin = core.auto_begin;
     cfg.tool_version = app.package_info().version.to_string();
     let emitter = app.clone();
@@ -48,9 +56,23 @@ fn start(app: &AppHandle, core: &mut Core, mock: bool) {
         core.manager = Some(ManagerHandle::start(m, cfg, on_event));
     } else {
         core.mock = None;
-        core.manager = Some(ManagerHandle::start(RealBackend::new(), cfg, on_event));
+        if core.transport.is_none() {
+            match Transport::start(&Options::new(&dir)) {
+                Ok(t) => core.transport = Some(t),
+                Err(e) => log::error!("built-in usbmuxd: {e}"),
+            }
+        }
+        let addr = core.transport.as_ref().map(Transport::addr).unwrap_or_else(pair_host::system_addr);
+        core.manager = Some(ManagerHandle::start(RealBackend::at(addr), cfg, on_event));
     }
-    log::info!("pair-core started ({})", if mock { "mock" } else { "usbmuxd" });
+    if mock {
+        // The built-in usbmuxd would keep iPhones claimed for nothing.
+        core.transport = None;
+    }
+    log::info!(
+        "pair-core started ({})",
+        if mock { "mock" } else { core.transport.as_ref().map_or("system", |t| t.kind().as_str()) }
+    );
 }
 
 #[derive(Serialize)]
@@ -91,9 +113,45 @@ fn app_info(app: AppHandle, state: State<AppState>) -> AppInfo {
 }
 
 #[tauri::command]
-async fn env_check(state: State<'_, AppState>) -> Result<EnvReport, String> {
+async fn env_check(app: AppHandle, state: State<'_, AppState>) -> Result<EnvReport, String> {
+    {
+        // Auto mode picked the built-in usbmuxd, but the user has installed
+        // and started the system one since: use it rather than fight it.
+        let mut core = state.0.lock().unwrap();
+        if core.mock.is_none() && core.transport.as_ref().is_some_and(Transport::should_switch_to_system) {
+            log::info!("system usbmuxd appeared; switching to it");
+            core.transport = None;
+            start(&app, &mut core, false);
+        }
+    }
     let fut = handle(&state, |m| m.env_check()).ok_or("not running")?;
-    fut.await.ok_or_else(|| "manager stopped".into())
+    let mut report = fut.await.ok_or("manager stopped")?;
+    if let Some(t) = &state.0.lock().unwrap().transport {
+        t.decorate(&mut report);
+    }
+    Ok(report)
+}
+
+/// Linux: installs the udev rule for the built-in usbmuxd with root rights
+/// through polkit (`pkexec` shows the system's password dialog).
+#[tauri::command]
+async fn install_udev_rule() -> Result<(), String> {
+    if !cfg!(target_os = "linux") {
+        return Err("only needed on Linux".into());
+    }
+    let out = tauri::async_runtime::spawn_blocking(|| {
+        std::process::Command::new("pkexec").arg("sh").arg("-c").arg(pair_host::udev_install_script()).output()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| format!("pkexec: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        // 126: the user dismissed the password dialog.
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+        Err(if err.is_empty() { format!("pkexec exited with {}", out.status) } else { err })
+    }
 }
 
 #[tauri::command]
@@ -207,7 +265,7 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::new().level(log::LevelFilter::Info).build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(AppState(Mutex::new(Core { manager: None, mock: None, auto_begin: false })))
+        .manage(AppState(Mutex::new(Core { manager: None, mock: None, transport: None, auto_begin: false })))
         .setup(|app| {
             let state = app.state::<AppState>();
             let mut core = state.0.lock().unwrap();
@@ -228,6 +286,7 @@ pub fn run() {
             mock_reset,
             mock_driver_missing,
             check_update,
+            install_udev_rule,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LoopCtrl Pair");

@@ -1,6 +1,6 @@
 // App state: device views from pair-core, plus what only the UI knows
 // (page, single-mode focus, the phones paired this session, preferences).
-import { api, type AppInfo, type DeviceView, type EnvReport, type Phase, type Step } from "./api";
+import { api, envProblem, type AppInfo, type DeviceView, type EnvReport, type Phase, type Step } from "./api";
 import { dicts, type Lang } from "./i18n";
 
 export type Page = "single" | "batch" | "settings";
@@ -64,6 +64,9 @@ class Store {
   t = $derived(dicts[this.lang]);
   mock = $derived(this.info?.mock ?? false);
   os = $derived(this.asWindows ? "windows" : (this.env?.os ?? "macos"));
+  /** The environment problem to explain (dialog code), if any. */
+  envCode = $derived(envProblem(this.env, this.os));
+  private envPoll: ReturnType<typeof setInterval> | null = null;
 
   /** The phone single mode is showing. */
   current = $derived(this.devices.find((d) => d.udid === this.focus) ?? null);
@@ -133,10 +136,20 @@ class Store {
   }
 
   async start() {
-    const env = await this.checkEnv();
-    if (env && !env.usbmuxOk) { this.envDialog = true; return; }
+    await this.checkEnv();
+    if (this.envCode) { this.envDialog = true; return; }
     this.started = true;
     this.pickFocus();
+    // Linux built-in mode: a phone plugged in later may turn out to be
+    // unreadable (no udev rule) or held by the system usbmuxd. Look again
+    // while waiting so that is explained instead of waiting forever.
+    if (this.os === "linux" && !this.envPoll) {
+      this.envPoll = setInterval(async () => {
+        if (!this.started || this.current || this.envDialog) return;
+        await this.checkEnv();
+        if (this.envCode) this.envDialog = true;
+      }, 3000);
+    }
   }
 
   /** Single mode will not come back to this phone. */

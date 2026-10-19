@@ -58,6 +58,16 @@ export function applyPreview(store: typeof Store, name: string) {
   if (name === "welcome") return;
   if (name === "welcome-win") { store.asWindows = true; return; }
   if (name === "err-noDriver") { store.asWindows = true; store.env = { ...env, os: "windows", usbmuxOk: false, detail: "connection refused (os error 10061)" }; store.envDialog = true; return; }
+  if (name.startsWith("welcome-linux") || name.startsWith("err-linux")) {
+    const linux = { usbmuxdInstalled: false, usbmuxdRunning: false, builtIn: true, udevRule: false, usbAccess: false, usbDevices: 1, conflict: null } as const;
+    store.env = { ...env, os: "linux", osVersion: "24.04", usbmuxAddr: "/run/user/1000/loopctrl-pair/usbmuxd.sock", transport: "builtIn",
+      detail: "permission denied: /dev/bus/usb/003/012", linux: { ...linux } };
+    if (name === "welcome-linux-ok") store.env = { ...store.env, detail: null, linux: { ...linux, udevRule: true, usbAccess: true } };
+    if (name === "welcome-linux-system") store.env = { ...store.env, detail: null, transport: "system", usbmuxAddr: "/var/run/usbmuxd", linux: { ...linux, usbmuxdInstalled: true, usbmuxdRunning: true, builtIn: false, usbAccess: null } };
+    if (name === "err-linux-conflict") store.env = { ...store.env, detail: null, linux: { ...linux, udevRule: true, usbAccess: true, usbmuxdInstalled: true, usbmuxdRunning: true, conflict: "systemTookDevice" } };
+    if (name.startsWith("err-linux")) store.envDialog = true;
+    return;
+  }
   if (name === "batch" || name === "batch-sheet") {
     store.page = "batch";
     store.devices = batch();
@@ -77,4 +87,4 @@ export function applyPreview(store: typeof Store, name: string) {
   }
 }
 
-export const PREVIEWS = ["welcome", "welcome-win", "err-noDriver", ...Object.keys(SINGLE), "batch", "batch-sheet", "batch-empty", "settings"];
+export const PREVIEWS = ["welcome", "welcome-win", "err-noDriver", "welcome-linux", "welcome-linux-ok", "welcome-linux-system", "err-linux-denied", "err-linux-conflict", ...Object.keys(SINGLE), "batch", "batch-sheet", "batch-empty", "settings"];

@@ -17,7 +17,14 @@
   const cancelToWelcome = () => { if (device) void api.command(device.udid, "cancel"); store.finish(); };
   async function redetect() {
     const env = await store.checkEnv();
-    if (env?.usbmuxOk) { onclose(); store.started = true; store.pickFocus(); }
+    if (env && !store.envCode) { onclose(); store.started = true; store.pickFocus(); }
+  }
+  let installing = $state(false);
+  async function installRule() {
+    installing = true;
+    try { await api.installUdevRule(); store.snack = b.ruleInstalled; await redetect(); }
+    catch (e) { store.snack = `${b.ruleFailed}: ${e}`; }
+    finally { installing = false; }
   }
   async function openStore() {
     try { await api.openUrl(APPLE_DEVICES_STORE); } catch { await api.openUrl(APPLE_DEVICES_WEB); }
@@ -26,7 +33,9 @@
   const buttons = $derived.by((): [Btn, Btn] => {
     switch (code) {
       case "noDriver": return [{ label: b.openStore, run: openStore }, { label: b.redetect, run: redetect }];
-      case "noUsbmux": return [{ label: b.cancel, run: onclose }, { label: b.redetect, run: redetect }];
+      case "noUsbmux": case "noUsbmuxLinux": case "muxConflict":
+        return [{ label: b.cancel, run: onclose }, { label: b.redetect, run: redetect }];
+      case "usbDenied": return [{ label: b.redetect, run: redetect }, { label: installing ? b.installing : b.installRule, run: installRule }];
       case "devModeCancelled": return [{ label: b.later, run: cancelToWelcome }, { label: b.recheck, run: cmd("retry") }];
       case "rebootTimeout": return [{ label: b.recheck, run: cmd("recheck") }, { label: b.keepWaiting, run: cmd("retry") }];
       case "unsupported": return [{ label: b.back, run: () => { store.finish(); } }, { label: b.ok, run: () => device && store.skip(device.udid) }];

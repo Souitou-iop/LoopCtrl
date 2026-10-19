@@ -8,7 +8,9 @@ export type Phase =
 export type Step = "info" | "trust" | "devModeCheck" | "reboot" | "devModeConfirm" | "generate" | "findApp" | "write" | "verify";
 export type ErrorCode =
   | "noDriver" | "noUsbmux" | "untrusted" | "devModeCancelled" | "rebootTimeout" | "unsupported" | "recordFailed"
-  | "appNotFound" | "writeFailed" | "verifyFailed" | "disconnected" | "internal";
+  | "appNotFound" | "writeFailed" | "verifyFailed" | "disconnected" | "internal"
+  // Environment problems only the UI names (Linux).
+  | "noUsbmuxLinux" | "usbDenied" | "muxConflict";
 export type UserCommand = "begin" | "retry" | "recheck" | "cancel";
 export type PhoneAction = "trust" | "dontTrust" | "unlock" | "restart" | "turnOn" | "cancel" | "installApp" | "unplug" | "plug";
 export type Scenario = "ready" | "devModeOff" | "noRpService" | "legacy16" | "early17" | "noApp" | "rebootHangs" | "unsupported" | "locked";
@@ -23,7 +25,26 @@ export interface DeviceView {
   app: AppMatch | null; writeVia: "vendContainer" | "vendDocuments" | null; locked: boolean;
   phaseSince: number; doneAt: number | null;
 }
-export interface EnvReport { os: "windows" | "macos" | "linux"; osVersion: string; usbmuxOk: boolean; usbmuxAddr: string; detail: string | null }
+export interface LinuxEnv {
+  usbmuxdInstalled: boolean; usbmuxdRunning: boolean; builtIn: boolean; udevRule: boolean;
+  usbAccess: boolean | null; usbDevices: number; conflict: "systemTookDevice" | "deviceBusy" | null;
+}
+export interface EnvReport {
+  os: "windows" | "macos" | "linux"; osVersion: string; usbmuxOk: boolean; usbmuxAddr: string; detail: string | null;
+  /** "system", "builtIn" or "mock". */
+  transport?: string; linux?: LinuxEnv | null;
+}
+
+/** The environment problem to explain, if any. */
+export function envProblem(env: EnvReport | null, os: string): ErrorCode | null {
+  if (!env) return null;
+  if (os === "windows") return env.usbmuxOk ? null : "noDriver";
+  const l = env.linux;
+  if (l?.conflict) return "muxConflict";
+  if (l?.usbAccess === false) return "usbDenied";
+  if (!env.usbmuxOk) return l ? "noUsbmuxLinux" : "noUsbmux";
+  return null;
+}
 export interface AppInfo { version: string; mock: boolean; devOptions: boolean; cacheDir: string; updaterConfigured: boolean }
 export type UpdateStatus =
   | { status: "notConfigured" } | { status: "upToDate" }
@@ -56,6 +77,7 @@ export const api = {
   mockReset: () => call<void>("mock_reset"),
   mockDriverMissing: (missing: boolean) => call<void>("mock_driver_missing", { missing }),
   checkUpdate: () => call<UpdateStatus>("check_update"),
+  installUdevRule: () => call<void>("install_udev_rule"),
   onEvent: (f: (e: CoreEvent) => void) => (inTauri ? listen<CoreEvent>("pair-event", (e) => f(e.payload)) : Promise.resolve(() => {})),
   openUrl: async (url: string) => {
     if (!inTauri) return void window.open(url, "_blank");

@@ -26,7 +26,12 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg", "nsis", "msi"],
+    "targets": [
+      "app",
+      "dmg",
+      "nsis",
+      "msi"
+    ],
     "createUpdaterArtifacts": false,
     "category": "Utility",
     "shortDescription": "LoopCtrl 配对助手",
@@ -38,16 +43,42 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "macOS": { "minimumSystemVersion": "12.0" },
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    },
     "windows": {
-      "webviewInstallMode": { "type": "embedBootstrapper" },
-      "nsis": { "languages": ["SimpChinese", "English"], "displayLanguageSelector": false }
-    }
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "nsis": {
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
+        "displayLanguageSelector": false
+      }
+    },
+    "linux": {
+      "deb": {
+        "section": "utils",
+        "files": {
+          "/usr/lib/udev/rules.d/70-loopctrl-pair.rules": "../packaging/linux/70-loopctrl-pair.rules"
+        },
+        "postInstallScript": "../packaging/linux/postinst.sh",
+        "postRemoveScript": "../packaging/linux/postrm.sh"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "longDescription": "One-time USB pairing for LoopCtrl: makes the pairing file LoopCtrl needs on iOS 16 and later and writes it into the app."
   },
   "plugins": {
     "updater": {
       "pubkey": "REPLACE_WITH_MINISIGN_PUBLIC_KEY",
-      "endpoints": ["https://updates.example.invalid/loopctrl-pair/{{target}}/{{arch}}/{{current_version}}"]
+      "endpoints": [
+        "https://updates.example.invalid/loopctrl-pair/{{target}}/{{arch}}/{{current_version}}"
+      ]
     }
   }
 }

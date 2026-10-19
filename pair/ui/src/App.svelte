@@ -23,7 +23,7 @@
   const pageKey = $derived(store.page === "single" ? `single-${store.screen}` : store.page);
   const Single = $derived(SCREENS[store.screen]);
   const failed = $derived(store.page === "single" && store.current?.phase === "failed" ? store.current : null);
-  const envCode = $derived(store.os === "windows" ? "noDriver" : "noUsbmux");
+  const envCode = $derived(store.envCode ?? (store.os === "windows" ? "noDriver" : "noUsbmux"));
 
   onMount(async () => {
     const q = new URLSearchParams(location.search);

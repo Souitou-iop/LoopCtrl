@@ -1,7 +1,9 @@
 # cargo deny check — licenses, bans, sources. Run: cargo deny check
 [graph]
-# What we ship: macOS (Intel, Apple Silicon), Windows and Android.
+# What we ship: macOS (Intel, Apple Silicon), Windows, Linux and Android.
 targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
   "aarch64-apple-darwin",
   "x86_64-apple-darwin",
   "x86_64-pc-windows-msvc",

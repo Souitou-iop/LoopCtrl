@@ -1,6 +1,6 @@
 // Lists every third-party component that ends up in the app:
 // - Rust crates reachable through normal dependencies from the workspace
-//   (macOS, Windows and Android targets, the ones we ship);
+//   (macOS, Windows, Linux and Android targets, the ones we ship);
 // - JS packages in the shipped bundle (runtime dependencies + Svelte's runtime);
 // - the Android app's Maven libraries (listed below by hand).
 // Writes ui/src/lib/licenses.json (shown in Settings), THIRD_PARTY_NOTICES.md
@@ -10,7 +10,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 const root = new URL("..", import.meta.url).pathname;
-const meta = JSON.parse(execFileSync("cargo", ["metadata", "--format-version", "1", "--locked", "--filter-platform", "aarch64-apple-darwin", "--filter-platform", "x86_64-apple-darwin", "--filter-platform", "x86_64-pc-windows-msvc", "--filter-platform", "aarch64-pc-windows-msvc", "--filter-platform", "aarch64-linux-android", "--filter-platform", "armv7-linux-androideabi", "--filter-platform", "x86_64-linux-android"], { cwd: root, maxBuffer: 1 << 28 }).toString());
+const meta = JSON.parse(execFileSync("cargo", ["metadata", "--format-version", "1", "--locked", "--filter-platform", "aarch64-apple-darwin", "--filter-platform", "x86_64-apple-darwin", "--filter-platform", "x86_64-pc-windows-msvc", "--filter-platform", "aarch64-pc-windows-msvc", "--filter-platform", "x86_64-unknown-linux-gnu", "--filter-platform", "aarch64-unknown-linux-gnu", "--filter-platform", "aarch64-linux-android", "--filter-platform", "armv7-linux-androideabi", "--filter-platform", "x86_64-linux-android"], { cwd: root, maxBuffer: 1 << 28 }).toString());
 const pkgs = new Map(meta.packages.map((p) => [p.id, p]));
 const nodes = new Map(meta.resolve.nodes.map((n) => [n.id, n]));
 const members = new Set(meta.workspace_members);
@@ -71,10 +71,17 @@ do not edit by hand.
 
 Code taken from other projects:
 
-- \`crates/usbmux\` (the Android app's built-in usbmuxd) and
-  \`android/app/.../platform/UsbHost.kt\` come from the Android port of iloader
-  (https://github.com/nab138/iloader), MIT, under the notice below. iloader's
-  name and branding are not used.
+- \`crates/usbmux\` (the built-in usbmuxd of the Android app and of the Linux
+  app and CLI) and \`android/app/.../platform/UsbHost.kt\` come from the
+  Android port of iloader (https://github.com/nab138/iloader), MIT, under the
+  notice below. iloader's name and branding are not used.
+
+On Linux the desktop app uses the system's GTK 3, WebKitGTK and libsoup
+(LGPL), installed by the distribution as dependencies of the .deb and loaded
+as shared system libraries, like the C library; they are not part of this
+project or of the .deb. The CLI needs none of them. No usbmuxd, libusb,
+libimobiledevice or other GPL/LGPL code is included: the system usbmuxd is
+used only if the user installed it.
 
 The desktop app recreates the miuix look in CSS from the values of
 compose-miuix-ui/miuix (Apache-2.0); the Android app uses miuix itself. No
