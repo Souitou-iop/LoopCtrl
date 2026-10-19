@@ -12,11 +12,13 @@
 </p>
 
 <p align="center">
-  <a href="#why">为什么选 LoopCtrl</a> ·
-  <a href="#setup">装到手机上</a> ·
-  <a href="#daily">日常使用</a> ·
-  <a href="#clients">编写客户端</a> ·
-  <a href="#build">从源码构建</a>
+  <a href="#install">安装</a> ·
+  <a href="#requirements">系统要求</a> ·
+  <a href="#approval">配对审批</a> ·
+  <a href="#access">访问方式</a> ·
+  <a href="#developers">Agent 与开发者</a> ·
+  <a href="#security">安全模型</a> ·
+  <a href="#limits">已知局限</a>
 </p>
 
 ---
@@ -30,37 +32,25 @@
 Agent 会先读手机提供的说明书，再从手机上下载客户端，然后发起配对。你在通知里点
 **允许**，它就能看到屏幕，并在任何 App 里点击、滑动、输入，和你自己操作一样。
 
-如果 Agent 就跑在这台手机上（比如 Minis），地址用 `127.0.0.1`。如果 Agent 在电脑上，
-先打开 **局域网访问**，再把 App 里显示的局域网地址交给它。
+如果 Agent 就跑在这台手机上（比如 Minis），地址用 `127.0.0.1`。如果 Agent 在同一 Wi-Fi 下的电脑上，
+先打开 **局域网访问**，再把 App 里显示的地址交给它。在别的网络里，可以通过[远程服务](#remote)
+或 [Tailnet 组网](#tailnet)连接。
 
 > [!CAUTION]
 > **配对成功的客户端能控制整台手机**：所有 App、所有画面，以及你能输入的一切。只批准你自己
-> 发起的配对请求，并核对手机上显示的密钥和客户端打印的是否一致。不用时关掉局域网访问；涉及付款、
-> 发消息或无法撤销的操作时，不要让 Agent 无人看管地运行。请只在自己的设备上使用，仅用于测试和研究。
+> 发起的配对请求，并核对手机上显示的密钥指纹和客户端打印的是否一致。不用时关掉局域网访问和远程连接；
+> 涉及付款、发消息或无法撤销的操作时，不要让 Agent 无人看管地运行。请只在自己的设备上使用，仅用于测试和研究。
 
-<a id="why"></a>
-## 为什么选 LoopCtrl
+## 它能做什么
 
-**1. Agent 能自己学会用。** 不用把 API 文档塞进提示词。手机本身就提供写给模型看的操作手册
-（`GET /skill`）、包含全部方法的 schema（`GET /schema`），以及可以直接下载的客户端
-（`GET /skill/clients/…`）。返回结果也是为 Agent 设计的：操作会等画面稳定后再返回，并在结果里说明；
-结果里附带 `hint` 提示下一步怎么做；出错时会告诉它怎么恢复；元素 `ref` 遇到屏幕外的同名元素或长得相似的元素时会提醒。
-`device_info` 会给出 `capabilities` 列表，客户端按能力判断功能，不必比较版本号。
-
-**2. 全部在手机上运行。** 服务本身是手机上的一个 XCUITest runner。同一台手机上的 Agent
-通过 `127.0.0.1` 访问，全程不需要电脑。安装和准备也可以都在手机上完成：用免费 Apple ID
-通过 SideStore 安装；在本机配对（iOS 27 及以上）或导入配对文件；在 App 里借助隧道 App
-（LocalDevVPN 或 Shadowrocket）挂载开发者磁盘镜像。Mac 不是必需的。
-
-**3. 没有你点头，谁也连不上。** 默认只监听 `127.0.0.1`。每个客户端都要先申请配对，由你在手机上批准，
-批准前可以核对密钥指纹，确认就是你要连的那个客户端。之后的每个请求都经过加密和认证，过期或被重放的请求会被拒绝。
-你随时可以在 App 里吊销任何客户端。
-
-**4. 只装一个 App。** 一体版把 App 和 runner 打进同一个 IPA，只占免费账号三个侧载名额中的一个。
-启动、停止、再启动，全程都不用离开 LoopCtrl。
-
-<a id="how"></a>
-## 工作原理
+- **Agent 能自己学会用。** 手机本身就提供写给模型看的操作手册（`GET /skill`）、包含全部方法的
+  schema（`GET /schema`），以及可以直接下载的客户端（`GET /skill/clients/…`）。操作会等画面稳定后再返回，
+  结果里附带 `hint` 提示下一步；出错时会告诉它怎么恢复。
+- **全部在手机上运行。** 服务本身是手机上一个长期运行的 XCUITest runner，同一台手机上的 Agent 通过
+  `127.0.0.1` 访问。开发者磁盘镜像由 App 自己挂载，所以手机重启后点一下就好，不需要电脑。
+- **没有你点头，谁也连不上。** 每个客户端都要申请配对，由你核对密钥指纹后在手机上批准。之后的每个请求都经过加密和认证。
+  你随时可以吊销任何客户端。
+- **只装一个 App。** 一体版把 App 和 runner 打进同一个 IPA，只占免费 Apple ID 三个侧载名额中的一个。
 
 ```mermaid
 sequenceDiagram
@@ -80,28 +70,25 @@ sequenceDiagram
     end
 ```
 
-LoopCtrl 的底层是一个长期运行的 XCUITest 会话，服务运行期间 iOS 会一直保持它。所以它能操作任何 App，
-也因此必须先挂载开发者磁盘镜像。
+<a id="install"></a>
+## 安装
 
-<a id="setup"></a>
-## 装到手机上
-
-你需要一台已开启 **开发者模式** 的 iPhone（设置 → 隐私与安全性 → 开发者模式，开启后重启）。App 在 iOS 16 及以上可运行，但在手机上直接挂载磁盘镜像需要 **iOS 17 及以上**，在本机配对需要 **iOS 27**。iOS 16 请在电脑上用 Xcode 或 `devicectl` 挂载镜像。
-
-1. **准备 IPA。** 用 `make ipa-allinone UNSIGNED=1` 构建 `LoopCtrl-AllInOne.ipa`
-   （见[从源码构建](#build)），或者用别人帮你构建好的包。
-2. **签名并安装。** 免费 Apple ID 用 **最新版 SideStore**（My Apps → +）安装；付费开发者账号可以运行
-   `Scripts/sign-ipa.sh -i LoopCtrl-AllInOne.ipa`，再安装生成的包。然后在
-   设置 → 通用 → VPN 与设备管理 中信任证书。
-3. **挂载磁盘镜像。** 打开 LoopCtrl，点 **挂载磁盘镜像**，App 会带你一步步完成：配对、下载镜像文件（只需一次）、
-   连接 Wi-Fi、连接隧道 App、挂载。
-4. **启动。** 点 **启动服务**。第一次启动时，iOS 会要求输入锁屏密码，并请求 **通知** 和 **本地网络** 权限。
+1. **下载 `LoopCtrl-AllInOne.ipa`**，在 [Releases](https://github.com/Souitou-iop/LoopCtrl/releases) 里。
+   这是推荐的版本，也是发布页上唯一的安装包，旁边的 `SHA256SUMS.txt` 是它的校验值。包本身没有签名：
+   不含描述文件、team id 和任何设备标识。
+2. **签名并安装。** 免费 Apple ID 用 **最新版 SideStore**（My Apps → +）安装；有付费账号和 Mac 的话，运行
+   `Scripts/sign-ipa.sh -i LoopCtrl-AllInOne.ipa`，再安装生成的包。然后在 设置 → 通用 → VPN 与设备管理
+   中信任证书，并打开 **开发者模式**（设置 → 隐私与安全性 → 开发者模式，开启后重启）。
+3. **配对一次。** iOS 27 及以上直接在手机上配对。iOS 27 以下，用数据线连一次
+   [LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair)，或者导入配对文件。见[系统要求](#requirements)。
+4. **挂载磁盘镜像。** 连上 LocalDevVPN 或 Shadowrocket，打开 LoopCtrl，点 **挂载磁盘镜像**，App 会带你一步步完成。
+5. **启动。** 点 **启动服务**。第一次启动时，iOS 会要求输入锁屏密码，并请求 **通知** 和 **本地网络** 权限。
    两个都要允许，因为批准客户端就是在通知里完成的。
 
 现在把开头那句话交给你的 Agent 就行了。
 
 > [!NOTE]
-> **每次重启手机后**都要重新挂载磁盘镜像（第 3 步）。配对文件和已下载的镜像都会保留，点一下就好。
+> **每次重启手机后**都要重新挂载磁盘镜像（第 4 步）。配对文件和已下载的镜像都会保留，点一下就好。
 
 <details>
 <summary><b>为什么不能随便找个签名工具？</b>以及其他签名安装方式</summary>
@@ -109,84 +96,163 @@ LoopCtrl 的底层是一个长期运行的 XCUITest 会话，服务运行期间 
 runner 里嵌着一个测试包 `PlugIns/LoopCtrlUITests.xctest`，必须先单独签名，而且要用宿主 App 的 bundle id。
 跳过它的签名工具做出来的包，**一打开就闪退**。下面几种方式都处理好了这一点：
 
-- **最新版 SideStore**（免费 Apple ID）。用 [iLoader](https://github.com/nab138/iLoader) 安装 SideStore，
-  并保持 [LocalDevVPN](https://apps.apple.com/app/localdevvpn/id6755608044) 连接，SideStore 才能刷新签名。
-  旧版 SideStore 用 `ldid` 签名，会跳过 `.xctest`。免费证书有效期 7 天，由 SideStore 负责续签。
-- **`Scripts/sign-ipa.sh`**（付费账号，需要 Mac）。它会自动找到你的 team、覆盖该 bundle id 的开发描述文件和对应的证书
-  （可用 `-t`、`-p`、`-s` 指定）。签名从内到外进行，逐个校验二进制，遇到发布用描述文件会直接拒绝。
-  生成的包可以用 Xcode（Devices and Simulators）、Apple Configurator 或 `ideviceinstaller` 安装。
-- **Xcode**（付费账号，需要 Mac）。运行 `make build`，打开 `LoopCtrl.xcodeproj`，选 **LoopCtrl** scheme，
+- **SideStore 最新版**（免费 Apple ID）。用 [iLoader](https://github.com/nab138/iLoader) 安装 SideStore，
+  并保持 [LocalDevVPN](https://apps.apple.com/app/localdevvpn/id6755608044) 连接，SideStore 才能刷新 App。
+  旧版 SideStore 用 `ldid` 签名，会跳过 `.xctest`。免费证书 7 天过期，SideStore 会自动续签。
+- **`Scripts/sign-ipa.sh`**（付费账号，需要 Mac）。它会自己找到你的 team、覆盖该 bundle id 的开发描述文件和对应的签名身份
+  （可以用 `-t`、`-p`、`-s` 手动指定）。它从里到外逐层签名，校验每个二进制文件，并拒绝发布用描述文件。生成的包可以用
+  Xcode（设备与模拟器）、Apple Configurator 或 `ideviceinstaller` 安装。
+- **Xcode**（付费账号，需要 Mac）。运行 `make build`，打开 `LoopCtrl.xcodeproj`，选择 **LoopCtrl** scheme，
   执行 **Product → Test**。Xcode 会顺便帮你挂载磁盘镜像。Xcode 断开后 runner 会继续运行。
 
 </details>
 
 <details>
-<summary><b>挂载磁盘镜像</b>：App 需要什么，以及其他办法</summary>
+<summary><b>双 App 版</b>（进阶用法，或作为备用）</summary>
 
-在较新的 iOS 上，开发者服务只能通过隧道访问。隧道 App（LocalDevVPN；或 Shadowrocket，需在
-设置 → 其他 中打开 “Include Route 10.7.0.1/32”）只是把一个私有地址反射回手机本身，不会接管其他流量。
-LoopCtrl 的挂载功能基于 [idevice](https://github.com/jkcoxson/idevice)。
+`make ipa` 会构建 `LoopCtrl.ipa` 和 `LoopCtrlUITests-Runner.ipa`，也就是把 App 和 runner 分成两个 App。
+App 通过 runner 的 `loopctrl://` URL scheme 启动它。发布页不再附带这个版本，需要自己[从源码构建](#build)。
 
-- **配对。** iOS 27 及以上：点 **在本机配对**，然后进入 设置 → 隐私与安全性 → 开发者模式 →
-  “Pair with LoopCtrl”，输入 App 显示的配对码。iOS 17 至 26：先在电脑上通过 USB 配对一次，再**导入配对文件**；
-  也可以导入 iLoader 在 iOS 17.4 及以上导出的文件。只用 `idevicepair` 生成的文件无法挂载。LoopCtrl 自己的桌面配对工具正在计划中。
-- **挂载。** 本机挂载支持 iOS 17 及以上：17 至 26.3 使用个性化镜像，26.4 及以上使用 cryptex 镜像。
-- **网络。** 任意 Wi-Fi 都可以，只有蜂窝网络不行。第一次挂载需要联网，因为 Apple 要为这台设备单独签发镜像。
-- **其他办法。** 连接 Mac 上的 Xcode 会自动挂载，[StikDebug](https://github.com/StikDebug/StikDebug) 也可以。
+如果你想用 Xcode 驱动 runner，或者一体版在你的设备上有问题，可以用它。它占两个侧载名额，在 App 里切换局域网访问时要多点一次允许，
+而且[远程服务](#remote)只支持一体版。
 
 </details>
 
 <details>
 <summary><b>遇到问题</b></summary>
 
-- **runner 一打开就退出。** 可能是磁盘镜像没挂载（常见于重启之后）、`.xctest` 没签名，或者免费证书过期了。
-- **电脑连不上。** 可能是局域网访问没开、本地网络权限被拒绝，或者手机只连着蜂窝网络。可以用
-  `curl http://<手机IP>:8300/schema` 测试。
-- **客户端说正在配对，手机上却没有弹窗。** 说明网络上有别的设备冒充了你的手机，不要信任它。
+- **runner 一打开就关闭。** 磁盘镜像没有挂载（常见于重启之后）、`.xctest` 没有签名，或者免费证书过期了。
+- **电脑连不上。** 没开局域网访问、拒绝了本地网络权限，或者手机只连着蜂窝网络。可以用
+  `curl http://<手机 IP>:8300/schema` 测试。
+- **客户端说正在配对，手机上却没有弹窗。** 说明网络里有别的东西冒充了它。不要信任它。
 
 </details>
 
-<a id="daily"></a>
-## 日常使用
+<a id="requirements"></a>
+## 系统要求（按 iOS 版本）
 
-**主屏幕** 显示当前状态（配对、磁盘镜像、服务），并且只放一个按钮引导下一步：挂载、启动或停止。
-服务运行时还会显示服务地址（点一下即可复制）和 **局域网访问** 开关。
+App 在 **iOS 16 及以上**都能运行。不同版本的区别在于怎么配对，以及 App 挂载哪种开发者磁盘镜像：
 
-**设置** 里可以配对和挂载、修改端口、查看并吊销已授权客户端、看 runner 和 App 的日志，
-还能看到服务的版本和能力。
+| iOS | 配对 | 在手机上挂载的磁盘镜像 |
+|---|---|---|
+| 16 | 用数据线连一次：[LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair)，或导入 lockdown 配对文件（`idevicepair`、jitterbugpair、iLoader） | 旧式 `DeveloperDiskImage.dmg`，经 lockdownd 挂载（[说明](docs/ios16-ddi-mount.md)） |
+| 17.0–17.3 | 暂不支持在手机上完成（见[已知局限](#limits)） | 请改用 Xcode 挂载 |
+| 17.4–26.3 | 用数据线连一次：LoopCtrl Pair，或导入 iLoader 导出的配对文件 | 个性化镜像（Personalized） |
+| 26.4–26.x | 用数据线连一次：LoopCtrl Pair，或导入 iLoader 导出的配对文件 | Cryptex 镜像 |
+| 27 及以上 | **在手机上完成**：点 **在本机配对**，然后到 设置 → 隐私与安全性 → 开发者模式 → “Pair with LoopCtrl”，输入 App 显示的配对码 | Cryptex 镜像 |
 
-**通知** 让你在别的 App 里也能操作。长按服务通知，可以开关局域网访问、近场发现，或停止服务；
-长按授权请求，可以允许或拒绝。批准时手机需要处于解锁状态。
-错过了通知也没关系：请求等待期间，主屏幕会显示一张带“允许”和“拒绝”的卡片；点 **已授权 N 个客户端**
-进入授权管理，可以看到等待中的请求、最近 10 分钟的请求（超时的请求仍可点“允许此客户端”，客户端下次重试即可通过），
-以及所有持有密钥的客户端，并可逐个或全部吊销。
+所有版本都需要：
 
-**谁能连进来。** 访问范围一级一级放开，每一级都要你在手机上操作：
+- **隧道 App**，用于回环：[LocalDevVPN](https://apps.apple.com/app/localdevvpn/id6755608044)，或者 Shadowrocket
+  （在 设置 → 其他 中打开 “Include Route 10.7.0.1/32”）。它只是把一个私有地址回送给手机，不转发其他任何流量。
+- **Wi-Fi。** 任意网络都行，只有蜂窝网络不行。
+- **磁盘镜像** 只需下载一次，来自 [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage)
+  的一个固定 commit：先走 jsDelivr，失败再走 GitHub。无论从哪里下载，每个文件都要和固定的 SHA-256 一致。
+  iOS 17 及以上第一次挂载还需要联网，因为 Apple 要为你的设备单独签名镜像。
+- **LoopCtrl Pair** 支持 Windows、macOS、Linux 和 Android（需要 USB OTG）。它会处理“信任此电脑”和开发者模式，
+  生成你的 iOS 版本需要的配对记录，写进 LoopCtrl 并校验。单靠 `idevicepair` 生成的文件在 iOS 17 及以上无法挂载：
+  这些版本需要 RemotePairing 记录。
+
+LoopCtrl 的挂载功能基于 [idevice](https://github.com/jkcoxson/idevice)。把手机连到 Mac 上的 Xcode 也会挂载镜像。
+
+<a id="approval"></a>
+## 配对审批
+
+无论从哪条路连进来，每个新客户端都要你在手机上点 **允许**。批准时手机需要处于解锁状态。
+
+- **通知** 会显示客户端名称、来源（本机、USB、局域网、近场、Tailnet、VPN、中继……）和密钥指纹。
+  长按通知可以允许或拒绝。划掉通知不等于拒绝，请求会继续等待。
+- **主屏幕卡片。** 请求等待期间，主屏幕会显示一张卡片，内容和通知一样，另有倒计时和“允许”“拒绝”按钮。
+  卡片会一直留着，直到请求被处理或超时（60 秒）。
+- **事后允许。** 错过了也没关系：被拒绝或超时的请求会在最近列表里保留 10 分钟。在那里点 **允许此客户端**，
+  这个客户端下次重试时就会直接通过，不再弹窗。这次授权绑定的是客户端公钥完整的 SHA-256，而不是名称或短指纹，
+  并且只能用一次。参考客户端会把待定的密钥保留 10 分钟，保证重试时用的是同一把。
+- **授权管理页**（主屏幕上的 **已授权 N 个客户端**，或在设置里进入）：等待中的请求、最近 10 分钟的请求及结果，
+  以及所有持有密钥的客户端，包括它从哪里连接、最后活跃时间。左滑吊销单个，或全部吊销。
+
+详见 [docs/pairing-approval.md](docs/pairing-approval.md)。
+
+<a id="access"></a>
+## 访问方式
+
+默认只监听 `127.0.0.1`。下面每一级都会扩大“谁能**申请**配对”的范围，但每个客户端仍然要你点允许。
 
 | | 谁能申请配对 |
 |---|---|
 | 默认 | 本机上的 App，以及通过 USB 连接的电脑 |
 | 打开 **局域网访问** | 同一 Wi-Fi 下知道地址的任何设备 |
-| 再打开 **近场发现** | 附近的 Mac 也可以，不需要同一个网络（点对点 Wi-Fi）；手机会主动广播自己 |
+| **局域网 + 近场** | 附近的 Apple 设备也可以，不需要同一个网络（AWDL）；手机会主动广播自己 |
+| **远程服务** | 你接受的邀请里列出的操作员，经由中继 |
+| **Tailnet 组网** | 你的 Tailscale 或 Headscale 网络里的设备（需打开局域网访问） |
 
-无论哪一级，每个客户端都还要你点 **允许**。近场发现只能在手机上打开。打开后，客户端连地址都不需要：
-先运行 `python3 loopctrl_rpc.py scan`，再用 `--nearby "<名称或 id>"` 连接。
+### 局域网访问
 
-**端口。** 默认是 **8300**。服务停止时可以在设置里修改（1024–65534）；近场发现会占用它的下一个端口。
-不要和 iCTRL 等其他自动化 App 使用同一个端口，两个 runner 抢同一个端口会互相干扰。
+在主屏幕或服务通知里打开。主屏幕会显示服务地址（点一下即可复制）。默认端口是 **8300**，可以在设置里改
+（1024–65534），服务会在新端口上重启。近场发现会占用它的下一个端口。不要和其他自动化 App 使用同一个端口，
+两个 runner 抢同一个端口会互相干扰。
 
-> [!NOTE]
-> **已知问题。** 在一体版里停止服务后，iOS 的 “Automation Running” 浮层要等 LoopCtrl 退出才会消失。
-> 我们正在排查；在修复之前，可以在多任务界面划掉 LoopCtrl 来清除它。
+近场发现只能在手机上打开。打开后，客户端连地址都不需要：先运行 `python3 loopctrl_rpc.py scan`，
+再用 `--nearby "<名称或 id>"` 连接。
 
-<a id="clients"></a>
-## 编写客户端
+<a id="remote"></a>
+### 远程服务
 
-每个 `/rpc` 请求都装在加密信封里，没有明文模式。建议直接从手机提供的客户端起步：
+主屏幕上的 **远程服务** 让手机连到一个中继，这样另一个网络里的操作员也能访问它。添加连接有几种方式：
+
+- **邀请链接**（`loopctrl://connect?…`），粘贴或直接打开；
+- **二维码**，用相机扫描，或从相册选择；
+- **手动输入** 服务器地址和连接码。
+
+**确认连接** 页面会显示服务器、连接是否加密、证书是否已固定、邀请里列出的操作员，以及他们能做什么。
+如果邀请列出了操作员，App 会和服务器返回的结果核对，不一致就拒绝连接。确认后，**只预先授权这些操作员的密钥**，
+而且只对经过这个中继的请求生效。没有列出操作员的邀请（手动输入、文字形式）不会预先授权任何人：你需要自己核对指纹，
+每个操作员第一次连接时都会像普通客户端一样询问你。
+
+在连接详情页可以 **断开**（保留绑定，之后再连）或 **解除绑定**（中继会忘掉这台手机）。这里还能看到谁正在操作、
+最近操作记录和中继的证书。
+
+中继是 **不受信任的**：它只转发端到端加密的信封，配对和每个请求都只在操作员的客户端和手机之间解开。
+手机自己的凭据是一把 Ed25519 密钥，保存在它的钥匙串里。**App 里没有内置服务器**：可以使用服务商提供的服务，
+也可以自己部署（见[自行部署](#self-hosting)）。协议和接入 API 见 [docs/relay-enrollment.md](docs/relay-enrollment.md)。
+远程连接只支持一体版。
+
+<a id="tailnet"></a>
+### Tailscale 与 Headscale
+
+Tailnet 组网是另一种连接方式。让手机加入 Tailscale 或 Headscale 网络，打开局域网访问，再把手机的 Tailnet 地址
+（`100.x.y.z`）交给 Agent。来自 Tailnet 地址（100.64.0.0/10 和 fd7a:115c:a1e0::/48）的请求，会在审批提示和授权管理页里标为
+Tailnet 来源，并且一律按远程处理，不会被当成本机。Shadowrocket 可以同时运行 Tailnet 节点和回环路由，省去在两个 VPN 之间来回切换。
+
+<a id="self-hosting"></a>
+## 自行部署
+
+参考中继和 Headscale 部署配置在 [LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server)。
+也可以按照 [docs/relay-enrollment.md](docs/relay-enrollment.md) 自己实现中继 API。
+
+<a id="developers"></a>
+## Agent 与开发者
+
+### API
+
+JSON-RPC 2.0，走 `POST /rpc`，装在加密信封里，没有明文模式。`GET /schema` 列出全部方法和参数，
+[`SKILL.md`](SKILL.md) 就是手机在 `GET /skill` 提供的说明书。
+
+- **看**：`page_source`、`find_element`、`screen_text`（设备端 OCR）、`screenshot`、`collect`
+- **点和滑**：`tap`、`double_tap`、`long_press`、`tap_element`、`find_and_tap`、`swipe`、`scroll`、`scroll_to_element`、`page`、`drag`
+- **输入**：`type`、`clear_text`
+- **App**：`resolve_app`、`launch_app`、`activate_app`、`terminate_app`、`list_apps`、`open_url`
+- **设备**：`device_info`、`home`、`lock`、`unlock`、`is_locked`、`wait`
+- **服务**：`config`、`logs`、`reset`、`stream_ticket`
+
+`device_info` 会给出 `capabilities` 列表，客户端按能力判断功能，不必比较版本号。普通 HTTP：`/skill`、`/schema`、
+`/whoami`、`/docs` 和 `/pair` 无需密钥。`/remote` 是浏览器控制页，真正控制前会要求填入密钥。`/stream`（实时 H.264）
+和 `/logs` 需要先用 `stream_ticket` 换一张一次性票据。
+
+### 客户端
 
 | 客户端 | 下载地址 | 适用场景 |
 |---|---|---|
-| Python，[`Scripts/loopctrl_rpc.py`](Scripts/loopctrl_rpc.py) | `/skill/clients/python` | 任何系统。只依赖标准库；通过 Wi-Fi 配对时还需要 `cryptography`。自带 `scan` 和 `--nearby`。 |
+| Python，[`Scripts/loopctrl_rpc.py`](Scripts/loopctrl_rpc.py) | `/skill/clients/python` | 任何系统。只依赖标准库；通过网络配对时还需要 `cryptography`。自带 `scan` 和 `--nearby`。 |
 | 静态 CLI，[`cli/`](cli/) | `/skill/clients/cli` + `/skill/clients/cli.sh` | 没有解释器的沙盒环境。`aarch64-linux-musl`，无任何依赖；用 `sh loopctrl.sh …` 运行。 |
 
 ```bash
@@ -196,21 +262,8 @@ python3 loopctrl_rpc.py --host <手机>:8300 call device_info
 python3 loopctrl_rpc.py --host <手机>:8300 call find_element '{"element_id":"Wi-Fi"}'
 ```
 
-密钥按设备保存在 `~/.loopctrl/token.json`，两个客户端共用这个文件。配对一次之后，USB、Wi-Fi、近场都能用。
+密钥按设备保存在 `~/.loopctrl/token.json`，两个客户端共用这个文件，所以配对一次之后，USB、Wi-Fi、近场都能用。
 密钥 30 天没有使用就会失效。
-
-**方法**（JSON-RPC 2.0，走 `POST /rpc`；全部参数见 `GET /schema`）：
-
-- **看**：`page_source`、`find_element`、`screen_text`（设备端 OCR）、`screenshot`、`collect`
-- **点和滑**：`tap`、`double_tap`、`long_press`、`tap_element`、`find_and_tap`、`swipe`、`scroll`、`scroll_to_element`、`page`、`drag`
-- **输入**：`type`、`clear_text`
-- **App**：`resolve_app`、`launch_app`、`activate_app`、`terminate_app`、`list_apps`、`open_url`
-- **设备**：`device_info`、`home`、`lock`、`unlock`、`is_locked`、`wait`
-- **服务**：`config`、`logs`、`reset`、`stream_ticket`
-
-**普通 HTTP**：`/skill`、`/schema`、`/whoami`、`/docs` 和 `/pair` 无需密钥。`/remote` 是浏览器控制页，
-可以添加到主屏幕，真正控制前会要求填入密钥。`/stream`（实时 H.264）和 `/logs` 需要先用 `stream_ticket`
-换一张一次性票据。
 
 <details>
 <summary><b>配对与加密信封协议</b></summary>
@@ -220,54 +273,72 @@ python3 loopctrl_rpc.py --host <手机>:8300 call find_element '{"element_id":"W
   仅限来自 `127.0.0.1` 的请求，可以发送 `{"client_name": "…", "plain": true}` 直接拿到 `K`。
 - 每个请求用从 `K` 派生的 HMAC-SHA256 密钥加一个新的 nonce 封装。重放的请求会被拒绝，时间戳偏差超过 ±120 秒的也会被拒绝。
 - 同一时间只有一个配对请求在等待，被拒绝后有冷却时间。来自手机本身的请求有独立的名额。
-- 被拒绝或超时的请求会在 App 的最近请求列表里保留 10 分钟。在那里允许后，会生成一次性授权，绑定客户端 X25519 公钥的
-  SHA-256：同一公钥的下一次 `/pair` 直接通过，不弹提示、不受冷却限制。参考客户端会在 10 分钟内复用待定的密钥。
-  没有密钥的明文请求不能事后允许。详见 [docs/pairing-approval.md](docs/pairing-approval.md)。
 - 密钥存在 App 的沙盒里，而不是钥匙串，所以重新签名不会让它失效。
 
 参考实现见 `Scripts/loopctrl_rpc.py` 和 `cli/main.c`。
 
 </details>
 
+### 研究笔记
+
+[`docs/research/`](docs/research/) 里是说明书背后的测量和设计：[操控速度与准确率](docs/research/control-speed-accuracy.md)、
+[跨 App 操作手册设计](docs/research/operation-playbook-design.md)、[App 知识如何积累和维护](docs/research/app-knowledge-workflow.md)，
+以及 [SKILL.md A/B 测试](docs/research/skill-ab-test.md)（测试工具在 [`tools/skill-ab/`](tools/skill-ab/)）。
+
 <a id="build"></a>
-## 从源码构建
+### 从源码构建
 
 需要 macOS、Xcode（登录任意 Apple ID 即可）、XcodeGen 和 Rust：
 
 ```bash
 brew install xcodegen
 rustup target add aarch64-apple-ios
-make ipa-allinone            # → LoopCtrl-AllInOne.ipa（一个 App）
+make ipa-allinone            # → LoopCtrl-AllInOne.ipa（一个 App，发布的就是它）
 make ipa                     # → LoopCtrl.ipa + LoopCtrlUITests-Runner.ipa（两个 App）
 ```
 
 - 加上 `UNSIGNED=1` 可以跳过 Xcode 签名，改用 ad-hoc 签名（bundle 前缀为 `com.openminis`）。
   适合反正要交给 SideStore 或 `sign-ipa.sh` 重新签名的包。
-- 分享构建好的 IPA 之前，先用 `Scripts/package-release.sh` 去掉里面的描述文件（含你的姓名、team 和设备 UDID）。
+- 分享 `LoopCtrl-AllInOne.ipa` 之前，先用 `Scripts/package-release.sh` 去掉里面的描述文件（含你的姓名、team 和设备 UDID）；
+  加 `--two-app` 会把双 App 版也一起处理。正式发布由 [`.github/workflows/release.yml`](.github/workflows/release.yml) 构建。
 - 第一次运行 `make` 时，会从源码构建 idevice 框架（要几分钟，只需一次），还会生成包含你的 team 和 bundle 前缀的
   `Config/Local.xcconfig`，并根据 `project.yml` 生成 Xcode 工程。签名设置请改在这些文件里，不要在 Xcode 里改。
-- **双 IPA 版** 把 App 和 runner 分开安装，App 通过 `loopctrl://` URL scheme 启动 runner。它占两个侧载名额，
-  在 App 里切换局域网访问需要点一次允许。一体版如何在进程内加载 runner，见
-  [`docs/runner-merge-spike.md`](docs/runner-merge-spike.md)。
+- 一体版如何在进程内加载 runner，见 [`docs/runner-merge-spike.md`](docs/runner-merge-spike.md)。
 - **CLI** 单独构建，需要 Docker 或 `zig`：`make -C cli build`、`make -C cli test`，或用 `make -C cli macos`
   构建支持近场发现的 macOS 客户端。`cli/loopctrl` 已提交进仓库，因为 runner 会内置它；修改 `cli/main.c`
   或协议后记得重新构建。
 
 | 目录 | 内容 |
 |---|---|
-| `LoopCtrlApp/` | SwiftUI App：主屏幕、设置、配对与磁盘镜像挂载（`DDI/`）、进程内 runner（`Runner/`） |
+| `LoopCtrlApp/` | SwiftUI App：主屏幕、设置、远程服务、配对与磁盘镜像挂载（`DDI/`）、进程内 runner（`Runner/`） |
 | `LoopCtrlUITests/` | 自动化引擎：runner、各类操作的处理、多语言文案 |
-| `LoopCtrlKit/` | 两者共用：HTTP 服务、配对与加密信封、方法注册表 |
+| `LoopCtrlKit/` | 两者共用：HTTP 服务、配对与加密信封、方法注册表、邀请解析 |
 | `cli/`、`Scripts/` | 客户端，以及签名和打包脚本 |
 | `SKILL.md` | 手机在 `/skill` 提供的说明书 |
 
-## 局限
+<a id="security"></a>
+## 安全模型
+
+- 在你放开访问之前，服务只监听 `127.0.0.1`；每放开一级，都要在手机上手动打开。
+- 每个客户端都用 X25519 密钥配对，并且要你在手机上点允许。密钥指纹让你确认它就是你要连的那个客户端。
+- 每个 `/rpc` 请求都用该客户端独有的密钥加密和认证；重放和过期时间戳会被拒绝。密钥 30 天不用就失效，也可以随时吊销。
+- 预先授权的范围很窄：事后允许只能用一次，并绑定一把公钥；远程邀请只预先授权它列出的密钥，而且只对经过该中继的请求生效。
+- 中继不受信任，只能看到封好的信封。
+- 不在保护范围内：无需密钥的接口和屏幕视频流，在任何通道上都不加密。
+
+<a id="limits"></a>
+## 已知局限
 
 - 用到了 XCTest 和系统的私有 API，不能上 App Store，未来的 iOS 版本也可能让部分功能失效。较新的 iOS
-  已经拒绝返回完整的 App 列表，`list_apps` 会退而返回 LoopCtrl 打开过的 App。找 App 请用 `resolve_app` 和 `launch_app`。
+  已经拒绝返回完整的 App 列表，`list_apps` 会退而返回 LoopCtrl 打开过的 App；找 App 请用 `resolve_app` 和 `launch_app`。
+- **iOS 16** 尚未在真机上验证：旧式挂载已经写好，并对照 idevice 源码检查过，但进程内 XCTest 启动在 iOS 16 上能否成功还没有测过。
+- **iOS 17.0–17.3**：手机上的挂载需要 RemotePairing 记录，而这几个版本无法只靠 USB 生成。请改用 Xcode 挂载。
+- **LoopCtrl Pair → LoopCtrl**：LoopCtrl 还不会自动读取 LoopCtrl Pair 写进来的配对文件，这部分还在开发中。
+  在那之前，请在设置里导入配对文件。
+- **“Automation Running” 浮层** 在服务运行时会显示。一体版里点停止会交还自动化权限，浮层随之消失；再次启动时重新接管
+  （iOS 可能要求输入锁屏密码）。如果 iOS 不肯交还，服务日志里会写明，浮层会一直留到 LoopCtrl 退出：在多任务界面划掉它即可。
 - `unlock` 只能点亮屏幕，不能输入锁屏密码。长时间无人值守运行时，把自动锁定设为“永不”。熄屏不会让服务停止。
 - 带有机器人检测的 App 仍然可能识别出自动化操作。
-- 无需密钥的接口通过近场也能访问；屏幕视频流在任何通道上都不加密。
 - 如果旧版 runner 留下了很大的“系统数据”，可以通过 USB 连接后运行 `Scripts/clean-xctest-attachments.sh`
   查看，确认后加 `--delete` 清理。
 

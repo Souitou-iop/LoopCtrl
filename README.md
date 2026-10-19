@@ -12,11 +12,13 @@
 </p>
 
 <p align="center">
-  <a href="#why">Why LoopCtrl</a> ·
-  <a href="#setup">Put it on a phone</a> ·
-  <a href="#daily">Day to day</a> ·
-  <a href="#clients">Write a client</a> ·
-  <a href="#build">Build from source</a>
+  <a href="#install">Install</a> ·
+  <a href="#requirements">Requirements</a> ·
+  <a href="#approval">Pairing approval</a> ·
+  <a href="#access">Access</a> ·
+  <a href="#developers">For agents and developers</a> ·
+  <a href="#security">Security</a> ·
+  <a href="#limits">Known limits</a>
 </p>
 
 ---
@@ -32,48 +34,34 @@ asks to pair. You tap **Allow** in the notification. From then on it can see
 the screen and tap, swipe and type in any app, the way you would.
 
 Use `127.0.0.1` when the agent runs on the phone itself (Minis, for example).
-For an agent on a computer, switch on **LAN Access** and use the Wi-Fi
-address the app shows.
+For an agent on a computer on the same Wi-Fi, switch on **LAN Access** and use
+the address the app shows. From anywhere else, connect through a
+[remote service](#remote) or a [tailnet](#tailnet).
 
 > [!CAUTION]
 > **A paired client controls the whole phone**: every app, every screen,
 > everything you could type. Approve only pairing requests you started
-> yourself, and check that the key on the phone matches the one your client
-> prints. Keep LAN Access off when you don't need it, and don't leave an
-> agent alone with payments, messages or anything you can't undo. Use it on
-> your own devices, for testing and research.
+> yourself, and check that the key fingerprint on the phone matches the one
+> your client prints. Keep LAN Access and remote connections off when you don't
+> need them, and don't leave an agent alone with payments, messages or anything
+> you can't undo. Use it on your own devices, for testing and research.
 
-<a id="why"></a>
-## Why LoopCtrl
+## What it does
 
-**1. Agents can learn it on their own.** You don't paste API docs into a
-prompt. The phone serves an operating manual written for models
-(`GET /skill`), a schema of every method (`GET /schema`) and ready-made clients
-(`GET /skill/clients/…`). Replies are written for the agent too: actions wait
-for the screen to settle and say so, and they come back with a `hint` about
-what to do next. Errors say how to recover, and element `ref`s warn when a
-label matches something off screen or a look-alike. `device_info` reports a
-`capabilities` list, so a client checks features instead of comparing versions.
-
-**2. All of it runs on the phone.** The server is an XCUITest runner on the
-device. An agent on the same phone talks to it over `127.0.0.1`, with no
-computer anywhere. Setup can stay on the phone too: install with a free Apple ID
-through SideStore, pair on the device (iOS 27 and later) or import a pairing
-file, and mount the Developer Disk Image from the app through a tunnel app
-(LocalDevVPN or Shadowrocket). A Mac is optional.
-
-**3. Nobody gets in without you.** Out of the box the server listens on
-`127.0.0.1` only. Every client asks to pair, and you approve it on the phone,
-where a key fingerprint lets you check it is the client you meant. After
-that, every request is encrypted and authenticated, and stale or replayed
-requests are refused. You can revoke clients from the app at any time.
-
-**4. One app to install.** The all-in-one build puts the app and the runner in
-a single IPA. That uses one of a free account's three sideloading slots, and
-Start, Stop and Start again all happen without leaving LoopCtrl.
-
-<a id="how"></a>
-## How it works
+- **Agents learn it on their own.** The phone serves an operating manual
+  written for models (`GET /skill`), a schema of every method (`GET /schema`)
+  and ready-made clients (`GET /skill/clients/…`). Actions wait for the screen
+  to settle and come back with a `hint` for the next step; errors say how to
+  recover.
+- **It all runs on the phone.** The server is a long-lived XCUITest runner on
+  the device. An agent on the same phone talks to it over `127.0.0.1`. The
+  app mounts the Developer Disk Image itself, so after a reboot you need one
+  tap, not a computer.
+- **Nobody gets in without you.** Every client asks to pair and you approve it
+  on the phone, after checking its key fingerprint. Every request after that is
+  encrypted and authenticated. Clients can be revoked at any time.
+- **One app to install.** The all-in-one build carries the app and the runner
+  in a single IPA, so it uses one of a free Apple ID's three sideloading slots.
 
 ```mermaid
 sequenceDiagram
@@ -93,38 +81,34 @@ sequenceDiagram
     end
 ```
 
-Under the hood, LoopCtrl is a long-lived XCUITest session that iOS keeps open
-while the server runs. That is why it can reach every app, and why it needs the
-Developer Disk Image mounted first.
+<a id="install"></a>
+## Install
 
-<a id="setup"></a>
-## Put it on a phone
-
-You need an iPhone with **Developer Mode** on (Settings → Privacy & Security →
-Developer Mode, then restart). The app runs on iOS 16 and later, but mounting
-the disk image on the phone itself needs **iOS 17 or later**, and pairing on the
-phone needs **iOS 27**. On iOS 16, mount the image from a computer with
-Xcode or `devicectl`.
-
-1. **Get the IPA.** Build `LoopCtrl-AllInOne.ipa` with
-   `make ipa-allinone UNSIGNED=1` ([Build from source](#build)), or use one
-   someone built for you.
+1. **Download `LoopCtrl-AllInOne.ipa`** from
+   [Releases](https://github.com/Souitou-iop/LoopCtrl/releases). It is the
+   recommended build and the only one attached to releases. `SHA256SUMS.txt`
+   next to it has its checksum. The package is unsigned: it carries no
+   provisioning profile, team id or device identifiers.
 2. **Sign and install it.** With a free Apple ID, use the **latest SideStore**
-   (My Apps → +). With a paid account, run `Scripts/sign-ipa.sh -i LoopCtrl-AllInOne.ipa`
-   and install the result. Then trust the certificate under
-   Settings → General → VPN & Device Management.
-3. **Mount the disk image.** Open LoopCtrl and tap **Mount Disk Image**. The
-   app walks you through it: pair, download the image files once, connect to
-   Wi-Fi, connect the tunnel app, mount.
-4. **Start.** Tap **Start Server**. The first time, iOS asks for your passcode
-   and for **Notifications** and **Local Network**. Allow both, because
-   notifications are where you approve clients.
+   (My Apps → +). With a paid account on a Mac, run
+   `Scripts/sign-ipa.sh -i LoopCtrl-AllInOne.ipa` and install the result. Then
+   trust the certificate under Settings → General → VPN & Device Management,
+   and turn on **Developer Mode** (Settings → Privacy & Security → Developer
+   Mode, then restart).
+3. **Pair once.** On iOS 27 and later, pair on the phone. Below iOS 27, pair
+   once over USB with [LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair)
+   or import a pairing file. See [Requirements](#requirements).
+4. **Mount the disk image.** Connect LocalDevVPN or Shadowrocket, open
+   LoopCtrl and tap **Mount Disk Image**. The app walks you through it.
+5. **Start.** Tap **Start Server**. The first time, iOS asks for your passcode
+   and for **Notifications** and **Local Network**. Allow both: notifications
+   are where you approve clients.
 
 Now hand your agent the sentence at the top.
 
 > [!NOTE]
-> **After every reboot**, mount the disk image again (step 3). Your pairing
-> file and the downloaded images are kept, so it takes one tap.
+> **After every reboot**, mount the disk image again (step 4). The pairing file
+> and the downloaded images are kept, so it takes one tap.
 
 <details>
 <summary><b>Why not any signer?</b> And the other ways to sign and install</summary>
@@ -152,26 +136,17 @@ produce an app that **crashes as soon as it opens**. These routes handle it:
 </details>
 
 <details>
-<summary><b>Mounting the disk image</b>: what the app needs, and the alternatives</summary>
+<summary><b>The two-app build</b> (advanced, or as a fallback)</summary>
 
-On recent iOS, developer services are only reachable through a tunnel. The
-tunnel app (LocalDevVPN, or Shadowrocket with Settings → Other →
-"Include Route 10.7.0.1/32" on) reflects one private address back to the
-phone. It routes no other traffic. LoopCtrl's mounter is built on
-[idevice](https://github.com/jkcoxson/idevice).
+`make ipa` builds `LoopCtrl.ipa` and `LoopCtrlUITests-Runner.ipa`: the app and
+the runner as two separate apps. The app starts the runner through its
+`loopctrl://` URL scheme. It is not attached to releases, so build it from
+source ([Build from source](#build)).
 
-- **Pairing.** On iOS 27 and later, tap **Pair on this device**, then go to
-  Settings → Privacy & Security → Developer Mode → "Pair with LoopCtrl" and
-  enter the code the app shows. On iOS 17 to 26, pair once on a computer over USB and import the
-  resulting pairing file, or import one exported by iLoader (iOS 17.4 or
-  later). A file from `idevicepair` alone won't mount. LoopCtrl's own desktop
-  pairing tool is planned.
-- **Mounting.** The on-device mounter supports iOS 17 and later: the
-  personalized image on 17 to 26.3, the cryptex image on 26.4 and later.
-- **Network.** Any Wi-Fi works; cellular alone doesn't. The first mount needs
-  internet access, because Apple signs the image for your specific device.
-- **Other ways.** Connecting to Xcode on a Mac mounts it, and so does
-  [StikDebug](https://github.com/StikDebug/StikDebug).
+Use it if you want to drive the runner from Xcode, or if the all-in-one build
+misbehaves on your device. It costs two sideloading slots, changing LAN Access
+from the app needs one extra Allow, and the [remote service](#remote) needs
+the all-in-one build.
 
 </details>
 
@@ -188,62 +163,168 @@ phone. It routes no other traffic. LoopCtrl's mounter is built on
 
 </details>
 
-<a id="daily"></a>
-## Day to day
+<a id="requirements"></a>
+## Requirements by iOS version
 
-**The home screen** shows where things stand (pairing, disk image, service)
-and offers one button for the next step: mount, start or stop. While the
-server runs, the home screen shows the server's addresses (tap one to copy
-it) and the **LAN Access** switch.
+The app runs on **iOS 16 and later**. What changes between versions is how you
+pair and which Developer Disk Image the app mounts:
 
-**Settings** is where you pair and mount, change the port, see who is
-authorized and revoke them, read the runner's and the app's logs, and look up
-the server's version and capabilities.
+| iOS | Pairing | Disk image mounted on the phone |
+|---|---|---|
+| 16 | USB, once: [LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair), or import a lockdown pairing file (`idevicepair`, jitterbugpair, iLoader) | Legacy `DeveloperDiskImage.dmg`, over lockdownd ([details](docs/ios16-ddi-mount.md)) |
+| 17.0–17.3 | Not supported on the phone yet (see [Known limits](#limits)) | Mount from Xcode instead |
+| 17.4–26.3 | USB, once: LoopCtrl Pair, or import a pairing file from iLoader | Personalized image |
+| 26.4–26.x | USB, once: LoopCtrl Pair, or import a pairing file from iLoader | Cryptex image |
+| 27 and later | **On the phone**: tap **Pair on this device**, then Settings → Privacy & Security → Developer Mode → "Pair with LoopCtrl" and enter the code | Cryptex image |
 
-**Notifications** carry the same controls when you're in another app.
-Long-press the server notification to switch LAN Access or Nearby Discovery
-or to stop the server, and long-press a pairing request to allow or deny it.
-Missed the notification? While a request waits, the home screen shows it as a
-card with Allow and Deny, and **Authorized N clients** opens the Authorization
-page: the waiting request, requests from the last 10 minutes (a timed-out one
-can still be allowed, and the client gets in on its next try), and every
-client holding a key, with revoke.
-Approving needs the phone unlocked.
+For every version:
 
-**Who can reach it.** It goes one step at a time, and each step needs you on
-the phone:
+- **A tunnel app** for the loopback: [LocalDevVPN](https://apps.apple.com/app/localdevvpn/id6755608044),
+  or Shadowrocket with Settings → Other → "Include Route 10.7.0.1/32" on. It
+  reflects one private address back to the phone and routes no other traffic.
+- **Wi-Fi.** Any network works; cellular alone doesn't.
+- **Disk images** are downloaded once from
+  [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage),
+  pinned to one commit: jsDelivr first, then GitHub. Every file is checked
+  against a pinned SHA-256 wherever it came from. On iOS 17 and later the first
+  mount also needs internet, because Apple signs the image for your device.
+- **LoopCtrl Pair** runs on Windows, macOS, Linux and Android (with USB OTG).
+  It handles Trust and Developer Mode, creates the record your iOS version
+  needs, writes it into LoopCtrl and verifies it. A file from `idevicepair`
+  alone won't mount on iOS 17 and later: those versions need a RemotePairing
+  record.
+
+LoopCtrl's mounter is built on [idevice](https://github.com/jkcoxson/idevice).
+Connecting the phone to Xcode on a Mac also mounts the image.
+
+<a id="approval"></a>
+## Pairing approval
+
+Every new client needs your **Allow** on the phone, whichever way it
+connects. Approving needs the phone unlocked.
+
+- **The notification** shows the client's name, where it came from (this
+  phone, USB, LAN, Nearby, Tailscale, VPN, relay…) and its key fingerprint.
+  Long-press it to allow or deny. Swiping it away doesn't deny the request.
+- **The home-screen card.** While a request waits, the home screen shows it
+  with the same details, a countdown, and Allow and Deny. It stays until the
+  request is answered or times out (60 s).
+- **Allow after the fact.** Missed it? A denied or timed-out request stays in
+  the recent list for 10 minutes. **Allow This Client** there lets that client
+  in on its next try, with no new prompt. The grant is bound to the full
+  SHA-256 of the client's public key, not to its name or the short
+  fingerprint, and it is used once. The reference clients keep their pending
+  key for 10 minutes so a retry matches.
+- **The Authorization page** (**Authorized N clients** on the home screen, or
+  Settings): the waiting request, the requests from the last 10 minutes with
+  their outcome, and every client holding a key with where it connects from and
+  when it was last active. Swipe to revoke one, or revoke all.
+
+Details: [docs/pairing-approval.md](docs/pairing-approval.md).
+
+<a id="access"></a>
+## Access
+
+Out of the box the server listens on `127.0.0.1` only. Each step below widens
+who can *ask* to pair; every client still needs your Allow.
 
 | | Who can ask to pair |
 |---|---|
 | Default | Apps on this phone, and a computer over USB |
 | **LAN Access** on | Anyone on the same Wi-Fi who knows the address |
-| **Nearby Discovery** on | Also Macs close by, with no shared network (peer-to-peer Wi-Fi); the phone announces itself |
+| **LAN + Nearby** | Also Apple devices close by, with no shared network (AWDL); the phone announces itself |
+| **Remote service** | Operators named in an invite you accepted, through a relay |
+| **Tailnet** | Devices on your Tailscale or Headscale network, with LAN Access on |
 
-Every client still needs your **Allow**, whichever step you're on. Nearby
-Discovery can be turned on only from the phone itself. With it on, a client
-needs no address at all:
-`python3 loopctrl_rpc.py scan`, then `--nearby "<name or id>"`.
+### LAN Access
 
-**Port.** The default is **8300**. You can change it in Settings (1024–65534)
-while the server is stopped; Nearby Discovery uses the port above it. Don't
-share a port with another automation app such as iCTRL, because two runners
-on one port get in each other's way.
+Switch it on from the home screen or the server notification. The home screen
+shows the server's addresses (tap one to copy it). The default port is
+**8300**; change it in Settings (1024–65534) and the service restarts on the
+new port. Nearby discovery uses the port above it. Don't share the port with
+another automation app, because two runners on one port get in each other's
+way.
 
-> [!NOTE]
-> **Known issue.** After you stop the server in the all-in-one build, iOS's
-> "Automation Running" overlay stays until LoopCtrl quits. It's under
-> investigation; until then, swipe LoopCtrl away from the app switcher to
-> clear it.
+Nearby discovery can be turned on only from the phone itself. With it on, a
+client needs no address: `python3 loopctrl_rpc.py scan`, then
+`--nearby "<name or id>"`.
 
-<a id="clients"></a>
-## Write a client
+<a id="remote"></a>
+### Remote service
 
-Every `/rpc` request travels in an encrypted envelope, and there is no
-plaintext mode. Start from a client the phone serves:
+**Remote Service** on the home screen connects the phone to a relay, so an
+operator on another network can reach it. Add a connection from:
+
+- an **invite link** (`loopctrl://connect?…`), pasted or opened;
+- a **QR code**, scanned with the camera or picked from Photos;
+- **manual entry** of the server address and connection code.
+
+The **confirmation screen** shows the server, whether the connection is
+encrypted and the certificate pinned, the operators the invite names, and what
+they will be able to do. When the invite names its operators, the app checks
+them against what the server reports and refuses a mismatch. Confirming
+**pre-approves exactly those operators' keys**, and only for requests that
+come through that relay. An invite that names none (manual entry, text form)
+pre-approves nobody: you compare fingerprints, and each operator is asked about
+like any other client.
+
+From the connection's page you can **disconnect** (keep the binding, reconnect
+later) or **unbind** (the relay forgets this phone). It also shows who is
+operating, recent activity and the relay's certificate.
+
+The relay is **untrusted**. It forwards end-to-end encrypted envelopes, and
+pairing and every request stay sealed between the operator's client and the
+phone. The phone's own credential is an Ed25519 key that stays in its Keychain.
+There is **no server built into the app**: use a provider, or host your own
+(see [Self-hosting](#self-hosting)). Protocol and enrollment API:
+[docs/relay-enrollment.md](docs/relay-enrollment.md). Remote connections work
+in the all-in-one build only.
+
+<a id="tailnet"></a>
+### Tailscale and Headscale
+
+A tailnet is another way in. Put the phone on a Tailscale or Headscale
+network, switch on LAN Access, and give the agent the phone's tailnet address
+(`100.x.y.z`). Requests from tailnet addresses (100.64.0.0/10 and
+fd7a:115c:a1e0::/48) show up as tailnet peers in the approval prompt and on
+the Authorization page, and are treated as remote, never as local. Shadowrocket
+can run a tailnet node and the loopback route at the same time, which saves
+juggling two VPNs.
+
+<a id="self-hosting"></a>
+## Self-hosting
+
+The reference relay and a Headscale deployment live in
+[LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server). Anyone can
+also implement the relay API from [docs/relay-enrollment.md](docs/relay-enrollment.md).
+
+<a id="developers"></a>
+## For agents and developers
+
+### The API
+
+JSON-RPC 2.0 over `POST /rpc`, inside an encrypted envelope. There is no
+plaintext mode. `GET /schema` lists every method and parameter, and
+[`SKILL.md`](SKILL.md) is the manual the phone serves at `GET /skill`.
+
+- **See**: `page_source`, `find_element`, `screen_text` (on-device OCR), `screenshot`, `collect`
+- **Touch**: `tap`, `double_tap`, `long_press`, `tap_element`, `find_and_tap`, `swipe`, `scroll`, `scroll_to_element`, `page`, `drag`
+- **Type**: `type`, `clear_text`
+- **Apps**: `resolve_app`, `launch_app`, `activate_app`, `terminate_app`, `list_apps`, `open_url`
+- **Device**: `device_info`, `home`, `lock`, `unlock`, `is_locked`, `wait`
+- **Server**: `config`, `logs`, `reset`, `stream_ticket`
+
+`device_info` reports a `capabilities` list, so a client checks features
+instead of comparing versions. Plain HTTP: `/skill`, `/schema`, `/whoami`,
+`/docs` and `/pair` need no key. `/remote` is a browser control page that asks
+for a key before it controls anything. `/stream` (live H.264) and `/logs` take
+a single-use ticket from `stream_ticket`.
+
+### Clients
 
 | Client | Download from | Good for |
 |---|---|---|
-| Python, [`Scripts/loopctrl_rpc.py`](Scripts/loopctrl_rpc.py) | `/skill/clients/python` | Any OS. Standard library only; pairing over Wi-Fi also needs `cryptography`. Includes `scan` and `--nearby`. |
+| Python, [`Scripts/loopctrl_rpc.py`](Scripts/loopctrl_rpc.py) | `/skill/clients/python` | Any OS. Standard library only; pairing over the network also needs `cryptography`. Includes `scan` and `--nearby`. |
 | Static CLI, [`cli/`](cli/) | `/skill/clients/cli` + `/skill/clients/cli.sh` | Sandboxes with no interpreter. `aarch64-linux-musl`, no dependencies; run it as `sh loopctrl.sh …`. |
 
 ```bash
@@ -254,22 +335,8 @@ python3 loopctrl_rpc.py --host <phone>:8300 call find_element '{"element_id":"Wi
 ```
 
 Keys are kept per device in `~/.loopctrl/token.json`, which both clients
-share. One pairing then works over USB, Wi-Fi and Nearby alike. A key that goes
+share, so one pairing works over USB, Wi-Fi and Nearby alike. A key that goes
 unused for 30 days expires.
-
-**Methods** (JSON-RPC 2.0 over `POST /rpc`; `GET /schema` has every parameter):
-
-- **See**: `page_source`, `find_element`, `screen_text` (on-device OCR), `screenshot`, `collect`
-- **Touch**: `tap`, `double_tap`, `long_press`, `tap_element`, `find_and_tap`, `swipe`, `scroll`, `scroll_to_element`, `page`, `drag`
-- **Type**: `type`, `clear_text`
-- **Apps**: `resolve_app`, `launch_app`, `activate_app`, `terminate_app`, `list_apps`, `open_url`
-- **Device**: `device_info`, `home`, `lock`, `unlock`, `is_locked`, `wait`
-- **Server**: `config`, `logs`, `reset`, `stream_ticket`
-
-**Plain HTTP**: `/skill`, `/schema`, `/whoami`, `/docs` and `/pair` need no key.
-`/remote` is a browser control page that you can add to the Home Screen, and
-it asks for a key before it controls anything. `/stream` (live H.264) and
-`/logs` take a single-use ticket from `stream_ticket`.
 
 <details>
 <summary><b>The pairing and envelope protocol</b></summary>
@@ -283,12 +350,6 @@ it asks for a key before it controls anything. `/stream` (live H.264) and
   nonce. Replays are refused, and so are timestamps more than ±120 s off.
 - Only one request waits at a time, with a cooldown after a refusal. Requests
   from the phone itself get their own slot.
-- A refused or timed-out request stays in the app's recent list for 10 minutes.
-  Allowing it there arms a one-shot grant bound to the SHA-256 of the client's
-  X25519 public key: the next `/pair` with that same key is approved without a
-  prompt or cooldown. The reference clients reuse a pending key for 10 minutes
-  for this. A plain (keyless) request can't be allowed afterwards. Details:
-  [docs/pairing-approval.md](docs/pairing-approval.md).
 - Keys live in the app's sandbox, not the Keychain, so re-signing the app keeps
   them.
 
@@ -296,15 +357,24 @@ The reference implementations are `Scripts/loopctrl_rpc.py` and `cli/main.c`.
 
 </details>
 
+### Research notes
+
+[`docs/research/`](docs/research/) has measurements and designs behind the
+manual: [control speed and accuracy](docs/research/control-speed-accuracy.md),
+the [cross-app playbook design](docs/research/operation-playbook-design.md),
+[how app knowledge is kept](docs/research/app-knowledge-workflow.md) and the
+[SKILL.md A/B test](docs/research/skill-ab-test.md) (kit in
+[`tools/skill-ab/`](tools/skill-ab/)).
+
 <a id="build"></a>
-## Build from source
+### Build from source
 
 You need macOS, Xcode (signed in with any Apple ID), XcodeGen and Rust:
 
 ```bash
 brew install xcodegen
 rustup target add aarch64-apple-ios
-make ipa-allinone            # → LoopCtrl-AllInOne.ipa  (one app)
+make ipa-allinone            # → LoopCtrl-AllInOne.ipa  (one app, what releases ship)
 make ipa                     # → LoopCtrl.ipa + LoopCtrlUITests-Runner.ipa  (two apps)
 ```
 
@@ -312,15 +382,14 @@ make ipa                     # → LoopCtrl.ipa + LoopCtrlUITests-Runner.ipa  (t
   `com.openminis`). Use it for IPAs that SideStore or `sign-ipa.sh` will
   re-sign anyway.
 - `Scripts/package-release.sh` strips your provisioning profile (name, team,
-  device UDIDs) from built IPAs before you share them.
+  device UDIDs) from `LoopCtrl-AllInOne.ipa` before you share it; add
+  `--two-app` to package the two-app build too. Releases are built by
+  [`.github/workflows/release.yml`](.github/workflows/release.yml).
 - The first `make` builds the idevice framework from source (several minutes,
   once). It also writes `Config/Local.xcconfig` with your team and bundle
   prefix, and generates the Xcode project from `project.yml`. Change signing
   there, not in Xcode.
-- **The two-IPA build** installs the app and the runner separately; the app
-  starts the runner through its `loopctrl://` URL scheme. It uses two
-  sideloading slots, and changing LAN Access from the app needs one Allow.
-  [`docs/runner-merge-spike.md`](docs/runner-merge-spike.md) (in Chinese)
+- [`docs/runner-merge-spike.md`](docs/runner-merge-spike.md) (in Chinese)
   explains how the all-in-one build loads the runner in-process.
 - **The CLI** builds separately with Docker or `zig`: `make -C cli build`,
   `make -C cli test`, or `make -C cli macos` for a macOS client with Nearby
@@ -329,24 +398,53 @@ make ipa                     # → LoopCtrl.ipa + LoopCtrlUITests-Runner.ipa  (t
 
 | Folder | What's in it |
 |---|---|
-| `LoopCtrlApp/` | The SwiftUI app: home screen, Settings, pairing and disk-image mounting (`DDI/`), the in-process runner (`Runner/`) |
+| `LoopCtrlApp/` | The SwiftUI app: home screen, Settings, remote service, pairing and disk-image mounting (`DDI/`), the in-process runner (`Runner/`) |
 | `LoopCtrlUITests/` | The automation engine: the runner, action handlers, strings in every language |
-| `LoopCtrlKit/` | Shared by both: HTTP server, pairing and envelope, the method registry |
+| `LoopCtrlKit/` | Shared by both: HTTP server, pairing and envelope, the method registry, invites |
 | `cli/`, `Scripts/` | Clients, signing and packaging scripts |
 | `SKILL.md` | The manual the phone serves at `/skill` |
 
-## Limits
+<a id="security"></a>
+## Security model
+
+- The server listens on `127.0.0.1` until you widen access, and each widening
+  is a switch on the phone.
+- Every client pairs with an X25519 key and needs your Allow on the phone. The
+  fingerprint lets you check it is the client you meant.
+- Every `/rpc` request is encrypted and authenticated with a per-client key;
+  replays and stale timestamps are refused. Keys expire after 30 days unused
+  and can be revoked at any time.
+- Pre-approval is narrow: an after-the-fact Allow is one-shot and bound to one
+  public key; a remote invite pre-approves only the keys it names, and only
+  through that relay.
+- Relays are untrusted and see only sealed envelopes.
+- Not covered: the endpoints that need no key, and the screen stream, are not
+  encrypted on any channel.
+
+<a id="limits"></a>
+## Known limits
 
 - It uses private XCTest and system APIs. It is not for the App Store, and a
-  future iOS version may break parts of it. Newer iOS already refuses the
-  full app list, so `list_apps` falls back to the apps LoopCtrl has opened
-  before. Use `resolve_app` and `launch_app` to find an app.
+  future iOS version may break parts of it. Newer iOS already refuses the full
+  app list, so `list_apps` falls back to the apps LoopCtrl has opened before;
+  use `resolve_app` and `launch_app` to find an app.
+- **iOS 16** support is unverified on a device: the legacy mount is written
+  and checked against idevice's source, but whether the in-process XCTest
+  bootstrap works there has not been tested.
+- **iOS 17.0–17.3**: the on-phone mounter needs a RemotePairing record, which
+  can't be created over plain USB on these versions. Mount from Xcode instead.
+- **LoopCtrl Pair → LoopCtrl**: LoopCtrl doesn't yet pick up the pairing file
+  LoopCtrl Pair writes into it; that import is still being built. Until it
+  lands, import a pairing file in Settings.
+- **The "Automation Running" overlay** shows while the server runs. In the
+  all-in-one build, Stop hands automation back so the overlay goes, and Start
+  takes it again (iOS may ask for your passcode). If iOS refuses to hand it
+  back, the server log says so and the overlay stays until LoopCtrl quits:
+  swipe it away in the app switcher.
 - `unlock` wakes the screen but can't enter a passcode. For long unattended
   runs, set Auto-Lock to Never. The server keeps running while the screen is
   off.
 - Apps with bot detection may still notice automation.
-- Endpoints that need no key also answer over Nearby, and the screen stream is
-  not encrypted on any channel.
 - If an older runner left large "System Data" behind, connect over USB and run
   `Scripts/clean-xctest-attachments.sh` to list it, then run it with `--delete`.
 
