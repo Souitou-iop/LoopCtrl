@@ -14,7 +14,8 @@ final class RunnerAdmin: ObservableObject {
         let lastActiveAt: Date?
         /// Where its last request came from; nil before it was recorded.
         let lastAddress: String?
-        /// `PeerSource` raw value: local, lan, nearby, vpn, cellular, other.
+        /// `PeerSource` raw value: local, lan, nearby, vpn, tailnet,
+        /// cellular, other.
         let lastVia: String?
         /// Let in by a remote service pre-approval for this connection.
         var relayConnection: String? = nil

@@ -303,6 +303,9 @@ class JSONRPCServer {
                 let ok = b.withUnsafeBytes { inet_ntop(AF_INET6, $0.baseAddress, &text, socklen_t(text.count)) } != nil
                 address = ok ? String(cString: text) : "\(a)"
                 if b.count == 16, b[0..<15].allSatisfy({ $0 == 0 }), b[15] == 1 { return (address, PeerSource.local.rawValue) }
+                if b.count == 16, b[0..<6].elementsEqual(Self.tailnetV6Prefix) {   // fd7a:115c:a1e0::/48
+                    return (address, PeerSource.tailnet.rawValue)
+                }
                 zone = Self.zone(of: a)                        // link-local: the interface it came in on
             }
         case .name(let n, _):
@@ -312,6 +315,10 @@ class JSONRPCServer {
         }
         if let pct = address.firstIndex(of: "%") { address = String(address[..<pct]) }
         if let v4, v4.first == 127 { return (address, PeerSource.local.rawValue) }
+        // Tailscale / Headscale addresses (100.64.0.0/10, the CGNAT range),
+        // whichever interface they arrived on: a tailnet client built into
+        // a proxy app (Shadowrocket) shares the proxy's utun.
+        if let v4, v4.count == 4, v4[0] == 100, v4[1] & 0xC0 == 64 { return (address, PeerSource.tailnet.rawValue) }
 
         let name = zone ?? v4.flatMap(Self.interfaceName(containing:))
         guard let name else { return (address, PeerSource.other.rawValue) }
@@ -324,6 +331,9 @@ class JSONRPCServer {
         else { via = .other }
         return (address, via.rawValue)
     }
+
+    /// The first 48 bits of Tailscale's IPv6 range, fd7a:115c:a1e0::/48.
+    private static let tailnetV6Prefix: [UInt8] = [0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0]
 
     /// The local interface whose IPv4 subnet holds `addr` (point-to-point
     /// links: whose peer address is `addr`), or nil.

@@ -206,6 +206,10 @@ enum PeerSource: String {
     case nearby
     /// A VPN or proxy tunnel (utun, ipsec, ppp).
     case vpn
+    /// A Tailscale / Headscale tailnet peer (100.64.0.0/10 or
+    /// fd7a:115c:a1e0::/48), e.g. through Shadowrocket's built-in client.
+    /// Remote, like `vpn`: never granted what `local` is.
+    case tailnet
     case cellular
     /// Relayed by a remote service (docs/relay-enrollment.md). Set by the
     /// relay transport, never inferred from an interface.
