@@ -2669,7 +2669,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "loopctrl-pair"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "pair-core",
@@ -2686,7 +2686,7 @@ dependencies = [
 
 [[package]]
 name = "loopctrl-pair-bridge"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "android_logger",
  "log",
@@ -2702,7 +2702,7 @@ dependencies = [
 
 [[package]]
 name = "loopctrl-pair-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "pair-core",
@@ -3253,7 +3253,7 @@ dependencies = [
 
 [[package]]
 name = "pair-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures-util",
  "idevice",
@@ -3270,7 +3270,7 @@ dependencies = [
 
 [[package]]
 name = "pair-host"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "log",
