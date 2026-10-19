@@ -56,7 +56,6 @@ mod session;
 mod testutil;
 pub mod usbfs;
 
-use std::path::Path;
 use std::sync::OnceLock;
 
 use idevice::usbmuxd::UsbmuxdAddr;
@@ -80,7 +79,7 @@ const MAX_SOCKET_PATH: usize = 100;
 /// Binds a unix socket only this app can reach, which matters because
 /// pairing records give full control of the iPhone.
 #[cfg(unix)]
-pub fn bind_private_socket(path: &Path) -> std::io::Result<std::os::unix::net::UnixListener> {
+pub fn bind_private_socket(path: &std::path::Path) -> std::io::Result<std::os::unix::net::UnixListener> {
     use std::os::unix::fs::PermissionsExt;
 
     if path.as_os_str().len() > MAX_SOCKET_PATH {
