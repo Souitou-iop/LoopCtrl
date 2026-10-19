@@ -439,25 +439,26 @@ struct InviteConfirmView: View {
                     NoticeLabel(text: RemoteServiceText.error(error))
                     Button(L10n.rs(.retry)) { Task { await load() } }
                 }
-            case .ready(let info, let check), .enrollFailed(_, let info, let check):
+            // One branch for every stage that has the server's answer: a
+            // different branch would be new views to SwiftUI, so the sections
+            // would be rebuilt and the list would jump on each stage change.
+            case .ready(let info, let check), .enrollFailed(_, let info, let check),
+                 .enrolling(_, let info, let check), .done(let info, let check):
                 details(info, check)
                 if case .enrollFailed(let error, _, _) = stage {
                     Section { NoticeLabel(text: RemoteServiceText.error(error)) }
                 }
-            case .enrolling(let id, let info, let check):
-                details(info, check)
-                progressSection(id)
-            case .done(let info, let check):
-                details(info, check)
-                progressSection(nil)
+                if progressScrollKey > 0 {
+                    progressSection(enrollingID)
+                }
             }
         }
         // 连接 adds the steps below the fold: bring the last one into view
         // (a Section id only scrolls to the section's top).
-        // After the section has been laid out (scrolling while it is still
-        // being inserted stops short), and again once connected.
+        // Once, when 连接 adds the steps, after the section has been laid out
+        // (scrolling while it is still being inserted stops short).
         .onChange(of: progressScrollKey) { key in
-            guard key > 0 else { return }
+            guard key == 1 else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                 withAnimation(Self.stageAnimation) { proxy.scrollTo(EnrollmentStep.preApprove, anchor: .center) }
             }
@@ -605,6 +606,11 @@ struct InviteConfirmView: View {
                 StepRow(title: Self.stepTitle(step), state: stepState(step, phase))
             }
         }
+    }
+
+    private var enrollingID: String? {
+        if case .enrolling(let id, _, _) = stage { return id }
+        return nil
     }
 
     /// 0 before 连接, 1 while connecting, 2 when connected.
