@@ -183,8 +183,11 @@ class AuthManager {
     /// `keyID`: `PairRequestLedger.keyID(forPublicKey:)` of the client's key,
     /// nil for a plain loopback grant. `peer`: where it came from, for the
     /// app's card.
+    /// `relayConnection`: the 远程服务 connection a relayed request came
+    /// through; only that connection's pre-approvals apply to it.
     func requestAuth(clientName: String, nearby: Bool, local: Bool = false, fingerprint: String? = nil,
                      keyID: String? = nil, peer: (address: String, via: String)? = nil,
+                     relayConnection: String? = nil,
                      completion: @escaping (PairOutcome) -> Void) {
         let requestID = "auth-\(UUID().uuidString)"
         let source = peer.map { Self.displaySource(address: $0.address, via: $0.via) }
@@ -201,7 +204,7 @@ class AuthManager {
             completion(createSession(clientName: clientName).map { .approved($0) } ?? .denied)
             return
         }
-        if let keyID, let pre = ledger.admitPreApproved(keyID: keyID, source: source, id: requestID,
+        if let keyID, let pre = ledger.admitPreApproved(keyID: keyID, source: source, connectionID: relayConnection, id: requestID,
                                                        clientName: clientName, address: peer?.address,
                                                        fingerprint: fingerprint, now: now) {
             lock.unlock()

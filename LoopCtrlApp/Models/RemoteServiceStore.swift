@@ -34,6 +34,7 @@ final class RemoteServiceStore: ObservableObject {
     private static let logKey = "remoteServiceLog"
     private static let maxLog = 200
 
+    /// HTTP to loopback, for a relay run on the Mac in a simulator test.
     static var allowInsecureLoopback: Bool {
         #if DEBUG
         return true
@@ -44,7 +45,7 @@ final class RemoteServiceStore: ObservableObject {
 
     init(client: RemoteServiceClient? = nil) {
         self.client = client ?? (MockRemoteServiceClient.isEnabled
-                                 ? MockRemoteServiceClient() : UnavailableRemoteServiceClient())
+                                 ? MockRemoteServiceClient() : RelayRemoteServiceClient())
         load()
         for c in connections where c.autoConnect { connect(c.id) }
         #if DEBUG
@@ -166,8 +167,7 @@ final class RemoteServiceStore: ObservableObject {
         update(id, .advance(.redeemCode))
         let enrollment: RemoteEnrollment
         do {
-            enrollment = try await client.redeem(invite, devicePublicKey: key.publicKey.rawRepresentation,
-                                                 deviceName: UIDevice.current.name)
+            enrollment = try await client.redeem(invite, deviceKey: key, deviceName: UIDevice.current.name)
         } catch {
             throw fail(error as? RemoteServiceError ?? .serverUnreachable)
         }

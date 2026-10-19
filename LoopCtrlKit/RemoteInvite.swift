@@ -7,7 +7,7 @@ import Foundation
 ///
 /// Two forms are recognised:
 ///
-/// - the link, `loopctrl://connect?v=1&server=<host>&code=<8 chars>&op=<keyID,…>&pin=<spki>&exp=<unix>`;
+/// - the link, `loopctrl://connect?v=1&server=<host[/path]>&code=<8 chars>&op=<keyID,…>&pin=<spki>&exp=<unix>`;
 /// - the text a person pastes, e.g.
 ///   「LoopCtrl 连接邀请 · 服务器 relay.example.com · 连接码 7K3M-9QX2 · 10 分钟内有效」,
 ///   which carries no `op` (the operators then have to be checked by eye and
@@ -25,7 +25,8 @@ struct RemoteInvite: Equatable {
     static let codeLength = 8
 
     let version: Int
-    /// `https://host[:port]`. `http` only for loopback in a debug build.
+    /// `https://host[:port][/path]`. `http` only for loopback in a debug
+    /// build. A path is a relay mounted under a reverse-proxy location.
     let serverURL: URL
     /// Eight characters of `codeAlphabet`, no separator.
     let code: String
@@ -39,11 +40,17 @@ struct RemoteInvite: Equatable {
     /// When the code stops working, if the invite says.
     let expiresAt: Date?
 
-    /// "relay.example.com" or "relay.example.com:8443".
-    var serverDisplay: String {
-        guard let host = serverURL.host else { return serverURL.absoluteString }
+    /// "relay.example.com", "relay.example.com:8443" or "example.com/relay".
+    var serverDisplay: String { Self.serverName(serverURL) }
+
+    /// How a relay is named on screen, in invites and in the signatures the
+    /// phone makes for it (docs/relay-enrollment.md): `host[:port][/path]`,
+    /// no scheme, lower-case host, no trailing slash.
+    static func serverName(_ url: URL) -> String {
+        guard let host = url.host else { return url.absoluteString }
         let shown = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
-        return serverURL.port.map { "\(shown):\($0)" } ?? shown
+        let path = url.path == "/" ? "" : url.path
+        return (url.port.map { "\(shown):\($0)" } ?? shown) + path
     }
 
     /// "7K3M-9QX2".
@@ -207,9 +214,10 @@ struct RemoteInvite: Equatable {
         return out.count == codeLength ? out : nil
     }
 
-    /// `relay.example.com`, `relay.example.com:8443`, `https://relay.example.com/`
-    /// → `https://relay.example.com[:port]`. A path, query, user info or a
-    /// scheme other than https (http for loopback in debug) is refused.
+    /// `relay.example.com`, `relay.example.com:8443`, `https://example.com/relay/`
+    /// → `https://host[:port][/path]`. Query, fragment, user info, dot or
+    /// percent-encoded path segments, and a scheme other than https (http for
+    /// loopback in debug) are refused.
     static func serverURL(_ raw: String, allowInsecureLoopback: Bool) throws -> URL {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.hasSuffix("/") { s.removeLast() }
@@ -223,7 +231,14 @@ struct RemoteInvite: Equatable {
         } else if lower.contains("://") {
             throw ParseError.insecureServer
         }
-        guard !s.isEmpty, !s.contains("/"), !s.contains("@"), !s.contains("?"), !s.contains("#") else {
+        while s.hasSuffix("/") { s.removeLast() }
+        var path = ""
+        if let slash = s.firstIndex(of: "/") {
+            path = String(s[slash...])
+            s = String(s[..<slash])
+            guard isValidPath(path) else { throw ParseError.invalidServer }
+        }
+        guard !s.isEmpty, !s.contains("@"), !s.contains("?"), !s.contains("#") else {
             throw ParseError.invalidServer
         }
         guard let c = URLComponents(string: "\(scheme)://\(s)"), let host = c.host, !host.isEmpty,
@@ -236,8 +251,19 @@ struct RemoteInvite: Equatable {
         out.scheme = scheme
         out.host = host.lowercased()
         out.port = c.port
+        out.path = path
         guard let url = out.url else { throw ParseError.invalidServer }
         return url
+    }
+
+    /// `/a/b`: segments of unreserved characters only, none `.` or `..`.
+    private static func isValidPath(_ path: String) -> Bool {
+        let segments = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
+        guard path.count <= 200, !segments.isEmpty else { return false }
+        return segments.allSatisfy { seg in
+            !seg.isEmpty && seg != "." && seg != ".."
+                && seg.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-._~".contains($0)) }
+        }
     }
 
     private static func isValidHost(_ host: String) -> Bool {

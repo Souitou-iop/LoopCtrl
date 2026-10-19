@@ -2,10 +2,8 @@ import CryptoKit
 import Foundation
 
 /// The seam between the 远程服务 screens and whatever carries the relay
-/// traffic. Today only `MockRemoteServiceClient` implements it; the relay
-/// prototype (branch codex/qr-relay-feasibility) and a WebSocket tunnel are
-/// meant to slot in behind the same calls. The relay protocol itself is in
-/// docs/relay-enrollment.md.
+/// traffic: `RelayRemoteServiceClient` (the relay API in
+/// docs/relay-enrollment.md) or `MockRemoteServiceClient` (screens only).
 ///
 /// The relay is untrusted. It learns this phone's public key and forwards
 /// bytes; pairing and the end-to-end envelope stay between the operator's
@@ -18,9 +16,10 @@ protocol RemoteServiceClient: AnyObject {
     /// `serverUnreachable`.
     func preview(_ invite: RemoteInvite) async throws -> RemoteServerInfo
 
-    /// Redeem the one-time code with this phone's long-lived public key. The
-    /// code is spent; from now on the phone authenticates with its key.
-    func redeem(_ invite: RemoteInvite, devicePublicKey: Data, deviceName: String) async throws -> RemoteEnrollment
+    /// Redeem the one-time code with this phone's long-lived key, signing
+    /// the code to prove it holds it. The code is spent; from now on the
+    /// phone authenticates with that key.
+    func redeem(_ invite: RemoteInvite, deviceKey: Curve25519.Signing.PrivateKey, deviceName: String) async throws -> RemoteEnrollment
 
     /// Open the relay channel for an enrolled connection. Events arrive until
     /// `close` or a terminal event (`closedByServer`, `failed`).
@@ -78,10 +77,7 @@ struct RemoteConnection: Identifiable, Codable, Equatable {
     /// Reconnect on launch: it was connected when the app last ran.
     var autoConnect: Bool
 
-    var serverDisplay: String {
-        guard let host = serverURL.host else { return serverURL.absoluteString }
-        return serverURL.port.map { "\(host):\($0)" } ?? host
-    }
+    var serverDisplay: String { RemoteInvite.serverName(serverURL) }
 }
 
 /// The phone's long-lived relay credential: an Ed25519 key per connection,

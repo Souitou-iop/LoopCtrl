@@ -1,5 +1,12 @@
 # Phase 0 relay transport prototype
 
+> **Superseded.** The relay now serves the invite enrollment API in
+> `docs/relay-enrollment.md` (codes, Ed25519 device keys, challenge sign-in),
+> and the app's 远程服务 screens use it through `RelayRemoteServiceClient`.
+> `RelayRPCClient`, the enrollment token and the `relay-debug` URL described
+> below are gone; relayed requests no longer go through 127.0.0.1. This page
+> is kept for the Phase 0 measurements and reasoning.
+
 Status: prototype, not a product. It proves one path and nothing else.
 
 Companion to `docs/in-app-qr-relay-feasibility.md`, which is the design note.

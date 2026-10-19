@@ -1004,15 +1004,13 @@ struct RemoteServiceView: View {
         if selecting && store.connections.isEmpty { endSelecting() }
     }
 
-    /// Release builds: the hidden switch for the mock relay. Takes effect on
-    /// the next launch (the store picks its client once).
+    /// The hidden switch for the mock relay. Takes effect on the next launch
+    /// (the store picks its client once).
     private func toggleHiddenMock() {
-        #if !DEBUG
         let d = UserDefaults.standard
         let on = !d.bool(forKey: MockRemoteServiceClient.enabledKey)
         d.set(on, forKey: MockRemoteServiceClient.enabledKey)
         mockToast = on ? L10n.rs(.mockEnabled) : L10n.rs(.mockDisabled)
-        #endif
     }
 }
 

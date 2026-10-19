@@ -187,14 +187,17 @@ struct PairRequestLedger {
         preApprovals = list
     }
 
-    /// Let a relayed request in if its key was pre-approved. Recorded as
-    /// allowed (`autoApproved`) under `id`. Not spent: the operator may pair
-    /// again later (a new computer, a revoked key) for as long as the
-    /// connection is bound.
-    mutating func admitPreApproved(keyID: String, source: String, id: String, clientName: String,
-                                   address: String?, fingerprint: String?, now: Date) -> PreApproval? {
-        guard source == Self.relaySource,
-              let match = preApprovals.first(where: { $0.keyID == keyID.lowercased() }) else { return nil }
+    /// Let a relayed request in if its key was pre-approved for the
+    /// connection it came through (`connectionID`; a request without one is
+    /// never let in). Recorded as allowed (`autoApproved`) under `id`. Not
+    /// spent: the operator may pair again later (a new computer, a revoked
+    /// key) for as long as the connection is bound.
+    mutating func admitPreApproved(keyID: String, source: String, connectionID: String?, id: String,
+                                   clientName: String, address: String?, fingerprint: String?,
+                                   now: Date) -> PreApproval? {
+        guard source == Self.relaySource, let connectionID,
+              let match = preApprovals.first(where: { $0.keyID == keyID.lowercased() && $0.connectionID == connectionID })
+        else { return nil }
         var entry = Entry(id: id, clientName: clientName, source: source, address: address,
                           fingerprint: fingerprint, keyID: keyID, requestedAt: now, deadline: now)
         entry.outcome = .allowed

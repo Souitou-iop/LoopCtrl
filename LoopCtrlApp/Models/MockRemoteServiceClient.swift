@@ -1,9 +1,10 @@
 import CryptoKit
 import Foundation
 
-/// A pretend relay, so every 远程服务 screen can be clicked through before
-/// the real transport exists. On in DEBUG builds; in Release only after the
-/// hidden switch (long-press the footer of Settings › 远程服务).
+/// A pretend relay, so every 远程服务 screen and failure can be clicked
+/// through without a server. Off by default: the hidden switch (long-press
+/// the footer of Settings › 远程服务) turns it on, or in DEBUG the demo
+/// launch arguments.
 ///
 /// `scenario` picks what the next preview/enrolment does; the `simulate…`
 /// calls inject what an operator or the server would do on an open channel.
@@ -26,12 +27,14 @@ final class MockRemoteServiceClient: RemoteServiceClient {
     /// Release builds: the hidden switch that turns the mock on.
     static let enabledKey = "remoteServiceMockEnabled"
 
+    /// Off unless the hidden switch is on; in DEBUG also for the screenshot
+    /// launch arguments (`-remoteDemo`, `-remoteServiceMockScenario`).
     static var isEnabled: Bool {
+        let d = UserDefaults.standard
         #if DEBUG
-        return true
-        #else
-        return UserDefaults.standard.bool(forKey: enabledKey)
+        if d.string(forKey: "remoteDemo") != nil || d.string(forKey: scenarioKey) != nil { return true }
         #endif
+        return d.bool(forKey: enabledKey)
     }
 
     var scenario: Scenario {
@@ -88,7 +91,8 @@ final class MockRemoteServiceClient: RemoteServiceClient {
                                 codeExpiresAt: invite.expiresAt ?? Date().addingTimeInterval(10 * 60))
     }
 
-    func redeem(_ invite: RemoteInvite, devicePublicKey: Data, deviceName: String) async throws -> RemoteEnrollment {
+    func redeem(_ invite: RemoteInvite, deviceKey: Curve25519.Signing.PrivateKey, deviceName: String) async throws -> RemoteEnrollment {
+        let devicePublicKey = deviceKey.publicKey.rawRepresentation
         try await pause(0.5)
         if scenario == .serverUnreachable { throw RemoteServiceError.serverUnreachable }
         let info = try serverInfo(invite)
@@ -202,19 +206,4 @@ final class MockRemoteServiceClient: RemoteServiceClient {
     private static var demoActions: [String] {
         [L10n.rs(.mockActionScreen), L10n.rs(.mockActionLaunch), L10n.rs(.mockActionTap), L10n.rs(.mockActionType)]
     }
-}
-
-/// An implementation for builds without the mock: there is no relay transport
-/// yet, so every call says the server can't be reached.
-final class UnavailableRemoteServiceClient: RemoteServiceClient {
-    func preview(_ invite: RemoteInvite) async throws -> RemoteServerInfo { throw RemoteServiceError.serverUnreachable }
-    func redeem(_ invite: RemoteInvite, devicePublicKey: Data, deviceName: String) async throws -> RemoteEnrollment {
-        throw RemoteServiceError.serverUnreachable
-    }
-    func open(_ connection: RemoteConnection, deviceKey: Curve25519.Signing.PrivateKey) -> AsyncStream<RemoteChannelEvent> {
-        AsyncStream { $0.yield(.failed(.serverUnreachable)); $0.finish() }
-    }
-    func close(connectionID: String) {}
-    func unbind(_ connection: RemoteConnection, deviceKey: Curve25519.Signing.PrivateKey) async throws {}
-    func currentSPKI(_ connection: RemoteConnection) async throws -> Data { throw RemoteServiceError.serverUnreachable }
 }

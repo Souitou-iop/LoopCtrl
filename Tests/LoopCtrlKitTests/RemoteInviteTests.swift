@@ -64,11 +64,24 @@ final class RemoteInviteTests: XCTestCase {
         assertThrows("loopctrl://connect?server=a.example&code=7K3M9QX2&exp=1799999999", .expired)
         assertThrows("loopctrl://connect?server=a.example&code=7K3M9QX2&exp=soon", .expired)
         assertThrows("loopctrl://connect?server=bad_host!&code=7K3M9QX2", .invalidServer)
-        assertThrows("loopctrl://connect?server=a.example/path&code=7K3M9QX2", .invalidServer)
+        assertThrows("loopctrl://connect?server=a.example/../x&code=7K3M9QX2", .invalidServer)
+        assertThrows("loopctrl://connect?server=a.example/a%25b&code=7K3M9QX2", .invalidServer)
+        assertThrows("loopctrl://connect?server=a.example//x&code=7K3M9QX2", .invalidServer)
         assertThrows("loopctrl://connect?server=user@a.example&code=7K3M9QX2", .invalidServer)
         assertThrows("loopctrl://connect?server=ftp://a.example&code=7K3M9QX2", .insecureServer)
         assertThrows("hello world", .notAnInvite)
         assertThrows("", .notAnInvite)
+    }
+
+    // MARK: - Path prefix
+
+    func testServerWithPath() throws {
+        let invite = try RemoteInvite.parse("loopctrl://connect?v=1&server=HS.Example.com/loopctrl-relay/&code=7K3M9QX2&op=\(opA)", now: now)
+        XCTAssertEqual(invite.serverURL.absoluteString, "https://hs.example.com/loopctrl-relay")
+        XCTAssertEqual(invite.serverDisplay, "hs.example.com/loopctrl-relay")
+        XCTAssertEqual(try RemoteInvite.parse(invite.link.absoluteString, now: now), invite)
+        let text = try RemoteInvite.parse("服务器 hs.example.com:8443/a/b · 连接码 7K3M-9QX2", now: now)
+        XCTAssertEqual(text.serverURL.absoluteString, "https://hs.example.com:8443/a/b")
     }
 
     func testExpiryInTheFutureIsFine() throws {
@@ -307,9 +320,9 @@ final class PreApprovalLedgerTests: XCTestCase {
     private let keyB = PairRequestLedger.keyID(forPublicKey: Data(repeating: 0xB2, count: 32))
 
     private func admit(_ l: inout PairRequestLedger, _ keyID: String, source: String = "relay",
-                       id: String = "auth-1") -> PairRequestLedger.PreApproval? {
-        l.admitPreApproved(keyID: keyID, source: source, id: id, clientName: "op", address: nil,
-                           fingerprint: String(keyID.prefix(8)), now: t0)
+                       connection: String? = "c1", id: String = "auth-1") -> PairRequestLedger.PreApproval? {
+        l.admitPreApproved(keyID: keyID, source: source, connectionID: connection, id: id, clientName: "op",
+                           address: nil, fingerprint: String(keyID.prefix(8)), now: t0)
     }
 
     func testPreApprovedKeyIsAdmittedThroughRelayOnly() {
@@ -318,6 +331,8 @@ final class PreApprovalLedgerTests: XCTestCase {
         XCTAssertNil(admit(&l, keyA, source: "lan"), "the same key on the LAN is still asked about")
         XCTAssertNil(admit(&l, keyA, source: "tailnet"))
         XCTAssertNil(admit(&l, keyB), "any other key needs approval")
+        XCTAssertNil(admit(&l, keyA, connection: "c2"), "only through the connection that pre-approved it")
+        XCTAssertNil(admit(&l, keyA, connection: nil))
         let hit = admit(&l, keyA)
         XCTAssertEqual(hit?.connectionID, "c1")
         XCTAssertEqual(hit?.operatorName, "Alice")

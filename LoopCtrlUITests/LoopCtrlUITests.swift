@@ -489,6 +489,20 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                     }
                 }
             }
+            // An operator's /pair or /rpc through a 远程服务 relay, same process.
+            NotificationCenter.default.addObserver(
+                forName: InProcessRunnerControl.relayed, object: nil, queue: nil
+            ) { [weak self] note in
+                guard let info = note.userInfo, let path = info["path"] as? String,
+                      let body = info["body"] as? Data, let connection = info["connection"] as? String,
+                      let reply = info["reply"] as? (Int, Data) -> Void else { return }
+                guard let server = self?.server else {
+                    reply(503, Data(#"{"error":{"code":"loopctrl_unavailable","message":"LoopCtrl service is not running"}}"#.utf8))
+                    return
+                }
+                server.handleRelayed(path: path, body: body, connectionID: connection,
+                                     server: info["server"] as? String ?? "relay", reply: reply)
+            }
             // The Remote Access switch on the LoopCtrl screen, same process.
             NotificationCenter.default.addObserver(
                 forName: InProcessRunnerControl.setRemoteAccess, object: nil, queue: nil
