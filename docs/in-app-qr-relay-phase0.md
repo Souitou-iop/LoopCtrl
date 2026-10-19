@@ -1,5 +1,9 @@
 # Phase 0 relay transport prototype
 
+> **Moved.** The `relay/` paths below now live in
+> [LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server) under
+> `connect/relay/` (see `docs/server.md`).
+>
 > **Superseded.** The relay now serves the invite enrollment API in
 > `docs/relay-enrollment.md` (codes, Ed25519 device keys, challenge sign-in),
 > and the app's 远程服务 screens use it through `RelayRemoteServiceClient`.
