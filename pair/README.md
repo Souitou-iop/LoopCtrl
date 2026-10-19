@@ -1,3 +1,5 @@
+<p align="right"><b>简体中文</b> · <a href="#english">English</a></p>
+
 # LoopCtrl 配对助手（LoopCtrl Pair）
 
 iOS 27 以下的 iPhone 不能自己完成配对。用数据线把 iPhone 连一次电脑（或一台支持 OTG 的安卓手机），助手会生成 LoopCtrl 需要的配对文件，写进 LoopCtrl 并校验。之后 LoopCtrl 只用手机。
