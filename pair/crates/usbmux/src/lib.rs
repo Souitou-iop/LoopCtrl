@@ -16,16 +16,25 @@
 //! `link` drives a session with a real USB pipe and `hub` keeps track of the
 //! attached devices. `server` makes them look like `usbmuxd` to the rest of
 //! the app, so idevice and pair-core work unchanged. On Android the bridge
-//! (`android/bridge`) connects it all to the app's USB host code.
+//! (`android/bridge`) connects it all to the app's USB host code; on desktop
+//! Linux `linux` finds and opens iPhones through sysfs and usbfs.
+//!
+//! Transports: anything that moves whole bulk transfers implements
+//! [`pipe::UsbPipe`]. Today that is usbfs ([`usbfs::UsbfsPipe`], Android and
+//! Linux) and a framed byte stream ([`bridge::BridgePipe`], TCP or serial to
+//! an external USB host such as an ESP32-S3, see docs/hardware-helpers.md).
+//! Everything above the pipe (mux protocol, usbmuxd socket, pair-core) is the
+//! same for all of them.
 //!
 //! Taken from iloader's Android port (MIT, see LICENSE in this crate); the
-//! Wi-Fi discovery module was left out.
+//! Wi-Fi discovery module was left out. `linux` and `bridge` were added for
+//! LoopCtrl Pair under the same license.
 //!
 //! The wire format and state machine follow the behaviour of the reference
 //! `usbmuxd` daemon, which is the only implementation real devices are known
 //! to work with.
 
-// Only the Android build wires this in; elsewhere it is exercised by tests.
+// Not every platform wires in every part.
 #![allow(dead_code)]
 // Kept as in iloader.
 #![allow(clippy::new_without_default)]
@@ -33,8 +42,10 @@
 pub use hub::{AttachedDevice, DeviceInfo, Hub, location_id, udid_from_serial};
 pub use pair_store::{FilePairStore, PairStore};
 
+pub mod bridge;
 pub mod hub;
 mod link;
+pub mod linux;
 pub mod packet;
 pub mod pair_store;
 pub mod pairing;

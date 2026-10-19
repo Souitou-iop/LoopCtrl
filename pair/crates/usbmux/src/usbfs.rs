@@ -13,7 +13,7 @@ const IOC_WRITE: u32 = 1;
 const IOC_READ: u32 = 2;
 
 /// The generic `_IOC` encoding used by arm, arm64, x86 and x86_64.
-const fn ioc(dir: u32, nr: u32, size: usize) -> u32 {
+pub(crate) const fn ioc(dir: u32, nr: u32, size: usize) -> u32 {
     (dir << 30) | ((size as u32) << 16) | ((b'U' as u32) << 8) | nr
 }
 
@@ -48,6 +48,28 @@ pub const USBDEVFS_SUBMITURB: u32 = ioc(IOC_READ, 10, size_of::<Urb>());
 pub const USBDEVFS_DISCARDURB: u32 = ioc(IOC_NONE, 11, 0);
 pub const USBDEVFS_REAPURB: u32 = ioc(IOC_WRITE, 12, size_of::<*mut c_void>());
 pub const USBDEVFS_REAPURBNDELAY: u32 = ioc(IOC_WRITE, 13, size_of::<*mut c_void>());
+pub const USBDEVFS_SETCONFIGURATION: u32 = ioc(IOC_READ, 5, size_of::<u32>());
+pub const USBDEVFS_GETDRIVER: u32 = ioc(IOC_WRITE, 8, size_of::<GetDriver>());
+pub const USBDEVFS_CLAIMINTERFACE: u32 = ioc(IOC_READ, 15, size_of::<u32>());
+pub const USBDEVFS_RELEASEINTERFACE: u32 = ioc(IOC_READ, 16, size_of::<u32>());
+pub const USBDEVFS_IOCTL: u32 = ioc(IOC_READ | IOC_WRITE, 18, size_of::<UsbIoctl>());
+pub const USBDEVFS_DISCONNECT: u32 = ioc(IOC_NONE, 22, 0);
+
+/// `struct usbdevfs_getdriver`: which driver has an interface.
+#[repr(C)]
+pub struct GetDriver {
+    pub interface: u32,
+    pub driver: [u8; 256],
+}
+
+/// `struct usbdevfs_ioctl`: an ioctl aimed at one interface's driver
+/// (used with `USBDEVFS_DISCONNECT` to unbind a kernel driver).
+#[repr(C)]
+pub struct UsbIoctl {
+    pub ifno: i32,
+    pub ioctl_code: i32,
+    pub data: *mut c_void,
+}
 
 /// Largest synchronous bulk transfer older kernels accept.
 pub const MAX_SYNC_BULK: usize = 16384;
@@ -258,6 +280,12 @@ mod tests {
         assert_eq!(USBDEVFS_DISCARDURB, 0x0000_550b);
         assert_eq!(USBDEVFS_REAPURB, 0x4008_550c);
         assert_eq!(USBDEVFS_REAPURBNDELAY, 0x4008_550d);
+        assert_eq!(USBDEVFS_SETCONFIGURATION, 0x8004_5505);
+        assert_eq!(USBDEVFS_GETDRIVER, 0x4104_5508);
+        assert_eq!(USBDEVFS_CLAIMINTERFACE, 0x8004_550f);
+        assert_eq!(USBDEVFS_RELEASEINTERFACE, 0x8004_5510);
+        assert_eq!(USBDEVFS_IOCTL, 0xc010_5512);
+        assert_eq!(USBDEVFS_DISCONNECT, 0x0000_5516);
     }
 
     #[test]

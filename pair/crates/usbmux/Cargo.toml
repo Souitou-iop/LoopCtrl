@@ -1,6 +1,6 @@
 [package]
 name = "usbmux"
-description = "Built-in usbmuxd for Android: the host side of the iPhone USB mux protocol over usbfs, served on a private unix socket"
+description = "Built-in usbmuxd (Android, Linux, USB bridges): the host side of the iPhone USB mux protocol over usbfs, served on a private unix socket"
 version = "0.1.0"
 edition = "2024"
 # Taken from iloader's Android port (https://github.com/nab138/iloader), MIT.
