@@ -1,9 +1,11 @@
 name: Release
 
-# Builds unsigned IPAs on a GitHub-hosted macOS runner and attaches them to a
-# GitHub release. Unsigned means no team, no provisioning profile and no device
-# UDIDs: whoever installs the package re-signs it (SideStore, sign-ipa.sh, or
-# Xcode), which replaces the signature anyway.
+# Builds the unsigned LoopCtrl.ipa (make ipa) on a GitHub-hosted macOS runner
+# and attaches it to a GitHub release. A release ships that one package only;
+# the older two-app build (make ipa-twoapp) stays a build-from-source option.
+# Unsigned means no team, no provisioning profile and no device UDIDs:
+# whoever installs the package re-signs it (SideStore, sign-ipa.sh, or Xcode),
+# which replaces the signature anyway.
 #
 # Trigger it from the Actions tab, or by pushing a tag like v0.1-beta.
 
@@ -103,25 +105,21 @@ jobs:
           path: Frameworks/IDevice.xcframework
           key: idevice-${{ runner.os }}-${{ hashFiles('Patches/idevice/*.patch', 'Scripts/build-idevice.sh') }}
 
-      - name: Build unsigned IPAs
+      - name: Build the unsigned IPA
         env:
           SETTINGS: >-
             MARKETING_VERSION=${{ steps.meta.outputs.version }}
             CURRENT_PROJECT_VERSION=${{ github.run_number }}
         run: |
           make ipa UNSIGNED=1 EXTRA_BUILD_SETTINGS="$SETTINGS"
-          make ipa-allinone UNSIGNED=1 EXTRA_BUILD_SETTINGS="$SETTINGS"
           Scripts/package-release.sh
 
-      - name: Verify the packages
+      - name: Verify the package
         run: |
           set -euo pipefail
           work="$(mktemp -d)"
-          for ipa in release/LoopCtrl-AllInOne.ipa release/LoopCtrl.ipa release/LoopCtrlUITests-Runner.ipa; do
-            echo "== $ipa"
-            unzip -q "$ipa" -d "$work/$(basename "$ipa" .ipa)"
-          done
-          app="$work/LoopCtrl-AllInOne/Payload/LoopCtrlAllInOne.app"
+          unzip -q release/LoopCtrl.ipa -d "$work"
+          app="$work/Payload/LoopCtrlAllInOne.app"
           echo "bundle id : $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")"
           echo "version   : $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist") ($(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Info.plist"))"
           test -d "$app/PlugIns/LoopCtrlUITests.xctest" || { echo "runner missing"; exit 1; }
@@ -134,13 +132,13 @@ jobs:
       - name: Checksums
         run: |
           cd release
-          shasum -a 256 *.ipa | tee SHA256SUMS.txt
+          shasum -a 256 LoopCtrl.ipa | tee SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
         with:
           name: loopctrl-${{ steps.meta.outputs.tag }}
           path: |
-            release/*.ipa
+            release/LoopCtrl.ipa
             release/SHA256SUMS.txt
 
       - name: Create the release
@@ -160,34 +158,15 @@ jobs:
           fi
 
           cat > notes.md <<EOF
-          Unsigned IPAs, built from \`${GITHUB_SHA:0:7}\` by GitHub Actions with
+          Unsigned IPA, built from \`${GITHUB_SHA:0:7}\` by GitHub Actions with
           Xcode ${XCODE_VERSION}.
 
           Bundle version \`$VERSION\` (build $GITHUB_RUN_NUMBER).
 
-          ### Install
-
-          1. Download **\`LoopCtrl-AllInOne.ipa\`** — one app that contains both the
-             UI and the automation runner. It replaces an older LoopCtrl install.
-          2. Re-sign and install it: SideStore (My Apps → +), or on a Mac
-             \`Scripts/sign-ipa.sh -i LoopCtrl-AllInOne.ipa\`.
-          3. Trust the certificate under Settings → General → VPN & Device Management.
-          4. Open LoopCtrl → mount the Developer Disk Image → **Start**.
-             The first start asks for your passcode and for Notifications and
-             Local Network access.
-
-          \`LoopCtrl.ipa\` + \`LoopCtrlUITests-Runner.ipa\` are the two-app build.
-          Use it only if you want to drive the runner from Xcode/a Mac; it costs
-          two sideloading slots instead of one.
-
-          Nothing here is signed, so iOS will not install it as-is. Every package
-          carries no provisioning profile, no team id and no device identifiers.
-
-          See [README.md](../blob/main/README.md) for the API, clients and the
-          \`SKILL.md\` the phone serves at \`/skill\`.
+          $(sed '/^<!--/,/^-->/d' .github/RELEASE_NOTES_TEMPLATE.md)
           EOF
 
           args=(--title "LoopCtrl $TAG" --notes-file notes.md --target "$GITHUB_SHA")
-          args+=(release/*.ipa release/SHA256SUMS.txt)
+          args+=(release/LoopCtrl.ipa release/SHA256SUMS.txt)
           if [ "$PRERELEASE" != "false" ]; then args+=(--prerelease); fi
           gh release create "$TAG" "${args[@]}"

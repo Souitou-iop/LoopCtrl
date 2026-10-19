@@ -1,16 +1,30 @@
 <!--
-Standard part of every GitHub release description. Copy the block below into
-the release notes, then add the changes for that version above it.
+Standard part of every GitHub release description. The release workflow
+appends everything below this comment to the generated notes; for a release
+made by hand, copy it in and add the changes for that version above it.
 -->
+### Install
 
-### Which IPA do I need?
+Download **`LoopCtrl.ipa`**. It is one app and takes one sideloading slot. It
+replaces an older LoopCtrl install. Check it against `SHA256SUMS.txt` if you
+like.
 
-| File | Needed? | What it is |
-|---|---|---|
-| `LoopCtrlUITests-Runner.ipa` | **Required** | The automation engine. It serves the JSON-RPC API that agents and clients call, and must be running. |
-| `LoopCtrl.ipa` | Optional | Companion app for the phone itself: mount the Developer Disk Image without a Mac (and re-mount after a reboot), start and stop the runner, switch who can reach it (this device only / LAN / LAN + nearby), see and revoke authorized clients, and read the runner's log live. |
+1. Re-sign and install it: the latest SideStore (My Apps → +) with a free
+   Apple ID, or on a Mac `Scripts/sign-ipa.sh -i LoopCtrl.ipa`.
+   Signers that skip the nested `.xctest` produce an app that crashes on open.
+2. Trust the certificate under Settings → General → VPN & Device Management,
+   and turn on Developer Mode.
+3. Below iOS 27, pair once over USB with
+   [LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair) (Windows,
+   macOS, Linux, Android) or import a pairing file. On iOS 27 and later, pair
+   on the phone.
+4. Open LoopCtrl → mount the Developer Disk Image (with LocalDevVPN or
+   Shadowrocket connected) → **Start**. The first start asks for your passcode
+   and for Notifications and Local Network access.
 
-Skip `LoopCtrl.ipa` if you mount the Developer Disk Image with Xcode or StikDebug
-and manage the runner from its notification or a computer. With a free Apple
-ID (three sideloaded apps, SideStore included), install StikDebug *or* the
-LoopCtrl app alongside the runner, not both.
+The package is unsigned, so iOS will not install it as-is. It carries no
+provisioning profile, no team id and no device identifiers.
+
+See the [README](https://github.com/Souitou-iop/LoopCtrl#readme) for
+requirements by iOS version, pairing approval, LAN and remote access, and the
+API.

@@ -4,6 +4,10 @@
 > 本机 iOS 27 Developer Disk Image 中二进制的反汇编和字符串分析，外加能编译通过的原型。
 > **已在 iPhone 17（iOS 27.2）上跑通启动、停止、再次启动和远程访问**（2026-10-17）。
 > 下文标注 ✅ 的是已经验证过的，标注 ⚠️ 的是推断、尚未验证的；第 6 节给出逐项状态。
+>
+> 2026-10-19 更新：合并后的构建现在就是 LoopCtrl 的默认构建：`make ipa` → `LoopCtrl.ipa`（`make ipa-allinone`
+> 保留为别名）。原来的两个 App 构建改为 `make ipa-twoapp` → `LoopCtrl-TwoApp.ipa` + `LoopCtrlUITests-Runner.ipa`。
+> 下文保留当时的名称。
 
 ## 结论：可行，但有几点需要注意
 
