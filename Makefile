@@ -1,4 +1,4 @@
-.PHONY: build ipa ipa-allinone clean help
+.PHONY: build ipa ipa-allinone ipa-twoapp clean help
 
 PROJECT       = LoopCtrl.xcodeproj
 SCHEME        = LoopCtrl
@@ -6,14 +6,14 @@ DERIVED_DATA  = build
 BUILD_DIR     = $(DERIVED_DATA)/Build/Products/Debug-iphoneos
 
 MAIN_APP      = LoopCtrl.app
-MAIN_IPA      = LoopCtrl.ipa
+MAIN_IPA      = LoopCtrl-TwoApp.ipa
 
 RUNNER_APP    = LoopCtrlUITests-Runner.app
 RUNNER_BIN    = LoopCtrlUITests-Runner
 XCTEST_BUNDLE = LoopCtrlUITests.xctest
 RUNNER_IPA    = LoopCtrlUITests-Runner.ipa
 
-# `make ipa UNSIGNED=1` (or ipa-allinone): build without Xcode signing and sign
+# `make ipa UNSIGNED=1` (or ipa-twoapp): build without Xcode signing and sign
 # ad-hoc instead, for a team with no registered device (Xcode can't make a
 # profile) or for release packages that SideStore / Scripts/sign-ipa.sh re-sign
 # anyway. The bundle prefix drops the team suffix Local.xcconfig adds.
@@ -23,7 +23,7 @@ else
 XCODE_SIGNING = -allowProvisioningUpdates
 endif
 
-# Signing identity is read from the freshly-built app (below, in `ipa`) so the
+# Signing identity is read from the freshly-built app (below) so the
 # re-sign uses EXACTLY what xcodebuild chose from the Xcode project's automatic
 # signing — never a guessed keychain identity. Do NOT hardcode it here.
 
@@ -66,12 +66,15 @@ build:
 	@echo "   $(BUILD_DIR)/$(RUNNER_APP)"
 
 # ──────────────────────────────────────────────
-# Package both IPAs
+# The older two-app build, for developers and as a fallback (not released)
 #
-#   LoopCtrl.ipa                — Main app (settings & control UI)
+#   LoopCtrl-TwoApp.ipa         — Main app (settings & control UI)
 #   LoopCtrlUITests-Runner.ipa  — XCTest runner (automation engine)
+#
+# The two are installed side by side; the app starts the runner through its
+# loopctrl:// URL scheme. Remote service (relay) needs the default build.
 # ──────────────────────────────────────────────
-ipa: build
+ipa-twoapp: build
 	@echo ""
 	@# === Runner IPA ===
 	@echo "🎨 Adding the app icon to Runner..."
@@ -115,7 +118,7 @@ ipa: build
 	@# Both steps below are one-shot: insert-dylib.py would refuse a second load command,
 	@# and the bind record is already re-pointed, so retarget-bind-ordinal.py
 	@# finds nothing to change and fails the build. That happens whenever `make
-	@# ipa` runs twice without the runner being rebuilt in between, which reads
+	@# ipa-twoapp` runs twice without the runner being rebuilt in between, which reads
 	@# as a broken build rather than as work already done. The patching runs on
 	@# a copy that only replaces the binary once every step has succeeded — a
 	@# half-patched runner (shim loaded, symbol not retargeted) would otherwise
@@ -231,16 +234,21 @@ ipa: build
 	@echo "════════════════════════════════════════"
 
 # ──────────────────────────────────────────────
-# SPIKE: LoopCtrl + runner as one app (docs/runner-merge-spike.md)
+# The default build: LoopCtrl and its runner as one app (what releases ship)
 #
-#   LoopCtrl-AllInOne.ipa — LoopCtrl's own executable (no XCTest link, launches
-#   without a DDI) with PlugIns/LoopCtrlUITests.xctest; XCTest is loaded in-process
-#   after the mount. Same bundle id as LoopCtrl.ipa, so it replaces that install.
+#   LoopCtrl.ipa — LoopCtrl's own executable (no XCTest link, launches without a
+#   DDI) with PlugIns/LoopCtrlUITests.xctest; XCTest is loaded in-process after
+#   the mount (docs/runner-merge-spike.md). Same bundle id as the two-app
+#   build's main app, so it replaces that install. The scheme and target keep
+#   their internal name, LoopCtrlAllInOne.
 # ──────────────────────────────────────────────
 ALLINONE_APP  = LoopCtrlAllInOne.app
-ALLINONE_IPA  = LoopCtrl-AllInOne.ipa
+ALLINONE_IPA  = LoopCtrl.ipa
 
-ipa-allinone: Frameworks/IDevice.xcframework $(PROJECT)/project.pbxproj
+# Old name of `ipa`, kept so existing scripts and habits still work.
+ipa-allinone: ipa
+
+ipa: Frameworks/IDevice.xcframework $(PROJECT)/project.pbxproj
 	@./Scripts/stamp-build.sh
 	xcodebuild build \
 		-project $(PROJECT) \
@@ -250,7 +258,7 @@ ipa-allinone: Frameworks/IDevice.xcframework $(PROJECT)/project.pbxproj
 		$(XCODE_SIGNING) \
 		ARCHS=arm64 \
 		$(EXTRA_BUILD_SETTINGS)
-	@# Same two steps the runner gets in `ipa`, for the same reasons: the
+	@# Same two steps the runner gets in `ipa-twoapp`, for the same reasons: the
 	@# plug-in carries the host's bundle id, and is re-signed before the host.
 	@set -e; \
 	APP="$(BUILD_DIR)/$(ALLINONE_APP)"; \
@@ -278,16 +286,16 @@ ipa-allinone: Frameworks/IDevice.xcframework $(PROJECT)/project.pbxproj
 # ──────────────────────────────────────────────
 clean:
 	rm -rf $(DERIVED_DATA)
-	rm -f $(MAIN_IPA) $(RUNNER_IPA) LoopCtrl-AllInOne.ipa
+	rm -f $(ALLINONE_IPA) $(MAIN_IPA) $(RUNNER_IPA) LoopCtrl-AllInOne.ipa
 	@echo "✅ Cleaned"
 
 help:
 	@echo "LoopCtrl Build System"
 	@echo ""
-	@echo "  make build   Build both apps with Xcode signing"
-	@echo "  make ipa     Build + package both IPAs"
+	@echo "  make ipa     Build + package LoopCtrl.ipa (the default build, what releases ship)"
 	@echo "  make ipa UNSIGNED=1   Same, ad-hoc signed (no team/device needed)"
-	@echo "  make ipa-allinone   Build + package the all-in-one IPA (what releases ship)"
+	@echo "  make ipa-twoapp   Older two-app build: LoopCtrl-TwoApp.ipa + LoopCtrlUITests-Runner.ipa"
+	@echo "  make build   Build the two-app targets with Xcode signing (used by ipa-twoapp)"
 	@echo "  Scripts/package-release.sh [--two-app]   Strip profiles/team ids into release/"
 	@echo "  make clean   Remove build artifacts"
 

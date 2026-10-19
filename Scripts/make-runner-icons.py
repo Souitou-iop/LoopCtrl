@@ -3,7 +3,7 @@
 
 The Runner is built from Xcode's XCTRunner template, which declares no icon:
 its Info.plist has no CFBundleIcons and it ships no Assets.car, so iOS shows
-the placeholder. `make ipa` copies these files into the Runner and declares
+the placeholder. `make ipa-twoapp` copies these files into the Runner and declares
 them through CFBundleIconFiles (plain PNG lookup, no CFBundleIconName: a name
 makes iOS look only in Assets.car).
 

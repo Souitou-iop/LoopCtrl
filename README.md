@@ -60,8 +60,9 @@ the address the app shows. From anywhere else, connect through a
 - **Nobody gets in without you.** Every client asks to pair and you approve it
   on the phone, after checking its key fingerprint. Every request after that is
   encrypted and authenticated. Clients can be revoked at any time.
-- **One app to install.** The all-in-one build carries the app and the runner
-  in a single IPA, so it uses one of a free Apple ID's three sideloading slots.
+- **One app to install.** The automation runner lives inside LoopCtrl, so it
+  uses one of a free Apple ID's three sideloading slots, and Start and Stop
+  happen without leaving the app.
 
 ```mermaid
 sequenceDiagram
@@ -84,14 +85,13 @@ sequenceDiagram
 <a id="install"></a>
 ## Install
 
-1. **Download `LoopCtrl-AllInOne.ipa`** from
-   [Releases](https://github.com/Souitou-iop/LoopCtrl/releases). It is the
-   recommended build and the only one attached to releases. `SHA256SUMS.txt`
-   next to it has its checksum. The package is unsigned: it carries no
+1. **Download `LoopCtrl.ipa`** from
+   [Releases](https://github.com/Souitou-iop/LoopCtrl/releases).
+   `SHA256SUMS.txt` next to it has its checksum. The package is unsigned: it carries no
    provisioning profile, team id or device identifiers.
 2. **Sign and install it.** With a free Apple ID, use the **latest SideStore**
    (My Apps → +). With a paid account on a Mac, run
-   `Scripts/sign-ipa.sh -i LoopCtrl-AllInOne.ipa` and install the result. Then
+   `Scripts/sign-ipa.sh -i LoopCtrl.ipa` and install the result. Then
    trust the certificate under Settings → General → VPN & Device Management,
    and turn on **Developer Mode** (Settings → Privacy & Security → Developer
    Mode, then restart).
@@ -129,24 +129,6 @@ produce an app that **crashes as soon as it opens**. These routes handle it:
   verifies every binary, and refuses a distribution profile. Install the
   output with Xcode (Devices and Simulators), Apple Configurator or
   `ideviceinstaller`.
-- **Xcode** (paid account, Mac). Run `make build`, open `LoopCtrl.xcodeproj`,
-  pick the **LoopCtrl** scheme and run **Product → Test**. Xcode also mounts the
-  disk image for you. The runner keeps going after Xcode detaches.
-
-</details>
-
-<details>
-<summary><b>The two-app build</b> (advanced, or as a fallback)</summary>
-
-`make ipa` builds `LoopCtrl.ipa` and `LoopCtrlUITests-Runner.ipa`: the app and
-the runner as two separate apps. The app starts the runner through its
-`loopctrl://` URL scheme. It is not attached to releases, so build it from
-source ([Build from source](#build)).
-
-Use it if you want to drive the runner from Xcode, or if the all-in-one build
-misbehaves on your device. It costs two sideloading slots, changing LAN Access
-from the app needs one extra Allow, and the [remote service](#remote) needs
-the all-in-one build.
 
 </details>
 
@@ -277,8 +259,7 @@ pairing and every request stay sealed between the operator's client and the
 phone. The phone's own credential is an Ed25519 key that stays in its Keychain.
 There is **no server built into the app**: use a provider, or host your own
 (see [Self-hosting](#self-hosting)). Protocol and enrollment API:
-[docs/relay-enrollment.md](docs/relay-enrollment.md). Remote connections work
-in the all-in-one build only.
+[docs/relay-enrollment.md](docs/relay-enrollment.md).
 
 <a id="tailnet"></a>
 ### Tailscale and Headscale
@@ -374,23 +355,28 @@ You need macOS, Xcode (signed in with any Apple ID), XcodeGen and Rust:
 ```bash
 brew install xcodegen
 rustup target add aarch64-apple-ios
-make ipa-allinone            # → LoopCtrl-AllInOne.ipa  (one app, what releases ship)
-make ipa                     # → LoopCtrl.ipa + LoopCtrlUITests-Runner.ipa  (two apps)
+make ipa                     # → LoopCtrl.ipa
 ```
 
 - Add `UNSIGNED=1` to skip Xcode signing and sign ad hoc (bundle prefix
   `com.openminis`). Use it for IPAs that SideStore or `sign-ipa.sh` will
   re-sign anyway.
 - `Scripts/package-release.sh` strips your provisioning profile (name, team,
-  device UDIDs) from `LoopCtrl-AllInOne.ipa` before you share it; add
-  `--two-app` to package the two-app build too. Releases are built by
+  device UDIDs) from `LoopCtrl.ipa` before you share it. Releases are built by
   [`.github/workflows/release.yml`](.github/workflows/release.yml).
 - The first `make` builds the idevice framework from source (several minutes,
   once). It also writes `Config/Local.xcconfig` with your team and bundle
   prefix, and generates the Xcode project from `project.yml`. Change signing
   there, not in Xcode.
 - [`docs/runner-merge-spike.md`](docs/runner-merge-spike.md) (in Chinese)
-  explains how the all-in-one build loads the runner in-process.
+  explains how LoopCtrl loads the runner in-process.
+- **The older two-app build** is still there as a fallback: `make ipa-twoapp`
+  builds `LoopCtrl-TwoApp.ipa` and `LoopCtrlUITests-Runner.ipa`, the app and
+  the runner as two apps (`Scripts/package-release.sh --two-app` packages
+  them). It costs two sideloading slots and can't take remote connections.
+  With a paid account you can also run that runner from Xcode: `make build`,
+  open `LoopCtrl.xcodeproj`, pick the **LoopCtrl** scheme and run
+  **Product → Test**.
 - **The CLI** builds separately with Docker or `zig`: `make -C cli build`,
   `make -C cli test`, or `make -C cli macos` for a macOS client with Nearby
   support. `cli/loopctrl` is committed because the runner bundles it, so
@@ -436,9 +422,8 @@ make ipa                     # → LoopCtrl.ipa + LoopCtrlUITests-Runner.ipa  (t
 - **LoopCtrl Pair → LoopCtrl**: LoopCtrl doesn't yet pick up the pairing file
   LoopCtrl Pair writes into it; that import is still being built. Until it
   lands, import a pairing file in Settings.
-- **The "Automation Running" overlay** shows while the server runs. In the
-  all-in-one build, Stop hands automation back so the overlay goes, and Start
-  takes it again (iOS may ask for your passcode). If iOS refuses to hand it
+- **The "Automation Running" overlay** shows while the server runs. Stop hands
+  automation back so the overlay goes, and Start takes it again (iOS may ask for your passcode). If iOS refuses to hand it
   back, the server log says so and the overlay stays until LoopCtrl quits:
   swipe it away in the app switcher.
 - `unlock` wakes the screen but can't enter a passcode. For long unattended

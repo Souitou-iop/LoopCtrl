@@ -50,7 +50,7 @@ Agent 会先读手机提供的说明书，再从手机上下载客户端，然�
   `127.0.0.1` 访问。开发者磁盘镜像由 App 自己挂载，所以手机重启后点一下就好，不需要电脑。
 - **没有你点头，谁也连不上。** 每个客户端都要申请配对，由你核对密钥指纹后在手机上批准。之后的每个请求都经过加密和认证。
   你随时可以吊销任何客户端。
-- **只装一个 App。** 一体版把 App 和 runner 打进同一个 IPA，只占免费 Apple ID 三个侧载名额中的一个。
+- **只装一个 App。** 自动化 runner 就在 LoopCtrl 里面，只占免费 Apple ID 三个侧载名额中的一个，启动和停止都不用离开 App。
 
 ```mermaid
 sequenceDiagram
@@ -73,11 +73,11 @@ sequenceDiagram
 <a id="install"></a>
 ## 安装
 
-1. **下载 `LoopCtrl-AllInOne.ipa`**，在 [Releases](https://github.com/Souitou-iop/LoopCtrl/releases) 里。
-   这是推荐的版本，也是发布页上唯一的安装包，旁边的 `SHA256SUMS.txt` 是它的校验值。包本身没有签名：
+1. **下载 `LoopCtrl.ipa`**，在 [Releases](https://github.com/Souitou-iop/LoopCtrl/releases) 里，
+   旁边的 `SHA256SUMS.txt` 是它的校验值。包本身没有签名：
    不含描述文件、team id 和任何设备标识。
 2. **签名并安装。** 免费 Apple ID 用 **最新版 SideStore**（My Apps → +）安装；有付费账号和 Mac 的话，运行
-   `Scripts/sign-ipa.sh -i LoopCtrl-AllInOne.ipa`，再安装生成的包。然后在 设置 → 通用 → VPN 与设备管理
+   `Scripts/sign-ipa.sh -i LoopCtrl.ipa`，再安装生成的包。然后在 设置 → 通用 → VPN 与设备管理
    中信任证书，并打开 **开发者模式**（设置 → 隐私与安全性 → 开发者模式，开启后重启）。
 3. **配对一次。** iOS 27 及以上直接在手机上配对。iOS 27 以下，用数据线连一次
    [LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair)，或者导入配对文件。见[系统要求](#requirements)。
@@ -102,19 +102,6 @@ runner 里嵌着一个测试包 `PlugIns/LoopCtrlUITests.xctest`，必须先单�
 - **`Scripts/sign-ipa.sh`**（付费账号，需要 Mac）。它会自己找到你的 team、覆盖该 bundle id 的开发描述文件和对应的签名身份
   （可以用 `-t`、`-p`、`-s` 手动指定）。它从里到外逐层签名，校验每个二进制文件，并拒绝发布用描述文件。生成的包可以用
   Xcode（设备与模拟器）、Apple Configurator 或 `ideviceinstaller` 安装。
-- **Xcode**（付费账号，需要 Mac）。运行 `make build`，打开 `LoopCtrl.xcodeproj`，选择 **LoopCtrl** scheme，
-  执行 **Product → Test**。Xcode 会顺便帮你挂载磁盘镜像。Xcode 断开后 runner 会继续运行。
-
-</details>
-
-<details>
-<summary><b>双 App 版</b>（进阶用法，或作为备用）</summary>
-
-`make ipa` 会构建 `LoopCtrl.ipa` 和 `LoopCtrlUITests-Runner.ipa`，也就是把 App 和 runner 分成两个 App。
-App 通过 runner 的 `loopctrl://` URL scheme 启动它。发布页不再附带这个版本，需要自己[从源码构建](#build)。
-
-如果你想用 Xcode 驱动 runner，或者一体版在你的设备上有问题，可以用它。它占两个侧载名额，在 App 里切换局域网访问时要多点一次允许，
-而且[远程服务](#remote)只支持一体版。
 
 </details>
 
@@ -214,7 +201,6 @@ LoopCtrl 的挂载功能基于 [idevice](https://github.com/jkcoxson/idevice)。
 中继是 **不受信任的**：它只转发端到端加密的信封，配对和每个请求都只在操作员的客户端和手机之间解开。
 手机自己的凭据是一把 Ed25519 密钥，保存在它的钥匙串里。**App 里没有内置服务器**：可以使用服务商提供的服务，
 也可以自己部署（见[自行部署](#self-hosting)）。协议和接入 API 见 [docs/relay-enrollment.md](docs/relay-enrollment.md)。
-远程连接只支持一体版。
 
 <a id="tailnet"></a>
 ### Tailscale 与 Headscale
@@ -293,17 +279,20 @@ python3 loopctrl_rpc.py --host <手机>:8300 call find_element '{"element_id":"W
 ```bash
 brew install xcodegen
 rustup target add aarch64-apple-ios
-make ipa-allinone            # → LoopCtrl-AllInOne.ipa（一个 App，发布的就是它）
-make ipa                     # → LoopCtrl.ipa + LoopCtrlUITests-Runner.ipa（两个 App）
+make ipa                     # → LoopCtrl.ipa
 ```
 
 - 加上 `UNSIGNED=1` 可以跳过 Xcode 签名，改用 ad-hoc 签名（bundle 前缀为 `com.openminis`）。
   适合反正要交给 SideStore 或 `sign-ipa.sh` 重新签名的包。
-- 分享 `LoopCtrl-AllInOne.ipa` 之前，先用 `Scripts/package-release.sh` 去掉里面的描述文件（含你的姓名、team 和设备 UDID）；
-  加 `--two-app` 会把双 App 版也一起处理。正式发布由 [`.github/workflows/release.yml`](.github/workflows/release.yml) 构建。
+- 分享 `LoopCtrl.ipa` 之前，先用 `Scripts/package-release.sh` 去掉里面的描述文件（含你的姓名、team 和设备 UDID）。
+  正式发布由 [`.github/workflows/release.yml`](.github/workflows/release.yml) 构建。
 - 第一次运行 `make` 时，会从源码构建 idevice 框架（要几分钟，只需一次），还会生成包含你的 team 和 bundle 前缀的
   `Config/Local.xcconfig`，并根据 `project.yml` 生成 Xcode 工程。签名设置请改在这些文件里，不要在 Xcode 里改。
-- 一体版如何在进程内加载 runner，见 [`docs/runner-merge-spike.md`](docs/runner-merge-spike.md)。
+- LoopCtrl 如何在进程内加载 runner，见 [`docs/runner-merge-spike.md`](docs/runner-merge-spike.md)。
+- **旧的双 App 构建** 仍然保留，作为备用：`make ipa-twoapp` 会生成 `LoopCtrl-TwoApp.ipa` 和 `LoopCtrlUITests-Runner.ipa`，
+  把 App 和 runner 分成两个 App（`Scripts/package-release.sh --two-app` 可以一起处理）。它占两个侧载名额，也不支持远程连接。
+  有付费账号的话，还可以用 Xcode 运行这个 runner：`make build`，打开 `LoopCtrl.xcodeproj`，选择 **LoopCtrl** scheme，
+  执行 **Product → Test**。
 - **CLI** 单独构建，需要 Docker 或 `zig`：`make -C cli build`、`make -C cli test`，或用 `make -C cli macos`
   构建支持近场发现的 macOS 客户端。`cli/loopctrl` 已提交进仓库，因为 runner 会内置它；修改 `cli/main.c`
   或协议后记得重新构建。
@@ -335,7 +324,7 @@ make ipa                     # → LoopCtrl.ipa + LoopCtrlUITests-Runner.ipa（�
 - **iOS 17.0–17.3**：手机上的挂载需要 RemotePairing 记录，而这几个版本无法只靠 USB 生成。请改用 Xcode 挂载。
 - **LoopCtrl Pair → LoopCtrl**：LoopCtrl 还不会自动读取 LoopCtrl Pair 写进来的配对文件，这部分还在开发中。
   在那之前，请在设置里导入配对文件。
-- **“Automation Running” 浮层** 在服务运行时会显示。一体版里点停止会交还自动化权限，浮层随之消失；再次启动时重新接管
+- **“Automation Running” 浮层** 在服务运行时会显示。点停止会交还自动化权限，浮层随之消失；再次启动时重新接管
   （iOS 可能要求输入锁屏密码）。如果 iOS 不肯交还，服务日志里会写明，浮层会一直留到 LoopCtrl 退出：在多任务界面划掉它即可。
 - `unlock` 只能点亮屏幕，不能输入锁屏密码。长时间无人值守运行时，把自动锁定设为“永不”。熄屏不会让服务停止。
 - 带有机器人检测的 App 仍然可能识别出自动化操作。

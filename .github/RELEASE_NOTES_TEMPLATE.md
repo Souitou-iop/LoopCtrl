@@ -5,13 +5,12 @@ made by hand, copy it in and add the changes for that version above it.
 -->
 ### Install
 
-Download **`LoopCtrl-AllInOne.ipa`**. It is one app with both the LoopCtrl UI
-and the automation runner inside, so it takes one sideloading slot. It
+Download **`LoopCtrl.ipa`**. It is one app and takes one sideloading slot. It
 replaces an older LoopCtrl install. Check it against `SHA256SUMS.txt` if you
 like.
 
 1. Re-sign and install it: the latest SideStore (My Apps → +) with a free
-   Apple ID, or on a Mac `Scripts/sign-ipa.sh -i LoopCtrl-AllInOne.ipa`.
+   Apple ID, or on a Mac `Scripts/sign-ipa.sh -i LoopCtrl.ipa`.
    Signers that skip the nested `.xctest` produce an app that crashes on open.
 2. Trust the certificate under Settings → General → VPN & Device Management,
    and turn on Developer Mode.
@@ -25,9 +24,6 @@ like.
 
 The package is unsigned, so iOS will not install it as-is. It carries no
 provisioning profile, no team id and no device identifiers.
-
-The two-app build (`LoopCtrl.ipa` + `LoopCtrlUITests-Runner.ipa`) is no longer
-attached to releases. Build it from source with `make ipa` if you need it.
 
 See the [README](https://github.com/Souitou-iop/LoopCtrl#readme) for
 requirements by iOS version, pairing approval, LAN and remote access, and the

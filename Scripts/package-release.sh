@@ -4,10 +4,10 @@
 #
 #   Scripts/package-release.sh [--two-app] [OUT_DIR]      (default: release/)
 #
-# By default it packages LoopCtrl-AllInOne.ipa (make ipa-allinone), the only
-# build a GitHub release ships. --two-app also packages the two-app build
-# (make ipa: LoopCtrl.ipa + LoopCtrlUITests-Runner.ipa), for developers who
-# want to share that one too.
+# By default it packages LoopCtrl.ipa (make ipa), the only build a GitHub
+# release ships. --two-app also packages the older two-app build (make
+# ipa-twoapp: LoopCtrl-TwoApp.ipa + LoopCtrlUITests-Runner.ipa), for developers
+# who want to share that one too.
 #
 # A local build is signed for the developer's own team, and its
 # embedded.mobileprovision carries their name, team id and the UDID of every
@@ -68,13 +68,13 @@ strip_one() {
     echo "✅ $OUT_DIR/$name ($(du -h "$OUT_DIR/$name" | cut -f1 | tr -d ' '))"
 }
 
-ipa="$REPO/LoopCtrl-AllInOne.ipa"
-[[ -f "$ipa" ]] || { echo "❌ $ipa missing — run make ipa-allinone first" >&2; exit 1; }
+ipa="$REPO/LoopCtrl.ipa"
+[[ -f "$ipa" ]] || { echo "❌ $ipa missing — run make ipa first" >&2; exit 1; }
 strip_one "$ipa"
 
 if [[ -n "$TWO_APP" ]]; then
-    for ipa in "$REPO/LoopCtrlUITests-Runner.ipa" "$REPO/LoopCtrl.ipa"; do
-        [[ -f "$ipa" ]] || { echo "❌ $ipa missing — run make ipa first" >&2; exit 1; }
+    for ipa in "$REPO/LoopCtrlUITests-Runner.ipa" "$REPO/LoopCtrl-TwoApp.ipa"; do
+        [[ -f "$ipa" ]] || { echo "❌ $ipa missing — run make ipa-twoapp first" >&2; exit 1; }
         strip_one "$ipa"
     done
 fi
