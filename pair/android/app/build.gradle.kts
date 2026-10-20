@@ -112,9 +112,24 @@ android {
 
     ndkVersion = "28.2.13676358"
 
+    // Release signing from the environment (CI: GitHub secrets), never from the repo.
+    // Without ANDROID_KEYSTORE the release APK is built unsigned.
+    val keystore = System.getenv("ANDROID_KEYSTORE")?.takeIf { it.isNotBlank() }
+    signingConfigs {
+        if (keystore != null) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (keystore != null) signingConfig = signingConfigs.getByName("release")
         }
     }
 

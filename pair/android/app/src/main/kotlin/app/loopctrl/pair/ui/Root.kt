@@ -9,8 +9,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,7 +29,7 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Switch
-import top.yukonga.miuix.kmp.basic.TabRow
+import top.yukonga.miuix.kmp.basic.TabRowWithContour
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -85,14 +85,14 @@ private fun SettingsScreen(vm: PairViewModel, bottom: PaddingValues) {
         }
         Section(stringResource(R.string.settings_appearance)) {
             BasicComponent(title = stringResource(R.string.settings_theme))
-            TabRow(
+            TabRowWithContour(
                 listOf(R.string.settings_theme_auto, R.string.settings_theme_light, R.string.settings_theme_dark).map { stringResource(it) },
                 themes.indexOf(prefs.theme).coerceAtLeast(0),
                 { prefs.chooseTheme(themes[it]) },
                 Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp),
             )
             BasicComponent(title = stringResource(R.string.settings_language))
-            TabRow(
+            TabRowWithContour(
                 listOf(stringResource(R.string.settings_lang_system), "简体中文", "English"),
                 langs.indexOf(prefs.lang).coerceAtLeast(0),
                 {
@@ -121,14 +121,18 @@ private fun SettingsScreen(vm: PairViewModel, bottom: PaddingValues) {
 @Composable
 private fun LicensesSheet(show: Boolean, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val text = remember(show) {
-        if (!show) "" else runCatching { context.assets.open("THIRD_PARTY_NOTICES.md").bufferedReader().use { it.readText() } }.getOrDefault("")
+    // Split on blank lines and laid out lazily: with every license text the
+    // file is a few hundred KB, too much for one Text.
+    val paragraphs = remember(show) {
+        if (!show) emptyList() else runCatching {
+            context.assets.open("THIRD_PARTY_NOTICES.md").bufferedReader().use { it.readText() }
+        }.getOrDefault("").split("\n\n").filter { it.isNotBlank() }
     }
     OverlayBottomSheet(show = show, title = stringResource(R.string.settings_licenses), onDismissRequest = onDismiss) {
-        Text(
-            text,
-            style = MiuixTheme.textStyles.footnote2,
-            modifier = Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(bottom = 16.dp),
-        )
+        LazyColumn(modifier = Modifier.heightIn(max = 560.dp).padding(bottom = 16.dp)) {
+            items(paragraphs) { paragraph ->
+                Text(paragraph, style = MiuixTheme.textStyles.footnote2, modifier = Modifier.padding(bottom = 8.dp))
+            }
+        }
     }
 }

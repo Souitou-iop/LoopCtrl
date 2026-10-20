@@ -183,7 +183,7 @@ jobs:
           if-no-files-found: error
 
   android:
-    name: Android (debug APK)
+    name: Android (debug + release APK)
     needs: check
     runs-on: ubuntu-22.04
     steps:
@@ -198,14 +198,35 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: NDK
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" > /dev/null
+      - name: Release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "ANDROID_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set; a release needs a signed APK"
+            exit 1
+          else
+            echo "No release keystore: the release APK is built unsigned (not published)."
+          fi
       - name: Build and unit tests
         working-directory: android
-        run: ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest
       - name: Collect
         run: |
           V=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name=="pair-core") | .version')
           mkdir -p out
           cp android/app/build/outputs/apk/debug/*.apk out/LoopCtrl-Pair-$V-android-debug.apk
+          # Only a signed release APK can be installed.
+          if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
+            cp android/app/build/outputs/apk/release/app-release.apk out/LoopCtrl-Pair-$V-android.apk
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: android

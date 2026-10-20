@@ -106,7 +106,7 @@ mod tests {
     fn ignores_uitests_runner_and_lookalikes() {
         let mut apps = HashMap::new();
         apps.insert(
-            "com.openminis.loopctrl.uitests.xctrunner".to_string(),
+            "top.ebato.loopctrl.uitests.xctrunner".to_string(),
             app(&[("CFBundleName", s("LoopCtrlUITests-Runner"))]),
         );
         apps.insert("com.example.loopctrlpro".to_string(), app(&[("CFBundleName", s("LoopCtrl Pro"))]));

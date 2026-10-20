@@ -11,6 +11,14 @@
   const featured = ["idevice", "tauri", "tokio", "serde", "plist", "svelte"]
     .map((n) => all.find((l) => l.name === n)).filter((l): l is Lic => !!l);
   let showAll = $state(false);
+  // Every component's license text (THIRD_PARTY_NOTICES.md), loaded only when
+  // asked for: a few hundred KB, kept out of the main bundle.
+  let texts = $state<string[] | null>(null);
+  async function openTexts() {
+    showAll = false;
+    const md = (await import("../../../THIRD_PARTY_NOTICES.md?raw")).default as string;
+    texts = md.split(/\n{2,}/).filter((p) => p.trim());
+  }
   let checking = $state(false);
   let autoUpd = $state(readAuto());
 
@@ -102,6 +110,8 @@
           <div class="t"><span class="title">iLoader{t.inspiration}</span></div><span class="end">MIT</span><Arrow /></div>
         <div class="comp press" role="button" tabindex="0" onclick={() => (showAll = true)} onkeydown={(e) => e.key === "Enter" && (showAll = true)}>
           <div class="t"><span class="title">{t.allLicenses(all.length)}</span></div><Arrow /></div>
+        <div class="comp press" role="button" tabindex="0" onclick={openTexts} onkeydown={(e) => e.key === "Enter" && openTexts()}>
+          <div class="t"><span class="title">{t.licenseTexts}</span></div><Arrow /></div>
       </div>
     </div>
   </div>
@@ -118,6 +128,18 @@
         {/each}
       </div>
       <div class="btnrow"><button class="btn" onclick={() => (showAll = false)}>{store.t.env.close}</button></div>
+    </div>
+  </div>
+{/if}
+
+{#if texts}
+  <div class="scrim bottom" role="presentation" onclick={(e) => e.target === e.currentTarget && (texts = null)}>
+    <div class="sheet" role="dialog" aria-label={t.licenseTexts}><div class="handle"></div>
+      <h3>{t.licenseTexts}</h3>
+      <div class="lic-texts">
+        {#each texts as p, i (i)}<pre>{p}</pre>{/each}
+      </div>
+      <div class="btnrow"><button class="btn" onclick={() => (texts = null)}>{store.t.env.close}</button></div>
     </div>
   </div>
 {/if}

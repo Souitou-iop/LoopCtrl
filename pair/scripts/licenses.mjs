@@ -4,10 +4,12 @@
 // - JS packages in the shipped bundle (runtime dependencies + Svelte's runtime);
 // - the Android app's Maven libraries (listed below by hand).
 // Writes ui/src/lib/licenses.json (shown in Settings), THIRD_PARTY_NOTICES.md
-// and a copy of it in the Android app's assets (shown in its Settings).
+// with every component's license text (shown in the desktop app's Settings,
+// and shipped in the CLI archives) and a copy of it in the Android app's
+// assets (shown in its Settings).
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 const root = new URL("..", import.meta.url).pathname;
 const meta = JSON.parse(execFileSync("cargo", ["metadata", "--format-version", "1", "--locked", "--filter-platform", "aarch64-apple-darwin", "--filter-platform", "x86_64-apple-darwin", "--filter-platform", "x86_64-pc-windows-msvc", "--filter-platform", "aarch64-pc-windows-msvc", "--filter-platform", "x86_64-unknown-linux-gnu", "--filter-platform", "aarch64-unknown-linux-gnu", "--filter-platform", "aarch64-linux-android", "--filter-platform", "armv7-linux-androideabi", "--filter-platform", "x86_64-linux-android"], { cwd: root, maxBuffer: 1 << 28 }).toString());
@@ -26,6 +28,7 @@ while (stack.length) {
 }
 const rust = [...seen].filter((id) => !members.has(id)).map((id) => pkgs.get(id)).map((p) => ({
   name: p.name, version: p.version, license: p.license ?? "see repository", repo: p.repository ?? `https://crates.io/crates/${p.name}`, kind: "rust",
+  dir: dirname(p.manifest_path),
 }));
 
 const pj = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -37,7 +40,7 @@ function walk(name) {
   const p = JSON.parse(readFileSync(f, "utf8"));
   let repo = typeof p.repository === "string" ? p.repository : p.repository?.url ?? `https://www.npmjs.com/package/${name}`;
   repo = repo.replace(/^git\+/, "").replace(/\.git$/, "").replace(/^github:/, "https://github.com/");
-  jsSeen.set(name, { name, version: p.version, license: p.license ?? "see repository", repo, kind: "js" });
+  jsSeen.set(name, { name, version: p.version, license: p.license ?? "see repository", repo, kind: "js", dir: join(root, "node_modules", name) });
   for (const d of Object.keys(p.dependencies ?? {})) walk(d);
 }
 for (const d of [...Object.keys(pj.dependencies ?? {}), "svelte"]) walk(d);
@@ -59,7 +62,72 @@ const android = [
 ].map(([name, version, license, repo]) => ({ name, version, license, repo, kind: "android" }));
 
 const all = [...rust, ...js, ...android].sort((a, b) => a.name.localeCompare(b.name));
-writeFileSync(join(root, "ui/src/lib/licenses.json"), JSON.stringify(all, null, 0) + "\n");
+writeFileSync(join(root, "ui/src/lib/licenses.json"),
+  JSON.stringify(all.map(({ dir, ...c }) => c), null, 0) + "\n");
+
+// The license texts themselves, which MIT, BSD and Apache-2.0 all require to
+// travel with the binaries: each component's own LICENSE / COPYING / NOTICE
+// files, identical texts printed once with everyone who uses them. Full
+// Apache-2.0 copies differ only in layout and the appendix template, so they
+// share one entry and keep any copyright line the crate added. A component
+// that ships no file gets a text from scripts/license-texts/ or the standard
+// text of its license (the Android libraries are all Apache-2.0, whose text is
+// our own LICENSE).
+const APACHE = readFileSync(join(root, "LICENSE"), "utf8").trim();
+const MIT = `Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.`;
+const FILES = /^(LICEN[CS]E|COPYING|NOTICE|UNLICENSE|COPYRIGHT)([-._].*)?$/i;
+const flat = (t) => t.replace(/\s+/g, " ").trim();
+function textsFor(c) {
+  if (c.dir && existsSync(c.dir)) {
+    const found = readdirSync(c.dir).sort()
+      .filter((f) => FILES.test(f) && statSync(join(c.dir, f)).isFile())
+      .map((f) => readFileSync(join(c.dir, f), "utf8").trim());
+    if (found.length) return found;
+  }
+  // Kept in scripts/license-texts/: a crate's own text taken from its
+  // repository (<crate>.txt), or the standard text of its license.
+  for (const f of [`${c.name}.txt`, `${c.license}.txt`]) {
+    const p = join(root, "scripts/license-texts", f);
+    if (existsSync(p)) return [readFileSync(p, "utf8").trim()];
+  }
+  if (/Apache-2\.0/.test(c.license)) return [APACHE];
+  if (/MIT/.test(c.license)) return [MIT];
+  throw new Error(`${c.name} ${c.version}: no license file and no known text for ${c.license}`);
+}
+const groups = new Map();
+for (const c of all) {
+  for (let text of textsFor(c)) {
+    let key = flat(text);
+    let label = `${c.name} ${c.version}`;
+    if (key.startsWith("Apache License Version 2.0, January 2004") && key.includes("END OF TERMS AND CONDITIONS")) {
+      const extra = text.split("\n").map((l) => l.trim())
+        .filter((l) => /^Copyright\b/.test(l) && !l.includes("[yyyy]") && !l.includes("[name of"));
+      label += extra.map((l) => ` (${l})`).join("");
+      key = "Apache-2.0";
+      text = APACHE;
+    }
+    if (!groups.has(key)) groups.set(key, { text, labels: [] });
+    groups.get(key).labels.push(label);
+  }
+}
+const licenseTexts = [...groups.values()].sort((a, b) => a.labels[0].localeCompare(b.labels[0]))
+  .map((g) => `### ${g.labels.join(", ")}\n\n\`\`\`\`\n${g.text}\n\`\`\`\``).join("\n\n");
 
 const byLicense = new Map();
 for (const c of all) byLicense.set(c.license, (byLicense.get(c.license) ?? 0) + 1);
@@ -105,9 +173,13 @@ ${[...byLicense].sort((a, b) => b[1] - a[1]).map(([l, n]) => `- ${l}: ${n}`).joi
 | Component | Version | License | Source |
 |---|---|---|---|
 ${all.map((c) => `| ${c.name} | ${c.version} | ${c.license} | ${c.repo} |`).join("\n")}
+
+## License texts
+
+${licenseTexts}
 `;
 writeFileSync(join(root, "THIRD_PARTY_NOTICES.md"), md);
 const assets = join(root, "android/app/src/main/assets");
 mkdirSync(assets, { recursive: true });
 writeFileSync(join(assets, "THIRD_PARTY_NOTICES.md"), md);
-console.log(`${rust.length} Rust crates, ${js.length} JS packages, ${android.length} Android libraries`);
+console.log(`${rust.length} Rust crates, ${js.length} JS packages, ${android.length} Android libraries, ${groups.size} license texts`);
