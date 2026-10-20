@@ -167,7 +167,7 @@ button { font: inherit; color: inherit; }
 .devlist { display: flex; flex-direction: column; gap: 10px; }
 .dcard { background: var(--card); border-radius: var(--r-card); overflow: hidden; }
 .drow { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto auto; align-items: center; gap: 14px; padding: 12px 16px; min-height: 64px; }
-.drow:has(.chev) { grid-template-columns: 36px minmax(0, 1fr) 120px auto 16px; }
+.drow.press { grid-template-columns: 36px minmax(0, 1fr) 120px auto 16px; }
 .drow.press { cursor: pointer; transition: background .15s; } .drow.press:hover { background: var(--press); }
 .drow .ph { width: 36px; height: 36px; border-radius: 10px; background: var(--surface); display: grid; place-items: center; color: var(--actions); transition: background .3s, color .3s; }
 .drow .ph.ok { background: var(--tertiary-container); color: var(--on-tertiary-container); }
@@ -253,7 +253,7 @@ button { font: inherit; color: inherit; }
 @media (max-width: 760px) {
   .cols { grid-template-columns: minmax(0, 1fr); }
   .large-title { font-size: 26px; }
-  .drow:has(.chev) { grid-template-columns: 36px minmax(0, 1fr) auto 16px; } .drow .mini { display: none; }
+  .drow.press { grid-template-columns: 36px minmax(0, 1fr) auto 16px; } .drow .mini { display: none; }
   .stepper .sl { font-size: 11px; }
   .guide.big .illus { display: none; }
   .bar .btn.wide { min-width: 0; }
