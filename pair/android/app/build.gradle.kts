@@ -58,6 +58,9 @@ abstract class BuildRustLibs @Inject constructor(private val exec: ExecOperation
                 environment("AR_$cc", toolchain.resolve("llvm-ar").path)
                 environment("CARGO_PROFILE_DEV_DEBUG", "0")
                 environment("CARGO_PROFILE_DEV_STRIP", "debuginfo")
+                // uniffi-bindgen reads its metadata from the symbol table, which the
+                // workspace's `strip = true` removes; AGP strips the APK's copy anyway.
+                environment("CARGO_PROFILE_RELEASE_STRIP", "debuginfo")
                 val args = mutableListOf("cargo", "build", "-p", "loopctrl-pair-bridge", "--lib", "--target", triple)
                 if (release.get()) args += "--release"
                 commandLine(args)
