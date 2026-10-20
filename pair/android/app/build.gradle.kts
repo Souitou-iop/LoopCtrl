@@ -106,8 +106,8 @@ android {
         applicationId = "app.loopctrl.pair"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.2.0"
+        versionCode = 4
+        versionName = "0.2.1"
 
         // -Pmock=true starts with simulated iPhones (pair-core's MockBackend).
         buildConfigField("boolean", "START_MOCK", (providers.gradleProperty("mock").orNull == "true").toString())
