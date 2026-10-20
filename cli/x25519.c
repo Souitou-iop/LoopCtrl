@@ -1,9 +1,10 @@
 // X25519 (RFC 7748) — needed only for LAN pairing, where the device wraps the
 // session key against an ephemeral shared secret.
 //
-// Public-domain-style compact implementation using 64-bit limbs. Constant-time
-// with respect to the scalar: the ladder swaps via a mask rather than branching,
-// so a private key never steers control flow.
+// Compact implementation: radix-2^51 field arithmetic in 64-bit limbs and the
+// Montgomery ladder of RFC 7748 section 5. Constant-time with respect to the
+// scalar: the ladder swaps via a mask rather than branching, so a private key
+// never steers control flow.
 
 #include "loopctrl.h"
 #include <string.h>

@@ -24,7 +24,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.openminis.loopctrl.app</string>
+			<string>top.ebato.loopctrl.app</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>loopctrl-app</string>
@@ -47,7 +47,7 @@
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>com.openminis.loopctrl.pairing-record</string>
+				<string>top.ebato.loopctrl.pairing-record</string>
 				<string>com.apple.property-list</string>
 				<string>public.xml</string>
 			</array>
@@ -57,7 +57,7 @@
 	<array>
 		<dict>
 			<key>UTTypeIdentifier</key>
-			<string>com.openminis.loopctrl.pairing-record</string>
+			<string>top.ebato.loopctrl.pairing-record</string>
 			<key>UTTypeDescription</key>
 			<string>Device Pairing Record</string>
 			<key>UTTypeConformsTo</key>

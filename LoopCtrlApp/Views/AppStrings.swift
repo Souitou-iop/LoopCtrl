@@ -23,7 +23,7 @@ extension L10n {
         case visibilityNearbyFooter, visibilityNearbyPendingFooter, visibilityStoppedFooter
         case stepsDone, diskImageMounted
         case clientsNeedService, clientsSwipeFooter, showAllClients
-        case appLogs, serviceInfo, serviceStoppedInfo, license
+        case appLogs, serviceInfo, serviceStoppedInfo, license, thirdPartyNotices
         // Pairing & Disk Image
         case stepsLeft, oneStepLeft, mounting
         case stepPairing, stepTunnel, stepMount
@@ -90,9 +90,9 @@ extension L10n {
         .noWiFi: [.en: "Not on Wi-Fi", .zhHans: "未连接 Wi-Fi", .zhHant: "未連接 Wi-Fi"],
         .copied: [.en: "Copied", .zhHans: "已复制", .zhHant: "已複製"],
         .portLabel: [.en: "Port", .zhHans: "端口", .zhHant: "連接埠"],
-        .portFooter: [.en: "The port automation clients connect to. Default %d. Don't share it with another automation app such as iCTRL.",
-                      .zhHans: "自动化客户端连接的端口，默认 %d。不要和 iCTRL 等其他自动化 App 使用同一个端口。",
-                      .zhHant: "自動化用戶端連線的連接埠，預設 %d。不要和 iCTRL 等其他自動化 App 使用同一個連接埠。"],
+        .portFooter: [.en: "The port automation clients connect to. Default %d. Don't share it with another automation app.",
+                      .zhHans: "自动化客户端连接的端口，默认 %d。不要和其他自动化 App 使用同一个端口。",
+                      .zhHant: "自動化用戶端連線的連接埠，預設 %d。不要和其他自動化 App 使用同一個連接埠。"],
         .portRunningFooter: [.en: "The service restarts on the new port; connected clients reconnect to the new address.",
                              .zhHans: "服务会在新端口上重启，已连接的客户端需要改用新地址重新连接。",
                              .zhHant: "服務會在新連接埠上重新啟動，已連線的用戶端需要改用新位址重新連線。"],
@@ -160,6 +160,7 @@ extension L10n {
                               .zhHans: "服务未运行。启动后可查看其信息。",
                               .zhHant: "服務未執行。啟動後可查看其資訊。"],
         .license: [.en: "License", .zhHans: "许可证", .zhHant: "授權條款"],
+        .thirdPartyNotices: [.en: "Open-Source Licenses", .zhHans: "开源许可", .zhHant: "開放原始碼授權"],
 
         // Pairing & Disk Image
         .stepsLeft: [.en: "%d steps left", .zhHans: "还剩 %d 步", .zhHant: "還剩 %d 步"],

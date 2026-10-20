@@ -5,7 +5,7 @@ import Security
 /// The default item holds the server's auth sessions; other callers name
 /// their own `account`.
 enum KeychainStore {
-    private static let service = "com.openminis.loopctrl.auth"
+    private static let service = "top.ebato.loopctrl.auth"
     static let sessionsAccount = "sessions"
 
     static func save(_ data: Data, account: String = sessionsAccount) {

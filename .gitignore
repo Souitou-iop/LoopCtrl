@@ -30,3 +30,6 @@ cli/selftest
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# Local test captures (third-party app screenshots and relay logs): never published
+docs/research/clef-test-*/

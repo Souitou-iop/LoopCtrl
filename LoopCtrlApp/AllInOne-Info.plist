@@ -24,7 +24,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.openminis.loopctrl.app</string>
+			<string>top.ebato.loopctrl.app</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>loopctrl-app</string>
@@ -35,14 +35,14 @@
 		     LoopCtrlUITests-Runner. -->
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.openminis.loopctrl</string>
+			<string>top.ebato.loopctrl</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>loopctrl</string>
 			</array>
 		</dict>
 	</array>
-	<!-- Copied from Xcode's XCTRunner.app template, which every runner carries.
+	<!-- The same background mode every XCUITest runner app declares.
 	     Keeps the process alive while it serves from the background; the test
 	     also gets testmanagerd's per-pid background assertion, which does not
 	     depend on this key, but nothing so far has run without it. -->
@@ -66,7 +66,7 @@
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>com.openminis.loopctrl.pairing-record</string>
+				<string>top.ebato.loopctrl.pairing-record</string>
 				<string>com.apple.property-list</string>
 				<string>public.xml</string>
 			</array>
@@ -76,7 +76,7 @@
 	<array>
 		<dict>
 			<key>UTTypeIdentifier</key>
-			<string>com.openminis.loopctrl.pairing-record</string>
+			<string>top.ebato.loopctrl.pairing-record</string>
 			<key>UTTypeDescription</key>
 			<string>Device Pairing Record</string>
 			<key>UTTypeConformsTo</key>

@@ -76,5 +76,9 @@ plistlib.dump({
 }, open(sys.argv[1], "wb"))
 PY
 
+# The app ships the license texts of everything in the framework; refresh them
+# for this version (commit the result if it changed).
+/usr/bin/python3 "$ROOT/Scripts/licenses.py" "$SRC"
+
 echo "$STAMP" > "$DEST/.version"
 echo "✅ IDevice.xcframework ready ($(du -sh "$DEST" | cut -f1), iOS arm64, patched)"

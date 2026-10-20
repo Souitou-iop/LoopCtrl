@@ -1,6 +1,6 @@
 name: LoopCtrl
 options:
-  bundleIdPrefix: com.openminis
+  bundleIdPrefix: top.ebato
   deploymentTarget:
     iOS: "16.0"
   xcodeVersion: "16.0"
@@ -124,6 +124,9 @@ targets:
         buildPhase: resources
       - path: cli/loopctrl.sh
         buildPhase: resources
+      # License texts for the bundled CLI (musl) and the app's libraries.
+      - path: LoopCtrlApp/ThirdPartyNotices.txt
+        buildPhase: resources
     dependencies:
       - target: LoopCtrl
     settings:
@@ -168,7 +171,7 @@ targets:
       - path: Tests/LoopCtrlKitTests
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: "com.openminis.loopctrl.kittests"
+        PRODUCT_BUNDLE_IDENTIFIER: "top.ebato.loopctrl.kittests"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"

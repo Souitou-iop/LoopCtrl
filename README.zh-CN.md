@@ -289,7 +289,7 @@ rustup target add aarch64-apple-ios
 make ipa                     # → LoopCtrl.ipa
 ```
 
-- 加上 `UNSIGNED=1` 可以跳过 Xcode 签名，改用 ad-hoc 签名（bundle 前缀为 `com.openminis`）。
+- 加上 `UNSIGNED=1` 可以跳过 Xcode 签名，改用 ad-hoc 签名（bundle 前缀为 `top.ebato`）。
   适合反正要交给 SideStore 或 `sign-ipa.sh` 重新签名的包。
 - 分享 `LoopCtrl.ipa` 之前，先用 `Scripts/package-release.sh` 去掉里面的描述文件（含你的姓名、team 和设备 UDID）。
   正式发布由 [`.github/workflows/release.yml`](.github/workflows/release.yml) 构建。
@@ -340,10 +340,7 @@ make ipa                     # → LoopCtrl.ipa
 
 ## 许可证
 
-Apache License 2.0，见 [`LICENSE`](LICENSE)。第三方组件和早期 AGPL-3.0 版本的说明见 [`NOTICE.md`](NOTICE.md)。
+Apache License 2.0，见 [`LICENSE`](LICENSE)。版权声明和第三方组件见 [`NOTICE.md`](NOTICE.md)。
 
-LoopCtrl 最初 fork 自 iCTRL。配对和挂载基于 [idevice](https://github.com/jkcoxson/idevice)（MIT）；
-隧道部分通过 [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN) 作为独立 App 调用；磁盘镜像在运行时从
-[doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage) 下载。设备端挂载的思路来自
-[StikDebug](https://github.com/StikDebug/StikDebug)，长期运行的 XCUITest runner 最早由
-[WebDriverAgent](https://github.com/appium/WebDriverAgent) 实现。LoopCtrl 没有复制这两个项目的任何代码。
+配对和挂载基于 [idevice](https://github.com/jkcoxson/idevice)（MIT）；隧道通过 [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN)
+作为独立 App 调用；磁盘镜像在运行时从 [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage) 下载。

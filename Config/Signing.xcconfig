@@ -8,10 +8,10 @@
 //   LOOPCTRL_BUNDLE_PREFIX = com.example.you
 //
 // The prefix matters as much as the team: an explicit App ID is unique across
-// ALL developer accounts, so "com.openminis.loopctrl" can only ever be registered
+// ALL developer accounts, so "top.ebato.loopctrl" can only ever be registered
 // by one team, and automatic signing fails for everyone else.
 
 DEVELOPMENT_TEAM =
-LOOPCTRL_BUNDLE_PREFIX = com.openminis
+LOOPCTRL_BUNDLE_PREFIX = top.ebato
 
 #include? "Local.xcconfig"

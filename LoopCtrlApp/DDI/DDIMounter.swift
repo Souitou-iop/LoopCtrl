@@ -39,8 +39,7 @@ enum DDIError: LocalizedError {
 
 /// Mounts the Developer Disk Image on this device, from this device.
 ///
-/// The trick — and it is StikDebug's, ported here — is that no privileged
-/// entitlement is involved. A local VPN app (LocalDevVPN / StosVPN) makes the
+/// No privileged entitlement is involved. A local VPN app (LocalDevVPN / StosVPN) makes the
 /// device's own `remoted` service routable at 10.7.0.1:49152, and this code then
 /// talks to it as an ordinary network client, exactly as Xcode on a Mac would.
 /// The pairing file is what authenticates that conversation.
@@ -49,7 +48,7 @@ enum DDIError: LocalizedError {
 /// 10.7.0.1:62078 instead, and the mount is the pre-17 one: a lockdownd session
 /// opened with a lockdown pairing record, `com.apple.mobile.mobile_image_mounter`
 /// started through it, and the legacy DeveloperDiskImage.dmg uploaded and
-/// mounted with its signature — what SideStore and StikDebug did on iOS 16.
+/// mounted with its signature.
 ///
 /// All of the real work happens in the `idevice` Rust library (MIT); this is the
 /// Swift side that sequences it.
@@ -119,8 +118,7 @@ final class DDIMounter: ObservableObject {
             // The TSS request builds a reqwest client, whose TLS setup needs far
             // more stack than a Swift concurrency worker provides — it aborted
             // there (SIGABRT, panic inside ClientBuilder::build) on the first
-            // real mount. StikDebug runs the same call on a plain Thread for the
-            // same reason; 4MB is generous enough not to have to think about it.
+            // real mount. 4MB is generous enough not to have to think about it.
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
                 let thread = Thread {
                     do {
@@ -158,7 +156,7 @@ final class DDIMounter: ObservableObject {
     ///
     /// iOS refuses a second mount with a bare "ImageMountFailed", so without
     /// this an already-mounted device reports a hard failure that reads like
-    /// something is broken. StikDebug guards its mount the same way.
+    /// something is broken.
     ///
     /// Returns nil when the question can't be answered (no tunnel, no pairing
     /// file) — the caller should treat that as "unknown", not "not mounted".
@@ -466,8 +464,8 @@ final class DDIMounter: ObservableObject {
         // No start_session here. A lockdownd client reached over the RSD tunnel
         // is already authenticated by the RemotePairing handshake, so opening a
         // second session on it is rejected — that is the InvalidConnection
-        // (code 15) this used to fail with. WebDriverAgent's equivalent (and
-        // StikDebug's) reads the value straight off the connected client.
+        // (code 15) this used to fail with. Read the value straight off the
+        // connected client instead.
         var value: plist_t?
         try check("Reading UniqueChipID") {
             lockdownd_get_value(client, "UniqueChipID", nil, &value)

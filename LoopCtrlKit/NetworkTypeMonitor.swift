@@ -17,7 +17,7 @@ final class NetworkTypeMonitor {
     static let shared = NetworkTypeMonitor()
 
     private let monitor = NWPathMonitor()
-    private let queue = DispatchQueue(label: "com.openminis.loopctrl.netmonitor")
+    private let queue = DispatchQueue(label: "top.ebato.loopctrl.netmonitor")
     private let lock = NSLock()
     private var cached: NetworkType = .other
     /// Set once the first path update lands. Until then `current` is a default,

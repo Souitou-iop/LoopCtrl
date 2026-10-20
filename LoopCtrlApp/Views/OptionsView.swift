@@ -498,6 +498,11 @@ struct OptionsView: View {
                 }
             }
             ValueRow(title: L10n.ui(.license), systemImage: "checkmark.seal", value: "Apache-2.0")
+            NavigationLink {
+                ThirdPartyNoticesView()
+            } label: {
+                Label(L10n.ui(.thirdPartyNotices), systemImage: "doc.text")
+            }
         } header: {
             Text(L10n.t(.aboutSection))
         }
@@ -589,5 +594,33 @@ enum DeviceInfo {
         let b = UIScreen.main.bounds
         let s = UIScreen.main.scale
         return "\(Int(b.width))×\(Int(b.height)) pt · \(Int(b.width * s))×\(Int(b.height * s)) px"
+    }
+}
+
+/// The license texts of the libraries compiled into the app
+/// (ThirdPartyNotices.txt, written by Scripts/licenses.py).
+private struct ThirdPartyNoticesView: View {
+    /// Split on blank lines so the list renders lazily: the whole file is a
+    /// few hundred KB, too much for one Text.
+    private static let paragraphs: [String] = {
+        guard let url = Bundle.main.url(forResource: "ThirdPartyNotices", withExtension: "txt"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        return text.components(separatedBy: "\n\n").filter { !$0.isEmpty }
+    }()
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 12) {
+                ForEach(Self.paragraphs.indices, id: \.self) { i in
+                    Text(verbatim: Self.paragraphs[i])
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding()
+        }
+        .navigationTitle(L10n.ui(.thirdPartyNotices))
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

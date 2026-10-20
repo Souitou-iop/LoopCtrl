@@ -1292,7 +1292,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     /// Serial queue for RPC execution — OFF the main thread so a slow/blocking
     /// XCUITest call can't freeze the network listener (which would drop the whole
     /// service). Serial so actions still run one-at-a-time in order.
-    private let rpcQueue = DispatchQueue(label: "com.openminis.loopctrl.rpc")
+    private let rpcQueue = DispatchQueue(label: "top.ebato.loopctrl.rpc")
 
     /// Consecutive UI-method timeouts. Reset by any UI method that completes.
     private var uiTimeoutStreak = 0
@@ -1371,7 +1371,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     /// Concurrent, and deliberately separate from `rpcQueue`: its whole purpose is
     /// to keep answering while the serial UI queue is blocked by an uncancellable
     /// XCUITest call. Sharing a queue with the UI work would defeat that.
-    private let nonUIQueue = DispatchQueue(label: "com.openminis.loopctrl.rpc.nonui",
+    private let nonUIQueue = DispatchQueue(label: "top.ebato.loopctrl.rpc.nonui",
                                            attributes: .concurrent)
 
     /// Hard ceiling for a single RPC before we report failure to the client. With
@@ -2044,7 +2044,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                 }
             }
         }
-        browser.start(queue: DispatchQueue(label: "com.openminis.loopctrl.ln-browse"))
+        browser.start(queue: DispatchQueue(label: "top.ebato.loopctrl.ln-browse"))
         // Long enough for the user to answer the prompt; the browse itself
         // has no other job.
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self, weak browser] in
@@ -2131,7 +2131,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                 break
             }
         }
-        conn.start(queue: DispatchQueue(label: "com.openminis.loopctrl.ln-trigger"))
+        conn.start(queue: DispatchQueue(label: "top.ebato.loopctrl.ln-trigger"))
         // Tear down after a few seconds — its only job is to raise the dialog.
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             self?.lnTriggerConnection?.cancel()
@@ -2595,7 +2595,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             default: break
             }
         }
-        conn.start(queue: DispatchQueue(label: "com.openminis.loopctrl.reachcheck"))
+        conn.start(queue: DispatchQueue(label: "top.ebato.loopctrl.reachcheck"))
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { finish(false) }
     }
 }

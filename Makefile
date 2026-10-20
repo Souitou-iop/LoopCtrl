@@ -18,7 +18,7 @@ RUNNER_IPA    = LoopCtrlUITests-Runner.ipa
 # profile) or for release packages that SideStore / Scripts/sign-ipa.sh re-sign
 # anyway. The bundle prefix drops the team suffix Local.xcconfig adds.
 ifdef UNSIGNED
-XCODE_SIGNING = CODE_SIGNING_ALLOWED=NO LOOPCTRL_BUNDLE_PREFIX=com.openminis
+XCODE_SIGNING = CODE_SIGNING_ALLOWED=NO LOOPCTRL_BUNDLE_PREFIX=top.ebato
 else
 XCODE_SIGNING = -allowProvisioningUpdates
 endif
@@ -154,7 +154,7 @@ ipa-twoapp: build
 	/usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$$PLIST" 2>/dev/null || true; \
 	/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$$PLIST"; \
 	/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$$PLIST"; \
-	/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string com.openminis.loopctrl" "$$PLIST"; \
+	/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string top.ebato.loopctrl" "$$PLIST"; \
 	/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "$$PLIST"; \
 	/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string loopctrl" "$$PLIST"
 	@echo "📡 Declaring the nearby Bonjour service type..."

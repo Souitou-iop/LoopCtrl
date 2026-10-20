@@ -7,9 +7,9 @@ import Foundation
 /// in the two-IPA build the runner has its own container, so the app also
 /// passes the port on `loopctrl://start?port=…` and the runner stores it.
 ///
-/// The default is not iCTRL's 8200: with both installed, two runners on one
-/// port collide, and the one still holding it keeps iOS's "Automation Running"
-/// overlay up after LoopCtrl's own server has stopped.
+/// The default stays off 8200, which other XCUITest-based runners commonly use:
+/// two runners on one port collide, and the one still holding it keeps iOS's
+/// "Automation Running" overlay up after LoopCtrl's own server has stopped.
 enum ServerPort {
     static let defaultPort: UInt16 = 8300
     static let defaultsKey = "serverPort"

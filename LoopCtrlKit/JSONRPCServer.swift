@@ -27,7 +27,7 @@ class JSONRPCServer {
     var onNearbyStateChange: ((NearbyAdvertiser.Status) -> Void)?
     let port: UInt16
     private let localOnly: Bool
-    private let queue = DispatchQueue(label: "com.openminis.loopctrl.server")
+    private let queue = DispatchQueue(label: "top.ebato.loopctrl.server")
     private(set) var isRunning = false
 
     var onRPCRequest: ((String, [String: JSONValue]?, @escaping ([String: JSONValue]?, JSONRPCError?) -> Void) -> Void)?

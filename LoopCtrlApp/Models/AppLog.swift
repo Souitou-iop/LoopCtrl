@@ -13,7 +13,7 @@ final class AppLog {
 
     /// Serial: several threads log (the mount runs on its own), and interleaved
     /// partial writes would corrupt exactly the file being relied on.
-    private let queue = DispatchQueue(label: "com.openminis.loopctrl.applog")
+    private let queue = DispatchQueue(label: "top.ebato.loopctrl.applog")
     private let handle: FileHandle?
     private let formatter: DateFormatter
 

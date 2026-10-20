@@ -53,7 +53,7 @@ final class VideoBroadcaster {
     /// otherwise flood the log buffer.
     static var verbose: Bool = false
 
-    private let queue = DispatchQueue(label: "com.openminis.loopctrl.video.broadcast")
+    private let queue = DispatchQueue(label: "top.ebato.loopctrl.video.broadcast")
     /// Each subscriber holds a sink + a header-sender + whether it's already
     /// been "handshook" (HTTP header + fMP4 init segment sent). The header
     /// callback receives the actual codec string once known (only after the

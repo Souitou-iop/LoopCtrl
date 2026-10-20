@@ -368,7 +368,7 @@ make ipa                     # → LoopCtrl.ipa
 ```
 
 - Add `UNSIGNED=1` to skip Xcode signing and sign ad hoc (bundle prefix
-  `com.openminis`). Use it for IPAs that SideStore or `sign-ipa.sh` will
+  `top.ebato`). Use it for IPAs that SideStore or `sign-ipa.sh` will
   re-sign anyway.
 - `Scripts/package-release.sh` strips your provisioning profile (name, team,
   device UDIDs) from `LoopCtrl.ipa` before you share it. Releases are built by
@@ -444,14 +444,10 @@ make ipa                     # → LoopCtrl.ipa
 
 ## License
 
-Apache License 2.0, see [`LICENSE`](LICENSE). [`NOTICE.md`](NOTICE.md) covers
-third-party components and the earlier AGPL-3.0 releases.
+Apache License 2.0, see [`LICENSE`](LICENSE). [`NOTICE.md`](NOTICE.md) has
+the copyright notices and the third-party components.
 
-LoopCtrl started as a fork of iCTRL. It builds on
-[idevice](https://github.com/jkcoxson/idevice) (MIT) for pairing and mounting,
-and calls [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN) as a separate
-app for the tunnel. It downloads disk images at runtime from
+Pairing and mounting are built on [idevice](https://github.com/jkcoxson/idevice)
+(MIT). [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN) is opened as a
+separate app for the tunnel, and disk images are downloaded at runtime from
 [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage).
-[StikDebug](https://github.com/StikDebug/StikDebug) inspired the on-device
-mounting, and [WebDriverAgent](https://github.com/appium/WebDriverAgent)
-pioneered the long-lived XCUITest runner. LoopCtrl copies no code from either.

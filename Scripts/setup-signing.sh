@@ -36,7 +36,7 @@ MSG
     exit 1
 fi
 
-PREFIX="${LOOPCTRL_BUNDLE_PREFIX:-com.openminis.$(echo "$TEAM" | tr '[:upper:]' '[:lower:]')}"
+PREFIX="${LOOPCTRL_BUNDLE_PREFIX:-top.ebato.$(echo "$TEAM" | tr '[:upper:]' '[:lower:]')}"
 
 cat > "$OUT" <<CONF
 // Your local signing settings — gitignored, read by Config/Signing.xcconfig.
