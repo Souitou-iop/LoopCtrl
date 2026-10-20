@@ -14,8 +14,13 @@ iCTRL remains:
     Portions Copyright 2026 wsvn53 (iCTRL), licensed under the Apache License,
     Version 2.0.
 
-Releases of iCTRL before 2026-10-09 were AGPL-3.0; LoopCtrl contains none of
-the AGPL-licensed code those releases bundled (`ldid`).
+LoopCtrl has modified those files. The changes are recorded in this
+repository's history from 2026-10-16 (the rename to LoopCtrl) on.
+
+The history before that is iCTRL's. Versions of iCTRL before 2026-10-09 were
+published under AGPL-3.0 and stay under the terms they were published with;
+they are not part of any LoopCtrl release. LoopCtrl contains none of the
+third-party signing code those versions used (AltSign, `ldid`).
 
 ## Components
 
