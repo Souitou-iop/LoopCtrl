@@ -15,7 +15,6 @@ import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.loopctrl.pair.R
-import app.loopctrl.pair.core.DeviceView
 import app.loopctrl.pair.core.ErrorCode
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
@@ -46,45 +45,17 @@ fun errorText(code: ErrorCode?, noHost: Boolean = false): ErrorText {
     return ErrorText(stringResource(r.t), stringResource(r.b), stringArrayResource(r.s).toList(), r.h?.let { stringResource(it) })
 }
 
-private data class Btn(val label: String, val run: () -> Unit)
-
-/** One dialog for every error: a failed phone in single mode, or the environment. */
+/** How to fix the environment (no OTG, or the built-in USB service is down). Phone errors are shown in the phone's own card. */
 @Composable
 fun ErrorDialog(vm: PairViewModel) {
-    val failed: DeviceView? = vm.current?.takeIf {
-        vm.page == Page.Single && vm.started && it.phase == app.loopctrl.pair.core.Phase.Failed
-    }
-    val showEnv = vm.envDialog && failed == null
-    val show = failed != null || showEnv
-    val code = if (showEnv) ErrorCode.NoUsbmux else failed?.error?.code
-    val text = errorText(code, noHost = showEnv && !vm.usbHostSupported)
-    val detail = if (showEnv) vm.env?.detail else failed?.error?.detail
-    var showDetail by remember(failed?.udid, code) { mutableStateOf(false) }
+    val noHost = !vm.usbHostSupported && !vm.mock
+    val text = errorText(ErrorCode.NoUsbmux, noHost = noHost)
+    val detail = vm.env?.detail
+    var showDetail by remember { mutableStateOf(false) }
 
-    val cancel = stringResource(R.string.dialog_cancel)
-    val retry = stringResource(R.string.dialog_retry)
-    val buttons: Pair<Btn, Btn?> = if (showEnv) {
-        if (!vm.usbHostSupported) Btn(stringResource(R.string.dialog_ok)) { vm.envDialog = false } to null
-        else Btn(cancel) { vm.envDialog = false } to Btn(stringResource(R.string.dialog_redetect), vm::redetect)
-    } else {
-        val udid = failed?.udid ?: ""
-        when (code) {
-            ErrorCode.DevModeCancelled -> Btn(stringResource(R.string.dialog_later)) { vm.cancelToWelcome(udid) } to
-                Btn(stringResource(R.string.dialog_recheck)) { vm.command(udid, "retry") }
-            ErrorCode.RebootTimeout -> Btn(stringResource(R.string.dialog_recheck)) { vm.command(udid, "recheck") } to
-                Btn(stringResource(R.string.dialog_keep_waiting)) { vm.command(udid, "retry") }
-            ErrorCode.Unsupported -> Btn(stringResource(R.string.back), vm::finish) to
-                Btn(stringResource(R.string.dialog_ok)) { vm.skip(udid) }
-            else -> Btn(cancel) { vm.cancelToWelcome(udid) } to Btn(retry) { vm.command(udid, "retry") }
-        }
-    }
-
-    OverlayDialog(show = show, title = text.title, summary = text.body, onDismissRequest = null) {
+    OverlayDialog(show = vm.envDialog, title = text.title, summary = text.body, onDismissRequest = { vm.envDialog = false }) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             text.steps.forEachIndexed { i, s -> Text("${i + 1}. $s", style = MiuixTheme.textStyles.body2) }
-            if (text.hint != null) {
-                Text(text.hint, style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-            }
             if (!detail.isNullOrEmpty()) {
                 if (showDetail) {
                     Text(detail, style = MiuixTheme.textStyles.footnote2, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
@@ -92,22 +63,12 @@ fun ErrorDialog(vm: PairViewModel) {
                     TextButton(stringResource(R.string.dialog_detail), { showDetail = true }, minHeight = 32.dp)
                 }
             }
-            if (failed != null && vm.mock) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    when (code) {
-                        ErrorCode.AppNotFound -> MockButton(stringResource(R.string.mock_install)) { vm.core.mockPhone(failed.udid, "installApp") }
-                        ErrorCode.Disconnected -> MockButton(stringResource(R.string.mock_plug)) { vm.core.mockPhone(failed.udid, "plug") }
-                        else -> Unit
-                    }
-                }
-            }
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                val (first, second) = buttons
-                if (second == null) {
-                    PrimaryButton(first.label, first.run, Modifier.weight(1f))
+                if (noHost) {
+                    PrimaryButton(stringResource(R.string.dialog_ok), { vm.envDialog = false }, Modifier.weight(1f))
                 } else {
-                    SecondaryButton(first.label, first.run, Modifier.weight(1f))
-                    PrimaryButton(second.label, second.run, Modifier.weight(1f))
+                    SecondaryButton(stringResource(R.string.dialog_cancel), { vm.envDialog = false }, Modifier.weight(1f))
+                    PrimaryButton(stringResource(R.string.dialog_redetect), vm::redetect, Modifier.weight(1f))
                 }
             }
         }

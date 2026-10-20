@@ -1,143 +1,86 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">LoopCtrl Pair</string>
-
-    <string name="nav_single">Single</string>
-    <string name="nav_batch">Batch</string>
     <string name="nav_settings">Settings</string>
 
-    <string name="welcome_title">Pair iPhone</string>
-    <string name="welcome_subtitle">Connect the iPhone to this Android phone with a cable once; after that LoopCtrl needs only the iPhone.</string>
-    <string name="welcome_card_summary">Creates the pairing file and writes it into LoopCtrl, about one minute</string>
-    <string name="welcome_many">Many phones at once?</string>
-    <string name="welcome_batch">Batch pairing</string>
-    <string name="welcome_batch_summary">Connect several iPhones through a powered USB hub</string>
-    <string name="welcome_env">Environment</string>
-    <string name="welcome_usb_host">USB host (OTG)</string>
-    <string name="welcome_usb_host_summary">This phone can power and talk to an iPhone</string>
-    <string name="welcome_mux">Built-in USB service</string>
-    <string name="welcome_mux_summary">Replaces usbmuxd of a computer; nothing to install</string>
-    <string name="welcome_ok">OK</string>
-    <string name="welcome_unavailable">Unavailable</string>
-    <string name="welcome_checking">Checking</string>
-    <string name="welcome_start">Start pairing</string>
+    <string name="nav_back">Back</string>
 
-    <string name="wait_title">Connect iPhone</string>
-    <string name="wait_subtitle">Connect the two phones directly, with as few adapters as possible.</string>
-    <string name="status">Status</string>
-    <string name="wait_heading">Connect the iPhone with a cable</string>
-    <string name="wait_body">USB-C to Lightning or USB-C to USB-C both work. Android then asks whether to allow access to the iPhone; tap “OK”.</string>
-    <string name="wait_waiting">Waiting for iPhone…</string>
-    <string name="wait_session_done">Paired this session</string>
-    <string name="back">Back</string>
+    <string name="home_title_empty">Connect iPhone</string>
+    <string name="home_sub_empty">Connect the iPhones to pair to this Android phone with a cable, one or several.</string>
+    <string name="home_hero_title">Plug in an iPhone; it is detected automatically</string>
+    <string name="home_hero_body">USB-C to Lightning or USB-C to USB-C both work. Android asks whether to allow access to the iPhone; tap “OK”. For several phones at once, use an OTG hub with its own power supply.</string>
+    <string name="home_detecting">Looking for iPhones…</string>
+    <string name="home_title_found">%1$d iPhone(s) detected</string>
+    <string name="home_sub_found">Once every iPhone to pair is connected, tap “Start pairing”.</string>
+    <string name="home_title_running">Pairing</string>
+    <string name="home_sub_running">%1$d/%2$d done · keep them connected and unlocked</string>
+    <string name="home_sub_running_act">%1$d/%2$d done · %3$d need you</string>
+    <string name="home_title_done">Paired</string>
+    <string name="home_sub_done">%1$d iPhone(s) have their pairing file written and verified. You can unplug now.</string>
+    <string name="home_start">Start pairing</string>
+    <string name="home_start_n">Pair %1$d iPhones</string>
+    <string name="home_stop">Stop</string>
+    <string name="home_finish">Done</string>
+    <string name="home_ready_n">%1$d ready · you can plug in more iPhones</string>
+    <string name="home_none_ready">No iPhone ready to pair</string>
+    <string name="home_waiting">Waiting for an iPhone…</string>
+    <string name="home_running_note">iPhones plugged in now join automatically</string>
+    <string name="home_done_note">Paired this session: %1$d</string>
+    <string name="home_later">From now on</string>
+    <string name="home_after_reboot">After every iPhone restart</string>
+    <string name="home_after_reboot_summary">Open LoopCtrl and tap “Mount”</string>
+    <string name="home_no_more">No cable needed</string>
+    <string name="home_no_more_summary">Unless you change phones, or mounting fails after an iOS update</string>
+    <string name="home_paired">Paired this session</string>
+    <string name="home_how_to_fix">How to fix</string>
 
-    <string name="device_subtitle">Connected over USB</string>
-    <string name="device_info">Device</string>
-    <string name="device_model">Model</string>
-    <string name="device_ios">iOS version</string>
-    <string name="device_dev_mode">Developer Mode</string>
-    <string name="device_dev_mode_summary">Checked after Trust</string>
-    <string name="device_pending">Pending</string>
-    <string name="device_next">Next</string>
-    <string name="device_next_title">Tap “Trust” on the iPhone</string>
-    <string name="device_next_summary">Then enter the passcode</string>
-    <string name="device_reading">Reading device info…</string>
-    <string name="device_continue">Continue</string>
-
-    <string name="trust_title">Trust this device</string>
-    <string name="trust_subtitle">Nothing to do on the Android phone</string>
-    <string name="on_iphone">On the iPhone</string>
-    <string name="trust_heading">Unlock the iPhone, tap “Trust” and enter the passcode</string>
-    <string name="trust_body">The iPhone asks “Trust This Computer?”; to the iPhone this Android phone is a computer.</string>
-    <string name="waiting_confirm">Waiting…</string>
-    <string name="trust_locked">The iPhone is locked. Unlock it first</string>
-
-    <string name="devcheck_title">Developer Mode</string>
-    <string name="devcheck_checking">Checking…</string>
-    <string name="devcheck_on">On, continuing</string>
-    <string name="devcheck_off">Off: two taps on the iPhone needed</string>
-    <string name="devcheck_auto">Automatic check</string>
-    <string name="devcheck_read">Read Developer Mode status</string>
-    <string name="devcheck_reveal">Show the Developer Mode switch on the iPhone</string>
-    <string name="devcheck_reveal_summary">The switch is hidden by default</string>
-    <string name="devcheck_why_title">Why by hand</string>
-    <string name="devcheck_why">This iPhone has a passcode, so Apple only lets its owner turn Developer Mode on, on the phone itself. Two taps; the assistant does the rest.</string>
-    <string name="devcheck_step1">Settings › Privacy &amp; Security › Developer Mode</string>
-    <string name="devcheck_step1_summary">Under Security, near the bottom</string>
-    <string name="devcheck_step2">Turn the switch on</string>
-    <string name="devcheck_step3">Tap “Restart”</string>
-    <string name="devcheck_step3_summary">Keep the cable in; the assistant waits for the restart</string>
-    <string name="devcheck_wait_reboot">Continues on its own once the iPhone restarts</string>
-
-    <string name="reboot_title">Waiting for restart</string>
-    <string name="reboot_subtitle">About one minute</string>
-    <string name="reboot_heading">The iPhone is restarting</string>
-    <string name="reboot_body">The assistant continues on its own once it is back. Android may ask again to allow access to the iPhone; tap “OK”.</string>
-    <string name="reboot_no_unplug">Do not unplug the cable</string>
-    <string name="reboot_waiting">Waiting for the iPhone to reconnect… %1$s</string>
-
-    <string name="unlock_title">Confirm</string>
-    <string name="unlock_subtitle">The iPhone is back</string>
-    <string name="unlock_heading">Unlock the iPhone, tap “Turn On” and enter the passcode</string>
-    <string name="unlock_body">The prompt is titled “Turn On Developer Mode?”.</string>
-    <string name="unlock_no_prompt">No prompt?</string>
-
-    <string name="progress_title">Writing</string>
-    <string name="progress_subtitle">Keep it connected and unlocked</string>
-    <string name="progress_heading">Progress</string>
-    <string name="progress_gen">Create pairing record</string>
-    <string name="progress_find">Find LoopCtrl</string>
-    <string name="progress_write">Write pairing file</string>
-    <string name="progress_verify">Verify</string>
-    <string name="progress_lockdown_only">Lockdown record</string>
-    <string name="progress_written">Written</string>
-    <string name="progress_passed">Passed</string>
-
-    <string name="done_title">Paired</string>
-    <string name="done_result">Result</string>
-    <string name="done_heading">You can unplug now</string>
-    <string name="done_body">The pairing file is in LoopCtrl and verified.</string>
-    <string name="done_later">From now on</string>
-    <string name="done_after_reboot">After every iPhone restart</string>
-    <string name="done_after_reboot_summary">Open LoopCtrl and tap “Mount”</string>
-    <string name="done_no_more">No cable needed</string>
-    <string name="done_no_more_summary">Unless you change phones, or mounting fails after an iOS update</string>
-    <string name="done_session_count">Paired this session: %1$d</string>
-    <string name="done_finish">Done</string>
-    <string name="done_next">Pair the next one</string>
-
-    <string name="batch_title">Batch pairing</string>
-    <string name="batch_done">%1$d/%2$d done</string>
-    <string name="batch_meta">%1$d connected · %2$d need attention</string>
-    <string name="batch_hub">Use a USB hub with its own power supply. Unlock every iPhone and tap “Trust”. Phones run independently; whichever is ready first finishes first.</string>
-    <string name="batch_all">All</string>
-    <string name="batch_act">To do %1$d</string>
-    <string name="batch_run">Running</string>
-    <string name="batch_ok">Done</string>
-    <string name="batch_empty">No iPhone matches</string>
-    <string name="batch_none">No iPhone connected yet. Plug them into a powered hub; pairing starts by itself.</string>
-    <string name="batch_clear_done">Clear finished</string>
-    <string name="batch_reset_demo">Restart demo</string>
-    <string name="batch_port">USB #%1$d</string>
-    <string name="batch_need_you">Needs you</string>
-    <string name="batch_disconnected">Unplugged</string>
-    <string-array name="batch_steps">
-        <item>Trust this device</item>
-        <item>Developer Mode</item>
-        <item>Create pairing record</item>
-        <item>Write pairing file</item>
+    <string name="row_reading">Reading</string>
+    <string name="row_ready">Ready</string>
+    <string name="row_too_old">iOS too old</string>
+    <string name="row_unplugged">Unplugged</string>
+    <string name="row_port">USB #%1$d</string>
+    <string-array name="steps">
+        <item>Trust</item>
+        <item>Dev Mode</item>
+        <item>Record</item>
+        <item>Write</item>
         <item>Verify</item>
     </string-array>
-    <string name="hint_trust_title">Tap “Trust” on this iPhone</string>
-    <string name="hint_trust">Unlock it, tap “Trust” and enter the passcode. The other iPhones carry on.</string>
-    <string name="hint_locked_title">Unlock this iPhone</string>
-    <string name="hint_locked">It is locked; the Trust prompt appears after unlocking.</string>
-    <string name="hint_dev_off_title">Turn on Developer Mode</string>
-    <string name="hint_dev_off">The switch is visible now. On this iPhone: Settings › Privacy &amp; Security › Developer Mode → on → Restart. Keep it plugged in.</string>
-    <string name="hint_reboot_title">Restarting</string>
-    <string name="hint_reboot">This iPhone is restarting. Keep it plugged in; it continues when back.</string>
-    <string name="hint_unlock_title">Unlock and tap “Turn On”</string>
-    <string name="hint_unlock">Unlock this iPhone, tap “Turn On” in the prompt and enter the passcode.</string>
+
+    <string name="guide_trust_title">Tap “Trust” on the iPhone</string>
+    <string name="guide_trust_body">Unlock the iPhone, tap “Trust” in “Trust This Computer?” and enter the passcode. To the iPhone, this Android phone is a computer.</string>
+    <string name="guide_locked_title">Unlock the iPhone first</string>
+    <string name="guide_locked_body">It is locked; the Trust prompt appears after unlocking.</string>
+    <string name="guide_dev_off_title">Turn on Developer Mode</string>
+    <string name="guide_dev_off_body">The switch is visible now. Apple only lets the owner of an iPhone with a passcode turn it on, on the phone itself.</string>
+    <string-array name="guide_dev_steps">
+        <item>Settings › Privacy &amp; Security › Developer Mode</item>
+        <item>Turn the switch on</item>
+        <item>Tap “Restart”; keep the cable in</item>
+    </string-array>
+    <string name="guide_reboot_title">The iPhone is restarting</string>
+    <string name="guide_reboot_body">About one minute. It continues on its own once it is back; if Android asks again whether to allow access, tap “OK”.</string>
+    <string name="guide_no_unplug">Do not unplug the cable</string>
+    <string name="guide_unlock_title">Unlock and tap “Turn On”</string>
+    <string name="guide_unlock_body">The iPhone is back. Unlock it, tap “Turn On” in “Turn On Developer Mode?” and enter the passcode.</string>
+    <string name="guide_no_prompt">No prompt?</string>
+    <string name="guide_waiting">Waiting…</string>
+    <string name="guide_elapsed">Waited %1$s</string>
+    <string name="guide_unplugged_title">The iPhone was unplugged</string>
+    <string name="guide_unplugged_body">Plug it back in and unlock it; it resumes where it stopped.</string>
+    <string name="guide_skipped">This one is skipped; the other iPhones are not affected.</string>
+    <string name="guide_other">The other iPhones carry on.</string>
+
+    <string name="env_title">Environment</string>
+    <string name="env_checking">Checking</string>
+    <string name="env_ok">Ready</string>
+    <string name="env_bad">Problem</string>
+    <string name="env_usb_host">USB host (OTG)</string>
+    <string name="env_usb_host_summary">This phone can power and talk to an iPhone</string>
+    <string name="env_mux">Built-in USB service</string>
+    <string name="env_mux_summary">Replaces usbmuxd on a computer; nothing to install</string>
+    <string name="env_normal">OK</string>
+    <string name="env_unavailable">Unavailable</string>
 
     <string name="chip_detected">Connected</string>
     <string name="chip_trusting">Waiting for Trust</string>
@@ -152,13 +95,6 @@
     <string name="chip_verifying">Verifying</string>
     <string name="chip_done">Done</string>
     <string name="chip_failed">Error</string>
-
-    <string name="step_wait">Waiting</string>
-    <string name="step_run">Running</string>
-    <string name="step_reading">Reading</string>
-    <string name="step_done">Done</string>
-    <string name="step_on">On</string>
-    <string name="step_off">Off</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_about">About</string>
@@ -200,6 +136,7 @@
     <string name="mock_install">LoopCtrl installed</string>
     <string name="mock_unplug">Unplug</string>
     <string name="mock_batch">Connect 5 phones</string>
+    <string name="mock_reset">Reset demo</string>
     <string name="scenario_ready">iOS 18 · all set</string>
     <string name="scenario_devModeOff">iOS 17.5 · Developer Mode off</string>
     <string name="scenario_noRpService">iOS 26 · via CoreDeviceProxy</string>

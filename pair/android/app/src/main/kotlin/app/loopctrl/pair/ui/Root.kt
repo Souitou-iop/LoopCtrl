@@ -25,8 +25,8 @@ import app.loopctrl.pair.BuildConfig
 import app.loopctrl.pair.Prefs
 import app.loopctrl.pair.R
 import top.yukonga.miuix.kmp.basic.BasicComponent
-import top.yukonga.miuix.kmp.basic.NavigationBar
-import top.yukonga.miuix.kmp.basic.NavigationBarItem
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.TabRow
@@ -34,30 +34,21 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.GridView
-import top.yukonga.miuix.kmp.icon.extended.Phone
-import top.yukonga.miuix.kmp.icon.extended.Settings
+import top.yukonga.miuix.kmp.icon.extended.Back
 
 const val SOURCE_URL = "https://github.com/Souitou-iop/LoopCtrl-Pair"
 
 @Composable
 fun PairRoot(vm: PairViewModel = viewModel()) {
-    BackHandler(enabled = vm.page == Page.Single && vm.started) { vm.finish() }
+    BackHandler(enabled = vm.view == View.Settings) { vm.view = View.Pair }
     Scaffold(
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(vm.page == Page.Single, { vm.go(Page.Single) }, MiuixIcons.Phone, stringResource(R.string.nav_single))
-                NavigationBarItem(vm.page == Page.Batch, { vm.go(Page.Batch) }, MiuixIcons.GridView, stringResource(R.string.nav_batch))
-                NavigationBarItem(vm.page == Page.Settings, { vm.go(Page.Settings) }, MiuixIcons.Settings, stringResource(R.string.nav_settings))
-            }
-        },
+        bottomBar = { if (vm.view == View.Pair) PairBar(vm) },
     ) { inner ->
         val bottom = PaddingValues(bottom = inner.calculateBottomPadding())
         Box(Modifier.fillMaxSize()) {
-            when (vm.page) {
-                Page.Single -> SingleFlow(vm, bottom)
-                Page.Batch -> BatchScreen(vm, bottom)
-                Page.Settings -> SettingsScreen(vm, bottom)
+            when (vm.view) {
+                View.Pair -> PairScreen(vm, bottom)
+                View.Settings -> SettingsScreen(vm, bottom)
             }
         }
         ErrorDialog(vm)
@@ -72,7 +63,15 @@ private fun SettingsScreen(vm: PairViewModel, bottom: PaddingValues) {
     val langs = listOf(Prefs.LANG_SYSTEM, Prefs.LANG_ZH, Prefs.LANG_EN)
     var showLicenses by remember { mutableStateOf(false) }
     LicensesSheet(showLicenses) { showLicenses = false }
-    Page(stringResource(R.string.settings_title), bottom = bottom) {
+    Page(
+        stringResource(R.string.settings_title),
+        bottom = bottom,
+        navigationIcon = {
+            IconButton(onClick = { vm.view = View.Pair }, modifier = Modifier.padding(start = 8.dp)) {
+                Icon(MiuixIcons.Back, contentDescription = stringResource(R.string.nav_back))
+            }
+        },
+    ) {
         Section(stringResource(R.string.settings_about)) {
             BasicComponent(
                 title = stringResource(R.string.app_name),

@@ -139,13 +139,15 @@ class Store {
     await api.setAutoBegin(true).catch(() => {});
   }
 
-  /** Back to the list: phones not finished return to waiting. */
+  /** Back to the list: phones not finished return to waiting; finished ones move to 本次已配对. */
   async stop() {
     this.running = false;
     await api.setAutoBegin(false).catch(() => {});
     for (const d of this.shown) {
       if (d.phase !== "detected" && !isSettled(d)) void api.command(d.udid, "cancel").catch(() => {});
     }
+    this.hidden = [...this.hidden, ...this.shown.filter((d) => d.phase === "done").map((d) => d.udid)];
+    this.open = [];
   }
 
   /** 完成: put the finished phones away and wait for the next ones. */

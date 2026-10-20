@@ -73,11 +73,13 @@ fun Page(
     title: String,
     subtitle: String = "",
     bottom: PaddingValues = PaddingValues(0.dp),
+    navigationIcon: @Composable () -> Unit = {},
+    actions: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scroll = MiuixScrollBehavior()
     Scaffold(
-        topBar = { TopAppBar(title = title, subtitle = subtitle, scrollBehavior = scroll) },
+        topBar = { TopAppBar(title = title, subtitle = subtitle, navigationIcon = navigationIcon, actions = actions, scrollBehavior = scroll) },
         contentWindowInsets = WindowInsets(0),
     ) { inner ->
         Column(
@@ -99,11 +101,6 @@ fun Section(title: String?, content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-fun Block(content: @Composable () -> Unit) {
-    Box(Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp)) { content() }
-}
-
-@Composable
 fun EndText(text: String, color: Color = MiuixTheme.colorScheme.onSurfaceVariantActions) {
     Text(text, color = color, style = MiuixTheme.textStyles.body2)
 }
@@ -116,59 +113,6 @@ fun InfoRow(title: String, summary: String? = null, end: String? = null, endColo
         summary = summary,
         endActions = end?.let { { EndText(it, endColor ?: MiuixTheme.colorScheme.onSurfaceVariantActions) } },
         onClick = onClick,
-    )
-}
-
-enum class StepState { Wait, Run, Ok, Bad }
-
-@Composable
-fun StepIcon(state: StepState) {
-    Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
-        when (state) {
-            StepState.Run -> InfiniteProgressIndicator(color = MiuixTheme.colorScheme.primary, size = 18.dp)
-            StepState.Ok -> Box(
-                Modifier.size(20.dp).clip(CircleShape).background(PairColors.ok),
-                contentAlignment = Alignment.Center,
-            ) { Icon(MiuixIcons.Ok, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp)) }
-            StepState.Bad -> Box(
-                Modifier.size(20.dp).clip(CircleShape).background(MiuixTheme.colorScheme.error),
-                contentAlignment = Alignment.Center,
-            ) { Text("!", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
-            StepState.Wait -> Box(Modifier.size(8.dp).clip(CircleShape).background(MiuixTheme.colorScheme.outline))
-        }
-    }
-}
-
-@Composable
-fun StepRow(state: StepState, title: String, summary: String? = null, end: String = "") {
-    BasicComponent(
-        title = title,
-        summary = summary,
-        startAction = { Box(Modifier.padding(end = 12.dp)) { StepIcon(state) } },
-        endActions = {
-            EndText(
-                end,
-                when (state) {
-                    StepState.Run -> MiuixTheme.colorScheme.primary
-                    StepState.Bad -> MiuixTheme.colorScheme.error
-                    else -> MiuixTheme.colorScheme.onSurfaceVariantActions
-                },
-            )
-        },
-    )
-}
-
-@Composable
-fun NumberedRow(n: Int, title: String, summary: String? = null) {
-    BasicComponent(
-        title = title,
-        summary = summary,
-        startAction = {
-            Box(
-                Modifier.padding(end = 12.dp).size(24.dp).clip(CircleShape).background(MiuixTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center,
-            ) { Text("$n", color = MiuixTheme.colorScheme.onPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
-        },
     )
 }
 
@@ -204,19 +148,6 @@ fun Hero(icon: ImageVector?, heading: String, body: String, warn: String? = null
 }
 
 @Composable
-fun Note(title: String? = null, text: String) {
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-            .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.08f)).padding(14.dp),
-    ) {
-        Column {
-            if (title != null) Text(title, fontWeight = FontWeight.SemiBold, style = MiuixTheme.textStyles.body2)
-            Text(text, style = MiuixTheme.textStyles.body2, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-        }
-    }
-}
-
-@Composable
 fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     TextButton(text = text, onClick = onClick, modifier = modifier, enabled = enabled, colors = ButtonDefaults.textButtonColorsPrimary())
 }
@@ -224,16 +155,6 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
 @Composable
 fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     TextButton(text = text, onClick = onClick, modifier = modifier, enabled = enabled)
-}
-
-/** Bottom buttons of a page, full width. */
-@Composable
-fun Buttons(content: @Composable RowScope.() -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 8.dp, bottom = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        content = content,
-    )
 }
 
 /** Simulated phone actions, only in mock mode. */

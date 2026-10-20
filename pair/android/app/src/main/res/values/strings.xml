@@ -2,143 +2,86 @@
 <!-- Simplified Chinese is the primary language (default); English is in values-en. -->
 <resources>
     <string name="app_name">LoopCtrl 配对助手</string>
-
-    <string name="nav_single">单台</string>
-    <string name="nav_batch">批量</string>
     <string name="nav_settings">设置</string>
 
-    <string name="welcome_title">配对 iPhone</string>
-    <string name="welcome_subtitle">用数据线把 iPhone 连到这台安卓手机一次，之后 LoopCtrl 只用 iPhone。</string>
-    <string name="welcome_card_summary">生成配对文件并写入 LoopCtrl，大约一分钟</string>
-    <string name="welcome_many">一次要配很多台？</string>
-    <string name="welcome_batch">批量配对</string>
-    <string name="welcome_batch_summary">用带供电的 USB 集线器同时连接多台 iPhone</string>
-    <string name="welcome_env">环境检查</string>
-    <string name="welcome_usb_host">USB 主机（OTG）</string>
-    <string name="welcome_usb_host_summary">这台手机能给 iPhone 供电并通信</string>
-    <string name="welcome_mux">内置 USB 服务</string>
-    <string name="welcome_mux_summary">代替电脑上的 usbmuxd，无需安装</string>
-    <string name="welcome_ok">正常</string>
-    <string name="welcome_unavailable">不可用</string>
-    <string name="welcome_checking">检查中</string>
-    <string name="welcome_start">开始配对</string>
+    <string name="nav_back">返回</string>
 
-    <string name="wait_title">连接 iPhone</string>
-    <string name="wait_subtitle">两台手机直接用线连，尽量不要经过转接头。</string>
-    <string name="status">状态</string>
-    <string name="wait_heading">请用数据线连接 iPhone</string>
-    <string name="wait_body">USB-C 对 Lightning 或 USB-C 对 USB-C 都可以。插上后安卓会询问是否允许访问 iPhone，请点「确定」。</string>
-    <string name="wait_waiting">正在等待 iPhone…</string>
-    <string name="wait_session_done">本次已配对</string>
-    <string name="back">返回</string>
+    <string name="home_title_empty">连接 iPhone</string>
+    <string name="home_sub_empty">用数据线把要配对的 iPhone 连到这台安卓手机，一台或多台都可以。</string>
+    <string name="home_hero_title">插上 iPhone，助手会自动识别</string>
+    <string name="home_hero_body">USB-C 对 Lightning 或 USB-C 对 USB-C 都可以。插上后安卓会询问是否允许访问 iPhone，请点「确定」。同时配对多台时，请使用带独立电源的 OTG 集线器。</string>
+    <string name="home_detecting">正在检测 iPhone…</string>
+    <string name="home_title_found">已检测到 %1$d 台 iPhone</string>
+    <string name="home_sub_found">要配对的 iPhone 都连好后，点「开始配对」。</string>
+    <string name="home_title_running">正在配对</string>
+    <string name="home_sub_running">已完成 %1$d/%2$d · 请保持连接，iPhone 不要锁屏</string>
+    <string name="home_sub_running_act">已完成 %1$d/%2$d · %3$d 台需要你操作</string>
+    <string name="home_title_done">配对完成</string>
+    <string name="home_sub_done">%1$d 台 iPhone 已写入配对文件并校验通过，可以拔线了。</string>
+    <string name="home_start">开始配对</string>
+    <string name="home_start_n">开始配对 %1$d 台</string>
+    <string name="home_stop">停止</string>
+    <string name="home_finish">完成</string>
+    <string name="home_ready_n">%1$d 台就绪 · 可以继续插入更多 iPhone</string>
+    <string name="home_none_ready">没有可以配对的 iPhone</string>
+    <string name="home_waiting">等待连接 iPhone…</string>
+    <string name="home_running_note">配对中插入的 iPhone 会自动加入</string>
+    <string name="home_done_note">本次已配对 %1$d 台</string>
+    <string name="home_later">以后怎么用</string>
+    <string name="home_after_reboot">每次重启 iPhone 后</string>
+    <string name="home_after_reboot_summary">打开 LoopCtrl，点一下「挂载」</string>
+    <string name="home_no_more">不用再连线</string>
+    <string name="home_no_more_summary">除非换了手机，或升级 iOS 后挂载失败</string>
+    <string name="home_paired">本次已配对</string>
+    <string name="home_how_to_fix">查看解决办法</string>
 
-    <string name="device_subtitle">已通过 USB 连接</string>
-    <string name="device_info">设备信息</string>
-    <string name="device_model">型号</string>
-    <string name="device_ios">iOS 版本</string>
-    <string name="device_dev_mode">开发者模式</string>
-    <string name="device_dev_mode_summary">信任后自动检查</string>
-    <string name="device_pending">待检查</string>
-    <string name="device_next">下一步</string>
-    <string name="device_next_title">在 iPhone 上点「信任」</string>
-    <string name="device_next_summary">然后输入锁屏密码</string>
-    <string name="device_reading">正在读取设备信息…</string>
-    <string name="device_continue">继续</string>
-
-    <string name="trust_title">信任这台设备</string>
-    <string name="trust_subtitle">安卓手机这边不用操作</string>
-    <string name="on_iphone">在 iPhone 上</string>
-    <string name="trust_heading">请解锁 iPhone，点「信任」并输入锁屏密码</string>
-    <string name="trust_body">iPhone 上会弹出「要信任此电脑吗？」，在 iPhone 看来这台安卓手机就是一台电脑。</string>
-    <string name="waiting_confirm">等待确认…</string>
-    <string name="trust_locked">iPhone 已锁定，请先解锁</string>
-
-    <string name="devcheck_title">开发者模式</string>
-    <string name="devcheck_checking">正在检查…</string>
-    <string name="devcheck_on">已开启，继续配对</string>
-    <string name="devcheck_off">未开启，需要在 iPhone 上点两下</string>
-    <string name="devcheck_auto">自动检查</string>
-    <string name="devcheck_read">读取开发者模式状态</string>
-    <string name="devcheck_reveal">在 iPhone 上显示开发者模式开关</string>
-    <string name="devcheck_reveal_summary">这个开关默认是隐藏的</string>
-    <string name="devcheck_why_title">为什么要手动打开</string>
-    <string name="devcheck_why">这台 iPhone 设了锁屏密码，按苹果的规定，开发者模式只能由机主在手机上亲手打开。你只需要点两下，其余都由助手完成。</string>
-    <string name="devcheck_step1">设置 › 隐私与安全性 › 开发者模式</string>
-    <string name="devcheck_step1_summary">在「安全性」一栏，靠近列表底部</string>
-    <string name="devcheck_step2">打开开关</string>
-    <string name="devcheck_step3">点「重新启动」</string>
-    <string name="devcheck_step3_summary">不要拔线，助手会等 iPhone 重启</string>
-    <string name="devcheck_wait_reboot">iPhone 开始重启后会自动进入下一步</string>
-
-    <string name="reboot_title">等待 iPhone 重启</string>
-    <string name="reboot_subtitle">大约需要 1 分钟</string>
-    <string name="reboot_heading">iPhone 正在重启</string>
-    <string name="reboot_body">重新连上后助手会自动继续。安卓可能会再问一次是否允许访问 iPhone，点「确定」即可。</string>
-    <string name="reboot_no_unplug">请不要拔数据线</string>
-    <string name="reboot_waiting">等待 iPhone 重新连接… %1$s</string>
-
-    <string name="unlock_title">确认打开</string>
-    <string name="unlock_subtitle">iPhone 已重新连接</string>
-    <string name="unlock_heading">请解锁 iPhone，在弹窗中点「打开」并输入锁屏密码</string>
-    <string name="unlock_body">弹窗标题是「打开开发者模式？」。</string>
-    <string name="unlock_no_prompt">没有看到弹窗？</string>
-
-    <string name="progress_title">正在写入</string>
-    <string name="progress_subtitle">请保持连接，iPhone 不要锁屏</string>
-    <string name="progress_heading">进度</string>
-    <string name="progress_gen">生成配对记录</string>
-    <string name="progress_find">查找 LoopCtrl</string>
-    <string name="progress_write">写入配对文件</string>
-    <string name="progress_verify">校验</string>
-    <string name="progress_lockdown_only">lockdown 记录</string>
-    <string name="progress_written">已写入</string>
-    <string name="progress_passed">通过</string>
-
-    <string name="done_title">配对完成</string>
-    <string name="done_result">结果</string>
-    <string name="done_heading">可以拔线了</string>
-    <string name="done_body">配对文件已写入 LoopCtrl 并校验通过。</string>
-    <string name="done_later">以后怎么用</string>
-    <string name="done_after_reboot">每次重启 iPhone 后</string>
-    <string name="done_after_reboot_summary">打开 LoopCtrl，点一下「挂载」</string>
-    <string name="done_no_more">不用再连线</string>
-    <string name="done_no_more_summary">除非换了手机，或升级 iOS 后挂载失败</string>
-    <string name="done_session_count">本次已配对 %1$d 台</string>
-    <string name="done_finish">完成</string>
-    <string name="done_next">继续配对下一台</string>
-
-    <string name="batch_title">批量配对</string>
-    <string name="batch_done">%1$d/%2$d 完成</string>
-    <string name="batch_meta">%1$d 台已连接 · %2$d 台需要处理</string>
-    <string name="batch_hub">请使用带独立电源的 USB 集线器，每台 iPhone 都要解锁并点「信任」。各台互不影响，先点好的先完成。</string>
-    <string name="batch_all">全部</string>
-    <string name="batch_act">待处理 %1$d</string>
-    <string name="batch_run">进行中</string>
-    <string name="batch_ok">已完成</string>
-    <string name="batch_empty">没有符合条件的 iPhone</string>
-    <string name="batch_none">还没有 iPhone 连接。用带供电的集线器插上即可，助手会自动开始。</string>
-    <string name="batch_clear_done">清除已完成</string>
-    <string name="batch_reset_demo">重新开始演示</string>
-    <string name="batch_port">USB #%1$d</string>
-    <string name="batch_need_you">需要你操作</string>
-    <string name="batch_disconnected">已断开</string>
-    <string-array name="batch_steps">
-        <item>信任这台设备</item>
+    <string name="row_reading">读取中</string>
+    <string name="row_ready">就绪</string>
+    <string name="row_too_old">系统太旧</string>
+    <string name="row_unplugged">已断开</string>
+    <string name="row_port">USB #%1$d</string>
+    <string-array name="steps">
+        <item>信任</item>
         <item>开发者模式</item>
-        <item>生成配对记录</item>
-        <item>写入配对文件</item>
+        <item>生成记录</item>
+        <item>写入</item>
         <item>校验</item>
     </string-array>
-    <string name="hint_trust_title">在这台 iPhone 上点「信任」</string>
-    <string name="hint_trust">解锁后点「信任」并输入锁屏密码。其他 iPhone 不受影响，会继续进行。</string>
-    <string name="hint_locked_title">解锁这台 iPhone</string>
-    <string name="hint_locked">iPhone 锁屏了，解锁后才会弹出「信任」。</string>
-    <string name="hint_dev_off_title">打开开发者模式</string>
-    <string name="hint_dev_off">开关已由助手显示出来。在这台 iPhone 上：设置 › 隐私与安全性 › 开发者模式 → 打开 → 重新启动。不要拔线。</string>
-    <string name="hint_reboot_title">等待重启</string>
-    <string name="hint_reboot">这台 iPhone 正在重启，请不要拔线，连回来后自动继续。</string>
-    <string name="hint_unlock_title">解锁并点「打开」</string>
-    <string name="hint_unlock">请解锁这台 iPhone，在弹窗中点「打开」并输入锁屏密码。</string>
+
+    <string name="guide_trust_title">在 iPhone 上点「信任」</string>
+    <string name="guide_trust_body">解锁 iPhone，在「要信任此电脑吗？」中点「信任」，然后输入锁屏密码。在 iPhone 看来这台安卓手机就是一台电脑。</string>
+    <string name="guide_locked_title">先解锁 iPhone</string>
+    <string name="guide_locked_body">iPhone 锁屏了，解锁后才会弹出「信任」。</string>
+    <string name="guide_dev_off_title">打开开发者模式</string>
+    <string name="guide_dev_off_body">开关已由助手显示出来。按苹果的规定，有锁屏密码的 iPhone 只能由机主亲手打开。</string>
+    <string-array name="guide_dev_steps">
+        <item>设置 › 隐私与安全性 › 开发者模式</item>
+        <item>打开开关</item>
+        <item>点「重新启动」，不要拔线</item>
+    </string-array>
+    <string name="guide_reboot_title">iPhone 正在重启</string>
+    <string name="guide_reboot_body">大约 1 分钟。重新连上后自动继续；安卓可能会再问一次是否允许访问 iPhone，点「确定」即可。</string>
+    <string name="guide_no_unplug">请不要拔数据线</string>
+    <string name="guide_unlock_title">解锁并点「打开」</string>
+    <string name="guide_unlock_body">iPhone 已重新连接。解锁后在「打开开发者模式？」中点「打开」，输入锁屏密码。</string>
+    <string name="guide_no_prompt">没有看到弹窗？</string>
+    <string name="guide_waiting">等待确认…</string>
+    <string name="guide_elapsed">已等待 %1$s</string>
+    <string name="guide_unplugged_title">iPhone 断开了</string>
+    <string name="guide_unplugged_body">重新插上数据线并解锁，会从断开的那一步继续。</string>
+    <string name="guide_skipped">这台会被跳过，不影响其他 iPhone。</string>
+    <string name="guide_other">其他 iPhone 不受影响，会继续进行。</string>
+
+    <string name="env_title">运行环境</string>
+    <string name="env_checking">检查环境</string>
+    <string name="env_ok">环境正常</string>
+    <string name="env_bad">环境异常</string>
+    <string name="env_usb_host">USB 主机（OTG）</string>
+    <string name="env_usb_host_summary">这台手机能给 iPhone 供电并通信</string>
+    <string name="env_mux">内置 USB 服务</string>
+    <string name="env_mux_summary">代替电脑上的 usbmuxd，无需安装</string>
+    <string name="env_normal">正常</string>
+    <string name="env_unavailable">不可用</string>
 
     <string name="chip_detected">已连接</string>
     <string name="chip_trusting">等待信任</string>
@@ -153,13 +96,6 @@
     <string name="chip_verifying">校验中</string>
     <string name="chip_done">完成</string>
     <string name="chip_failed">出错</string>
-
-    <string name="step_wait">等待</string>
-    <string name="step_run">进行中</string>
-    <string name="step_reading">读取中</string>
-    <string name="step_done">完成</string>
-    <string name="step_on">已开启</string>
-    <string name="step_off">未开启</string>
 
     <string name="settings_title">设置</string>
     <string name="settings_about">关于</string>
@@ -201,6 +137,7 @@
     <string name="mock_install">已安装 LoopCtrl</string>
     <string name="mock_unplug">拔出</string>
     <string name="mock_batch">连接 5 台</string>
+    <string name="mock_reset">重置演示</string>
     <string name="scenario_ready">iOS 18 · 一切就绪</string>
     <string name="scenario_devModeOff">iOS 17.5 · 开发者模式未开</string>
     <string name="scenario_noRpService">iOS 26 · 走 CoreDeviceProxy</string>

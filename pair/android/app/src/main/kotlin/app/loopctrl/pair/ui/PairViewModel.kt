@@ -10,42 +10,37 @@ import app.loopctrl.pair.PairApp
 import app.loopctrl.pair.core.CoreEvent
 import app.loopctrl.pair.core.DeviceView
 import app.loopctrl.pair.core.EnvReport
+import app.loopctrl.pair.core.ErrorCode
 import app.loopctrl.pair.core.Phase
-import app.loopctrl.pair.core.Step
 import java.util.Calendar
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-enum class Page { Single, Batch, Settings }
+enum class View { Pair, Settings }
 
-enum class Screen { Welcome, Wait, Device, Trust, DevCheck, Reboot, DevUnlock, Progress, Done }
+/** Idle: listing phones, waiting for 开始配对. Running: pairing. Finished: every phone settled. */
+enum class Stage { Idle, Running, Finished }
 
 data class Paired(val udid: String, val name: String, val ios: String, val time: String)
 
-fun screenOf(d: DeviceView): Screen = if (d.phase == Phase.Failed) {
-    when (d.failedAt ?: Step.Info) {
-        Step.Info -> Screen.Device
-        Step.Trust -> Screen.Trust
-        Step.DevModeCheck -> Screen.DevCheck
-        Step.Reboot -> Screen.Reboot
-        Step.DevModeConfirm -> Screen.DevUnlock
-        Step.Generate, Step.FindApp, Step.Write, Step.Verify -> Screen.Progress
-    }
-} else {
-    when (d.phase) {
-        Phase.Detected -> Screen.Device
-        Phase.Trusting -> Screen.Trust
-        Phase.CheckingDevMode, Phase.RevealingDevMode, Phase.DevModeGuide -> Screen.DevCheck
-        Phase.Rebooting -> Screen.Reboot
-        Phase.ConfirmingDevMode -> Screen.DevUnlock
-        Phase.Generating, Phase.FindingApp, Phase.Writing, Phase.Verifying, Phase.Failed -> Screen.Progress
-        Phase.Done -> Screen.Done
-    }
-}
+/** Pairing can't go further for this phone without something new from the user (old iOS). */
+val DeviceView.unsupported get() = phase == Phase.Failed && error?.code == ErrorCode.Unsupported
+
+/** Nothing left to do for this phone in this run. */
+val DeviceView.settled get() = phase == Phase.Done || unsupported
+
+/** Waiting for 开始配对. */
+val DeviceView.ready get() = connected && phase == Phase.Detected && info != null
+
+/** Something to do on the phone, or an error to fix. pair-core does not flag a Trust prompt as attention. */
+val DeviceView.needsUser get() = !unsupported && (attention || phase == Phase.Trusting || phase == Phase.Failed)
 
 /**
- * UI state on top of pair-core's device views: the page, which phone single
- * mode follows, the phones paired this session. Same rules as the desktop
- * store (ui/src/lib/store.svelte.ts).
+ * UI state on top of pair-core's device views. One flow for any number of
+ * phones, the same rules as the desktop store (ui/src/lib/store.svelte.ts):
+ * connected iPhones are listed as they are detected and nothing happens to
+ * them until 开始配对, which turns auto-begin on for every waiting phone and
+ * any phone plugged in while the run lasts.
  */
 class PairViewModel(app: Application) : AndroidViewModel(app) {
     private val pairApp = app as PairApp
@@ -59,29 +54,39 @@ class PairViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var mock by mutableStateOf(core.isMock)
         private set
-    var page by mutableStateOf(Page.Single)
+    var view by mutableStateOf(View.Pair)
+    var running by mutableStateOf(false)
         private set
-    var started by mutableStateOf(false)
-    var focus by mutableStateOf<String?>(null)
+    /** Phones put away by 完成; they stay listed under 本次已配对 only. */
+    var hidden by mutableStateOf<List<String>>(emptyList())
+        private set
+    /** Phones whose step list the user opened. */
+    var open by mutableStateOf<List<String>>(emptyList())
         private set
     var paired by mutableStateOf<List<Paired>>(emptyList())
         private set
-    var skipped by mutableStateOf<List<String>>(emptyList())
-        private set
-    /** Environment problem from 开始配对, shown as a dialog. */
+    /** How to fix the environment, as a dialog. */
     var envDialog by mutableStateOf(false)
-    /** Batch: the phone whose sheet is open. */
-    var sheet by mutableStateOf<String?>(null)
 
-    val current: DeviceView? get() = devices.firstOrNull { it.udid == focus }
+    /** Simulated phones need no USB host. */
+    val envOk: Boolean get() = env?.let { it.usbmuxOk && (mock || usbHostSupported) } ?: true
 
-    val screen: Screen
+    /** Phones on screen: not put away, and not a never-started phone that was unplugged. */
+    val shown: List<DeviceView> get() = devices.filter { it.udid !in hidden && (it.connected || it.phase != Phase.Detected) }
+    val ready: List<DeviceView> get() = shown.filter { it.ready }
+    val doneCount: Int get() = shown.count { it.phase == Phase.Done }
+    val needsYou: Int get() = shown.count { it.needsUser }
+
+    val stage: Stage
         get() {
-            if (!started) return Screen.Welcome
-            return current?.let(::screenOf) ?: Screen.Wait
+            if (!running) return Stage.Idle
+            val s = shown
+            return if (s.isNotEmpty() && s.all { it.settled } && s.any { it.phase == Phase.Done }) Stage.Finished else Stage.Running
         }
 
     init {
+        // Phones wait for 开始配对.
+        core.setAutoBegin(false)
         viewModelScope.launch {
             core.events.collect { e ->
                 when (e) {
@@ -93,8 +98,12 @@ class PairViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             devices = core.devices()
-            pickFocus()
             checkEnv()
+            // Look again while something is wrong, so a fix shows up without a tap.
+            while (true) {
+                delay(3000)
+                if (!envOk) checkEnv()
+            }
         }
     }
 
@@ -112,96 +121,64 @@ class PairViewModel(app: Application) : AndroidViewModel(app) {
             val time = "%d:%02d".format(at.get(Calendar.HOUR_OF_DAY), at.get(Calendar.MINUTE))
             paired = paired + Paired(d.udid, d.name, d.info?.ios ?: "", time)
         }
-        pickFocus()
-    }
-
-    /** Single mode follows one phone: keep it while it is there, else take
-     *  the next connected one not paired this session. */
-    private fun pickFocus() {
-        val cur = current
-        if (cur != null && cur.udid !in skipped && (cur.connected || cur.phase != Phase.Detected)) return
-        focus = devices.firstOrNull { d ->
-            d.connected && d.phase != Phase.Done && paired.none { it.udid == d.udid } && d.udid !in skipped
-        }?.udid
     }
 
     fun start() {
         viewModelScope.launch {
-            if (!envReady(checkEnv())) {
+            checkEnv()
+            if (!envOk) {
                 envDialog = true
                 return@launch
             }
-            started = true
-            pickFocus()
+            running = true
+            core.setAutoBegin(true)
         }
+    }
+
+    /** Back to the list: phones not finished return to waiting; finished ones move to 本次已配对. */
+    fun stop() {
+        running = false
+        core.setAutoBegin(false)
+        shown.filter { it.phase != Phase.Detected && !it.settled }.forEach { core.command(it.udid, "cancel") }
+        hidden = hidden + shown.filter { it.phase == Phase.Done }.map { it.udid }
+        open = emptyList()
+    }
+
+    /** 完成: put the finished phones away and wait for the next ones. */
+    fun finish() {
+        running = false
+        core.setAutoBegin(false)
+        hidden = hidden + shown.filter { it.settled }.map { it.udid }
+        open = emptyList()
     }
 
     /** After 重新检测 in the environment dialog. */
     fun redetect() {
         viewModelScope.launch {
-            if (envReady(checkEnv())) {
-                envDialog = false
-                started = true
-                pickFocus()
-            }
+            checkEnv()
+            if (envOk) envDialog = false
         }
     }
 
-    /** Simulated phones need no USB host. */
-    private fun envReady(r: EnvReport) = r.usbmuxOk && (mock || usbHostSupported)
-
-    /** Single mode will not come back to this phone. */
-    fun skip(udid: String) {
-        skipped = skipped + udid
-        focus = null
-        pickFocus()
-    }
-
-    fun nextDevice() {
-        val cur = current
-        if (cur != null) skip(cur.udid) else pickFocus()
-    }
-
-    /** Back to the welcome screen; a finished phone is not shown again. */
-    fun finish() {
-        val cur = current
-        if (cur != null && cur.phase == Phase.Done) skipped = skipped + cur.udid
-        started = false
-        focus = null
-        pickFocus()
-    }
-
-    fun go(p: Page) {
-        page = p
-        sheet = null
-        // Batch starts every phone by itself; single waits for 继续.
-        core.setAutoBegin(p == Page.Batch)
-        if (p == Page.Single) pickFocus()
+    fun toggle(udid: String) {
+        open = if (udid in open) open - udid else open + udid
     }
 
     fun command(udid: String, cmd: String) = core.command(udid, cmd)
 
-    /** 取消 in an error dialog: stop this phone and go back to the start. */
-    fun cancelToWelcome(udid: String) {
-        core.command(udid, "cancel")
-        finish()
-    }
-
     fun switchMock(on: Boolean) {
+        stop()
         core.setMock(on)
         mock = core.isMock
         devices = emptyList()
-        focus = null
+        hidden = emptyList()
         viewModelScope.launch { checkEnv() }
     }
 
-    fun clearDone() {
-        devices.filter { it.phase == Phase.Done || !it.connected }.forEach { core.forget(it.udid) }
-    }
-
     fun resetDemo() {
+        stop()
         core.mockReset()
         devices.forEach { core.forget(it.udid) }
-        core.mockBatch()
+        devices = emptyList()
     }
 }

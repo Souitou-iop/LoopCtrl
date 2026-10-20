@@ -1,6 +1,6 @@
 # LoopCtrl 配对助手 · Android
 
-用 OTG 数据线把 iPhone 连到安卓手机，完成和电脑版一样的配对：信任、开发者模式、生成记录、写入 LoopCtrl、校验，也支持批量。
+用 OTG 数据线把 iPhone 连到安卓手机，完成和电脑版一样的配对：信任、开发者模式、生成记录、写入 LoopCtrl、校验。一台或多台走同一个流程：插上的 iPhone 自动列出，点「开始配对」后一起开始。
 
 原生 Jetpack Compose + [miuix](https://github.com/compose-miuix-ui/miuix) 界面（`app/`），通过 UniFFI 桥（`bridge/`）调用和桌面版同一个 `pair-core`。安卓上没有 usbmuxd，所以 App 里自带一个（`../crates/usbmux`，来自 iloader 的 Android 移植，MIT）：
 
@@ -34,11 +34,11 @@ Gradle 自己完成 Rust 部分：`buildRustLibs<Variant>` 按 ABI 用 NDK clang
 - `bridge/`：`PairBridge`（UniFFI 对象）。启动内置 usbmuxd 和 pair-core 管理器；设备视图、事件、环境检查以 pair-core 的 JSON 形状传给 Kotlin。
 - `app/.../core/`：`PairCore`（桥的 Kotlin 包装）和 JSON 模型。
 - `app/.../platform/UsbHost.kt`：`UsbManager` 广播、USB 权限、选择带 usbmux 接口的配置、认领接口、把 fd 交给桥（来自 iloader，MIT）。
-- `app/.../ui/`：页面与桌面版一一对应（欢迎、等待、设备、信任、开发者模式、重启、确认打开、写入、完成、批量、设置），状态规则同 `ui/src/lib/store.svelte.ts`。
+- `app/.../ui/`：和桌面版同样的单页流程（`PairScreen`：设备列表、每台的操作提示和五步进度、底部开始/停止/完成按钮；另有设置页），状态规则同 `ui/src/lib/store.svelte.ts`。
 
 ## 已验证 / 未验证
 
 - ✅ arm64 / armv7 / x86_64 三个 ABI 编译、打包；Kotlin 单元测试；`usbmux` 97 个测试。
-- ✅ arm64 模拟器（Android 13）上：内置 usbmuxd 启动正常；模拟设备走完单台全流程、错误弹窗、批量和设备详情；中英文、深浅色。
+- ✅ arm64 模拟器（Android 13）上：内置 usbmuxd 启动正常；无 OTG 时的环境提示；模拟设备 1 台和 5 台走完开始、信任、开发者模式、重启、出错重试、停止、完成；中英文。
 - ⚠️ 真机未验证：没有用安卓手机 + 真 iPhone 跑过。USB 权限、配置切换、usbfs 传输、信任弹窗、写入 LoopCtrl 都要在真机上确认。内置 usbmuxd 本身在 iloader 里用真机跑通过。
 - ⚠️ 发布签名、商店上架未做。
