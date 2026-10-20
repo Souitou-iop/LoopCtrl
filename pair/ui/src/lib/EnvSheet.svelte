@@ -1,38 +1,38 @@
 <script lang="ts">
-  import { store } from "../lib/store.svelte";
-  import Arrow from "../lib/Arrow.svelte";
-  import { api } from "../lib/api";
-  const t = $derived(store.t.welcome);
+  // What the environment check found, per OS. Opened from the status pill.
+  import { store } from "./store.svelte";
+  import { api } from "./api";
+
+  const t = $derived(store.t.env);
   const env = $derived(store.env);
   const ok = $derived(env?.usbmuxOk ?? false);
   const lx = $derived(env?.linux ?? null);
+  const close = () => (store.envSheet = false);
   let installing = $state(false);
+  let checking = $state(false);
   async function installRule() {
     installing = true;
-    try { await api.installUdevRule(); store.snack = store.t.dialog.ruleInstalled; await store.checkEnv(); }
-    catch (e) { store.snack = `${store.t.dialog.ruleFailed}: ${e}`; }
+    try { await api.installUdevRule(); store.toast(store.t.dialog.ruleInstalled); await store.checkEnv(); }
+    catch (e) { store.toast(`${store.t.dialog.ruleFailed}: ${e}`); }
     finally { installing = false; }
+  }
+  async function recheck() {
+    checking = true;
+    try { await store.checkEnv(); } finally { checking = false; }
   }
 </script>
 
-<div class="titlerow"><h2 class="large-title">{t.title}</h2>
-  <div class="tabrow" role="group" aria-label="mode"><button type="button" aria-pressed="true">{store.t.mode.single}</button><button type="button" aria-pressed="false" onclick={() => store.go("batch")}>{store.t.mode.batch}</button></div></div>
-<p class="subtitle">{t.subtitle}</p>
-<div class="cols">
-  <div>
-    <div class="small-title">LoopCtrl</div>
-    <div class="card"><div class="comp"><img class="lead-icon" src="/icon.png" alt="" width="44" height="44"><div class="t"><span class="title">{t.cardTitle}</span><span class="summary">{t.cardSummary}</span></div></div></div>
-    <div class="small-title">{t.manyTitle}</div>
-    <div class="card"><div class="comp press" role="button" tabindex="0" onclick={() => store.go("batch")} onkeydown={(e) => e.key === "Enter" && store.go("batch")}><div class="t"><span class="title">{t.batch}</span><span class="summary">{t.batchSummary}</span></div><Arrow /></div></div>
-  </div>
-  <div>
-    <div class="small-title">{t.env}</div>
+<svelte:window onkeydown={(e) => e.key === "Escape" && close()} />
+<div class="scrim bottom" role="presentation" onclick={(e) => e.target === e.currentTarget && close()}>
+  <div class="sheet" role="dialog" aria-labelledby="env-title"><div class="handle"></div>
+    <h3 id="env-title">{t.title}</h3>
+    <p class="sub">{env ? `${env.os === "windows" ? "Windows" : env.os === "linux" ? "Linux" : "macOS"} ${env.osVersion}` : t.checkingShort}</p>
     {#if store.os === "windows"}
       <div class="card">
         <div class="comp"><div class="t"><span class="title">{t.appleDevices}</span><span class="summary">{t.appleDevicesSummary}</span></div>
-          <span class="end" class:ok class:bad={env && !ok}>{!env ? t.checking : ok ? t.installed : t.notInstalled}</span></div>
+          <span class="end" class:ok class:bad={env && !ok}>{!env ? t.checkingShort : ok ? t.installed : t.notInstalled}</span></div>
         <div class="comp"><div class="t"><span class="title">{t.driver}</span><span class="summary">{t.driverSummary}</span></div>
-          <span class="end" class:ok class:bad={env && !ok}>{!env ? t.checking : ok ? t.normal : t.unavailable}</span></div>
+          <span class="end" class:ok class:bad={env && !ok}>{!env ? t.checkingShort : ok ? t.normal : t.unavailable}</span></div>
       </div>
     {:else if store.os === "linux" && lx}
       <div class="card">
@@ -54,10 +54,13 @@
       </div>
     {:else}
       <div class="card">
-        <div class="comp"><div class="t"><span class="title">{env?.os === "linux" ? "Linux" : "macOS"} {env?.osVersion ?? ""}</span><span class="summary">{env?.os === "linux" ? "usbmuxd" : t.macBuiltIn}</span></div>
-          <span class="end" class:ok class:bad={env && !ok}>{!env ? t.checking : ok ? t.noInstall : t.unavailable}</span></div>
+        <div class="comp"><div class="t"><span class="title">usbmuxd</span><span class="summary">{env?.os === "linux" ? env.usbmuxAddr : t.macBuiltIn}</span></div>
+          <span class="end" class:ok class:bad={env && !ok}>{!env ? t.checkingShort : ok ? t.noInstall : t.unavailable}</span></div>
       </div>
     {/if}
+    <div class="btnrow">
+      <button class="btn" onclick={close}>{t.close}</button>
+      <button class="btn primary" disabled={checking} onclick={recheck}>{store.t.dialog.redetect}</button>
+    </div>
   </div>
 </div>
-<div class="btnrow" style="padding-top:22px"><button class="btn primary" onclick={() => store.start()}>{t.start}</button></div>

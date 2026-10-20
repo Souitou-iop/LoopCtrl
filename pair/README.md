@@ -15,7 +15,7 @@ iOS 27 以下的 iPhone 不能自己完成配对。用数据线把 iPhone 连一
 5. **生成记录**：iOS 17.4+ 生成 RemotePairing 记录（`remotepairingdeviced.lockdown`，不行再走 CoreDeviceProxy），并合并 lockdown 记录；iOS 16 和 17.0–17.3 用 lockdown 记录。同时打开 `EnableWifiDebugging`。记录按 UDID 缓存在本机（0600），不上传。
 6. **找到 LoopCtrl** 并**写入** `Documents/.pairing-dropbox/pairingFile.plist`（约定见 [docs/handoff.md](docs/handoff.md)）。
 7. **校验**：17.4+ 做 RP pair-verify，iOS 16 建立一次 lockdown 会话。
-8. **批量**：带供电的集线器上多台 iPhone 各自独立进行。
+8. **一台或多台**：插上的 iPhone 会自动列出，点「开始配对」后一起开始，各台独立进行（多台请用带供电的集线器）；配对中再插入的 iPhone 自动加入。
 
 界面默认简体中文，可切换英文；外观为 miuix / HyperOS 风格，跟随系统深浅色。
 
@@ -129,7 +129,7 @@ Apache-2.0，见 [LICENSE](LICENSE)。第三方组件见 [THIRD_PARTY_NOTICES.md
 
 ## English
 
-LoopCtrl Pair is the one-time USB pairing tool for LoopCtrl on iPhones below iOS 27, which cannot start pairing by themselves. Plug the iPhone into a Windows, macOS or Linux computer, or an Android phone with USB OTG (see [android/README.md](android/README.md)), once: the tool pairs (Trust), checks and guides Developer Mode, creates the pairing record (RemotePairing + lockdown on iOS 17.4+, lockdown only on iOS 16 and 17.0–17.3), writes it into LoopCtrl (`Documents/.pairing-dropbox/pairingFile.plist`, see [docs/handoff.md](docs/handoff.md)) and verifies it. Batch mode pairs several iPhones on a powered hub in parallel.
+LoopCtrl Pair is the one-time USB pairing tool for LoopCtrl on iPhones below iOS 27, which cannot start pairing by themselves. Plug the iPhone into a Windows, macOS or Linux computer, or an Android phone with USB OTG (see [android/README.md](android/README.md)), once: the tool pairs (Trust), checks and guides Developer Mode, creates the pairing record (RemotePairing + lockdown on iOS 17.4+, lockdown only on iOS 16 and 17.0–17.3), writes it into LoopCtrl (`Documents/.pairing-dropbox/pairingFile.plist`, see [docs/handoff.md](docs/handoff.md)) and verifies it. Connected iPhones are listed as they are detected and all start together on “Start pairing”, so several phones on a powered hub pair in parallel with the same flow as one.
 
 **Linux.** The app uses the system usbmuxd when it runs or is installed (`sudo apt install usbmuxd`; it is GPL and never bundled), and otherwise its own built-in usbmuxd over usbfs, which needs the udev rule `packaging/linux/70-loopctrl-pair.rules` (Apple VID 05ac; `uaccess` for the desktop user, `plugdev` for headless use). Linux ships as a .deb (desktop app) or the CLI tarball; there is no AppImage, which would bundle LGPL GTK/WebKitGTK. The .deb installs the rule; otherwise click Install in the environment check (pkexec) or run `loopctrl-pair udev-rule | sudo tee /etc/udev/rules.d/70-loopctrl-pair.rules` and `sudo udevadm control --reload-rules && sudo udevadm trigger`, then replug. Denied USB access and a usbmuxd that holds the iPhone are explained on screen. Force a mode with `LOOPCTRL_PAIR_MUX=system|builtin`.
 

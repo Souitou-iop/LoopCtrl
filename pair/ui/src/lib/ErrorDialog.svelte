@@ -1,29 +1,25 @@
 <script lang="ts">
-  // One dialog for every error: device errors (single mode) and the
-  // environment check. Copy comes from i18n `errors`.
+  // How to fix an environment problem (Apple Devices missing, usbmuxd, Linux
+  // USB access). Phone errors are shown in the phone's own card instead.
   import { store } from "./store.svelte";
-  import { api, APPLE_DEVICES_STORE, APPLE_DEVICES_WEB, type DeviceView, type ErrorCode } from "./api";
-  import MockRow from "./MockRow.svelte";
+  import { api, APPLE_DEVICES_STORE, APPLE_DEVICES_WEB, type ErrorCode } from "./api";
 
-  let { device = null, envCode = null, onclose = () => {} }: { device?: DeviceView | null; envCode?: ErrorCode | null; onclose?: () => void } = $props();
-  const code = $derived<ErrorCode>(envCode ?? device?.error?.code ?? "internal");
+  let { code, onclose }: { code: ErrorCode; onclose: () => void } = $props();
   const e = $derived(store.t.errors[code]);
   const b = $derived(store.t.dialog);
   let showDetail = $state(false);
-  const detail = $derived(envCode ? store.env?.detail : device?.error?.detail);
+  const detail = $derived(store.env?.detail);
 
   type Btn = { label: string; run: () => void };
-  const cmd = (c: "retry" | "recheck" | "cancel") => () => device && api.command(device.udid, c);
-  const cancelToWelcome = () => { if (device) void api.command(device.udid, "cancel"); store.finish(); };
   async function redetect() {
-    const env = await store.checkEnv();
-    if (env && !store.envCode) { onclose(); store.started = true; store.pickFocus(); }
+    await store.checkEnv();
+    if (!store.envCode) onclose();
   }
   let installing = $state(false);
   async function installRule() {
     installing = true;
-    try { await api.installUdevRule(); store.snack = b.ruleInstalled; await redetect(); }
-    catch (e) { store.snack = `${b.ruleFailed}: ${e}`; }
+    try { await api.installUdevRule(); store.toast(b.ruleInstalled); await redetect(); }
+    catch (err) { store.toast(`${b.ruleFailed}: ${err}`); }
     finally { installing = false; }
   }
   async function openStore() {
@@ -33,18 +29,14 @@
   const buttons = $derived.by((): [Btn, Btn] => {
     switch (code) {
       case "noDriver": return [{ label: b.openStore, run: openStore }, { label: b.redetect, run: redetect }];
-      case "noUsbmux": case "noUsbmuxLinux": case "muxConflict":
-        return [{ label: b.cancel, run: onclose }, { label: b.redetect, run: redetect }];
       case "usbDenied": return [{ label: b.redetect, run: redetect }, { label: installing ? b.installing : b.installRule, run: installRule }];
-      case "devModeCancelled": return [{ label: b.later, run: cancelToWelcome }, { label: b.recheck, run: cmd("retry") }];
-      case "rebootTimeout": return [{ label: b.recheck, run: cmd("recheck") }, { label: b.keepWaiting, run: cmd("retry") }];
-      case "unsupported": return [{ label: b.back, run: () => { store.finish(); } }, { label: b.ok, run: () => device && store.skip(device.udid) }];
-      default: return [{ label: b.cancel, run: cancelToWelcome }, { label: b.retry, run: cmd("retry") }];
+      default: return [{ label: b.cancel, run: onclose }, { label: b.redetect, run: redetect }];
     }
   });
 </script>
 
-<div class="scrim">
+<svelte:window onkeydown={(ev) => ev.key === "Escape" && onclose()} />
+<div class="scrim" role="presentation" onclick={(ev) => ev.target === ev.currentTarget && onclose()}>
   <div class="dialog" role="dialog" aria-labelledby="dlg-title">
     <h3 id="dlg-title">{e.title}</h3>
     <p>{e.body}</p>
@@ -58,14 +50,5 @@
       <button class="btn" onclick={buttons[0].run}>{buttons[0].label}</button>
       <button class="btn primary" onclick={buttons[1].run}>{buttons[1].label}</button>
     </div>
-    {#if device && code === "appNotFound"}
-      <MockRow><button class="btn text" onclick={() => api.mockPhone(device.udid, "installApp")}>{store.t.mock.install}</button></MockRow>
-    {/if}
-    {#if device && code === "disconnected"}
-      <MockRow><button class="btn text" onclick={() => api.mockPhone(device.udid, "plug")}>{store.t.mock.plug}</button></MockRow>
-    {/if}
-    {#if device && code === "untrusted"}
-      <MockRow><button class="btn text" onclick={async () => { await api.mockPhone(device.udid, "unplug"); setTimeout(() => api.mockPhone(device.udid, "plug"), 600); }}>{store.t.mock.unplug} → {store.t.mock.plug}</button></MockRow>
-    {/if}
   </div>
 </div>

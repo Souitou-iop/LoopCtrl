@@ -1,11 +1,17 @@
 // App state: device views from pair-core, plus what only the UI knows
-// (page, single-mode focus, the phones paired this session, preferences).
-import { api, envProblem, type AppInfo, type DeviceView, type EnvReport, type Phase, type Step } from "./api";
+// (whether a pairing run is on, the phones paired this session, preferences).
+//
+// There is one flow for any number of phones: connected iPhones are listed as
+// they are detected, and nothing happens to them until 开始配对. Starting turns
+// pair-core's auto-begin on, which begins every waiting phone and any phone
+// plugged in while the run lasts.
+import { api, envProblem, type AppInfo, type DeviceView, type EnvReport } from "./api";
 import { dicts, type Lang } from "./i18n";
 
-export type Page = "single" | "batch" | "settings";
+export type View = "pair" | "settings";
 export type Theme = "auto" | "light" | "dark";
-export type Screen = "welcome" | "wait" | "device" | "trust" | "devcheck" | "reboot" | "devunlock" | "progress" | "done";
+/** idle: listing phones, waiting for 开始配对. running: pairing. finished: every phone settled. */
+export type Stage = "idle" | "running" | "finished";
 
 function load<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
   try {
@@ -21,20 +27,14 @@ function save(key: string, v: string) {
   try { localStorage.setItem(key, v); } catch {}
 }
 
-const SCREEN_OF_PHASE: Record<Phase, Screen> = {
-  detected: "device", trusting: "trust", checkingDevMode: "devcheck", revealingDevMode: "devcheck",
-  devModeGuide: "devcheck", rebooting: "reboot", confirmingDevMode: "devunlock", generating: "progress",
-  findingApp: "progress", writing: "progress", verifying: "progress", done: "done", failed: "progress",
-};
-const SCREEN_OF_STEP: Record<Step, Screen> = {
-  info: "device", trust: "trust", devModeCheck: "devcheck", reboot: "reboot", devModeConfirm: "devunlock",
-  generate: "progress", findApp: "progress", write: "progress", verify: "progress",
-};
-
-export function screenOf(d: DeviceView): Screen {
-  if (d.phase === "failed") return SCREEN_OF_STEP[d.failedAt ?? "info"];
-  return SCREEN_OF_PHASE[d.phase];
-}
+/** Pairing can't go further for this phone without something new from the user (old iOS). */
+export const isUnsupported = (d: DeviceView) => d.phase === "failed" && d.error?.code === "unsupported";
+/** Nothing left to do for this phone in this run. */
+export const isSettled = (d: DeviceView) => d.phase === "done" || isUnsupported(d);
+/** Something to do on the phone, or an error to fix. The backend does not flag a Trust prompt as attention. */
+export const needsUser = (d: DeviceView) => !isUnsupported(d) && (d.attention || d.phase === "trusting" || d.phase === "failed");
+/** Waiting for 开始配对. */
+export const isReady = (d: DeviceView) => d.connected && d.phase === "detected" && !!d.info;
 
 export interface Paired { udid: string; name: string; ios: string; time: string }
 
@@ -43,14 +43,15 @@ class Store {
   env = $state<EnvReport | null>(null);
   info = $state<AppInfo | null>(null);
   watchOk = $state(true);
-  page = $state<Page>("single");
-  /** Single mode left the welcome screen. */
-  started = $state(false);
-  focus = $state<string | null>(null);
+  view = $state<View>("pair");
+  running = $state(false);
+  /** Phones put away by 完成; they stay listed under 本次已配对 only. */
+  hidden = $state<string[]>([]);
+  /** Phones whose step list the user opened. */
+  open = $state<string[]>([]);
   paired = $state<Paired[]>([]);
-  /** Environment problem shown as a dialog (from 开始配对). */
   envDialog = $state(false);
-  sheet = $state<string | null>(null);
+  envSheet = $state(false);
   snack = $state<string | null>(null);
   lang = $state<Lang>(load("lang", "zh-CN", ["zh-CN", "en"]));
   theme = $state<Theme>(load("theme", "auto", ["auto", "light", "dark"]));
@@ -58,24 +59,26 @@ class Store {
   asWindows = $state(false);
   driverMissing = $state(false);
   lastUpdateCheck = $state<string | null>(readRaw("lastUpdateCheck"));
-  /** Phones single mode should not come back to (unsupported). */
-  skipped = $state<string[]>([]);
 
   t = $derived(dicts[this.lang]);
   mock = $derived(this.info?.mock ?? false);
   os = $derived(this.asWindows ? "windows" : (this.env?.os ?? "macos"));
-  /** The environment problem to explain (dialog code), if any. */
+  /** The environment problem to explain, if any. */
   envCode = $derived(envProblem(this.env, this.os));
-  private envPoll: ReturnType<typeof setInterval> | null = null;
 
-  /** The phone single mode is showing. */
-  current = $derived(this.devices.find((d) => d.udid === this.focus) ?? null);
-
-  screen = $derived.by((): Screen => {
-    if (!this.started) return "welcome";
-    const d = this.current;
-    return d ? screenOf(d) : "wait";
+  /** Phones on screen: not put away, and not a never-started phone that was unplugged. */
+  shown = $derived(this.devices.filter((d) => !this.hidden.includes(d.udid) && (d.connected || d.phase !== "detected")));
+  ready = $derived(this.shown.filter(isReady));
+  doneCount = $derived(this.shown.filter((d) => d.phase === "done").length);
+  needsYou = $derived(this.shown.filter(needsUser).length);
+  stage = $derived.by((): Stage => {
+    if (!this.running) return "idle";
+    const s = this.shown;
+    return s.length && s.every(isSettled) && s.some((d) => d.phase === "done") ? "finished" : "running";
   });
+
+  private envPoll: ReturnType<typeof setInterval> | null = null;
+  private snackT: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
     $effect.root(() => {
@@ -94,14 +97,21 @@ class Store {
 
   async init() {
     this.info = await api.appInfo().catch(() => null);
+    // Phones wait for 开始配对.
+    await api.setAutoBegin(false).catch(() => {});
     await api.onEvent((e) => {
       if (e.type === "device") this.upsert(e.device);
       else if (e.type === "removed") this.devices = this.devices.filter((d) => d.udid !== e.udid);
       else this.watchOk = e.ok;
     });
     this.devices = await api.devices().catch(() => []);
-    this.pickFocus();
     await this.checkEnv();
+    // Look again while something is wrong, so a fix shows up without a click.
+    // On Linux also while no phone is listed: a phone plugged in later may be
+    // unreadable (no udev rule) or held by the system usbmuxd.
+    this.envPoll ??= setInterval(() => {
+      if (this.envCode || (this.os === "linux" && !this.shown.length)) void this.checkEnv();
+    }, 3000);
   }
 
   async checkEnv() {
@@ -120,72 +130,40 @@ class Store {
         time: `${at.getHours()}:${String(at.getMinutes()).padStart(2, "0")}`,
       }];
     }
-    this.pickFocus();
-  }
-
-  /** Single mode follows one phone: keep it while it is there, else take the
-   *  next connected one not paired this session. */
-  pickFocus() {
-    const cur = this.current;
-    // Keep a phone that is mid-flow even while unplugged (reboot, or the
-    // "unplugged" dialog that resumes on replug); drop one that never started.
-    if (cur && !this.skipped.includes(cur.udid) && (cur.connected || cur.phase !== "detected")) return;
-    const next = this.devices.find((d) => d.connected && d.phase !== "done"
-      && !this.paired.some((p) => p.udid === d.udid) && !this.skipped.includes(d.udid));
-    this.focus = next?.udid ?? null;
   }
 
   async start() {
     await this.checkEnv();
     if (this.envCode) { this.envDialog = true; return; }
-    this.started = true;
-    this.pickFocus();
-    // Linux built-in mode: a phone plugged in later may turn out to be
-    // unreadable (no udev rule) or held by the system usbmuxd. Look again
-    // while waiting so that is explained instead of waiting forever.
-    if (this.os === "linux" && !this.envPoll) {
-      this.envPoll = setInterval(async () => {
-        if (!this.started || this.current || this.envDialog) return;
-        await this.checkEnv();
-        if (this.envCode) this.envDialog = true;
-      }, 3000);
+    this.running = true;
+    await api.setAutoBegin(true).catch(() => {});
+  }
+
+  /** Back to the list: phones not finished return to waiting. */
+  async stop() {
+    this.running = false;
+    await api.setAutoBegin(false).catch(() => {});
+    for (const d of this.shown) {
+      if (d.phase !== "detected" && !isSettled(d)) void api.command(d.udid, "cancel").catch(() => {});
     }
   }
 
-  /** Single mode will not come back to this phone. */
-  skip(udid: string) {
-    this.skipped = [...this.skipped, udid];
-    this.focus = null;
-    this.pickFocus();
+  /** 完成: put the finished phones away and wait for the next ones. */
+  async finish() {
+    this.running = false;
+    await api.setAutoBegin(false).catch(() => {});
+    this.hidden = [...this.hidden, ...this.shown.filter(isSettled).map((d) => d.udid)];
+    this.open = [];
   }
 
-  /** 继续配对下一台: leave the finished phone behind; the next attach takes focus. */
-  nextDevice() {
-    if (this.current) this.skip(this.current.udid);
-    else this.pickFocus();
-  }
-
-  /** Back to the welcome screen. A finished phone is not shown again. */
-  finish() {
-    const cur = this.current;
-    if (cur && cur.phase === "done") this.skipped = [...this.skipped, cur.udid];
-    this.started = false;
-    this.focus = null;
-    this.pickFocus();
-  }
-
-  go(p: Page) {
-    this.page = p;
-    this.sheet = null;
-    // Batch starts every phone by itself; single waits for 继续.
-    void api.setAutoBegin(p === "batch").catch(() => {});
-    if (p === "single") this.pickFocus();
+  toggle(udid: string) {
+    this.open = this.open.includes(udid) ? this.open.filter((u) => u !== udid) : [...this.open, udid];
   }
 
   toast(msg: string) {
     this.snack = msg;
-    clearTimeout((this as any)._snackT);
-    (this as any)._snackT = setTimeout(() => (this.snack = null), 2200);
+    clearTimeout(this.snackT);
+    this.snackT = setTimeout(() => (this.snack = null), 2200);
   }
 
   markUpdateChecked() {
