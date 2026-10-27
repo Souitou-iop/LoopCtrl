@@ -80,7 +80,7 @@ sequenceDiagram
    `Scripts/sign-ipa.sh -i LoopCtrl.ipa`，再安装生成的包。然后在 设置 → 通用 → VPN 与设备管理
    中信任证书，并打开 **开发者模式**（设置 → 隐私与安全性 → 开发者模式，开启后重启）。
 3. **配对一次。** iOS 27 及以上直接在手机上配对。iOS 27 以下，用数据线连一次
-   [LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair)，或者导入配对文件。见[系统要求](#requirements)。
+   [LoopCtrl Pair](pair/)，或者导入配对文件。见[系统要求](#requirements)。
 4. **挂载磁盘镜像。** 连上 LocalDevVPN 或 Shadowrocket，打开 LoopCtrl，点 **挂载磁盘镜像**，App 会带你一步步完成。
 5. **启动。** 点 **启动服务**。第一次启动时，iOS 会要求输入锁屏密码，并请求 **通知** 和 **本地网络** 权限。
    两个都要允许，因为批准客户端就是在通知里完成的。
@@ -122,7 +122,7 @@ App 在 **iOS 16 及以上**都能运行。不同版本的区别在于怎么配�
 
 | iOS | 配对 | 在手机上挂载的磁盘镜像 |
 |---|---|---|
-| 16 | 用数据线连一次：[LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair)，或导入 lockdown 配对文件（`idevicepair`、jitterbugpair、iLoader） | 旧式 `DeveloperDiskImage.dmg`，经 lockdownd 挂载（[说明](docs/ios16-ddi-mount.md)） |
+| 16 | 用数据线连一次：[LoopCtrl Pair](pair/)，或导入 lockdown 配对文件（`idevicepair`、jitterbugpair、iLoader） | 旧式 `DeveloperDiskImage.dmg`，经 lockdownd 挂载（[说明](docs/ios16-ddi-mount.md)） |
 | 17.0–17.3 | 暂不支持在手机上完成（见[已知局限](#limits)） | 请改用 Xcode 挂载 |
 | 17.4–26.3 | 用数据线连一次：LoopCtrl Pair，或导入 iLoader 导出的配对文件 | 个性化镜像（Personalized） |
 | 26.4–26.x | 用数据线连一次：LoopCtrl Pair，或导入 iLoader 导出的配对文件 | Cryptex 镜像 |
@@ -219,12 +219,12 @@ Tailnet 来源，并且一律按远程处理，不会被当成本机。Shadowroc
 <a id="self-hosting"></a>
 ## 自行部署
 
-[LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server) 提供自己搭建连接层所需的一切：
+[`server/`](server/) 提供自己搭建连接层所需的一切：
 
 - **中继**，用于远程服务，附带容器镜像：
-  [docs/self-host-relay.md](https://github.com/Souitou-iop/LoopCtrl-Server/blob/main/docs/self-host-relay.md)。
+  [server/docs/self-host-relay.md](server/docs/self-host-relay.md)。
 - **Headscale**，配合自建 DERP 服务器，用于 Tailnet 组网：
-  [docs/self-host-headscale.md](https://github.com/Souitou-iop/LoopCtrl-Server/blob/main/docs/self-host-headscale.md)。
+  [server/docs/self-host-headscale.md](server/docs/self-host-headscale.md)。
 - 操作员命令行工具，用来通过中继操作手机。
 
 App 一侧的中继约定见 [docs/relay-enrollment.md](docs/relay-enrollment.md) 和 [docs/remote-control.md](docs/remote-control.md)，也可以照着它们自己实现中继。
@@ -284,6 +284,17 @@ python3 loopctrl_rpc.py --host <手机>:8300 call find_element '{"element_id":"W
 [`docs/research/`](docs/research/) 里是说明书背后的测量和设计：[操控速度与准确率](docs/research/control-speed-accuracy.md)、
 [跨 App 操作手册设计](docs/research/operation-playbook-design.md)、[App 知识如何积累和维护](docs/research/app-knowledge-workflow.md)，
 以及 [SKILL.md A/B 测试](docs/research/skill-ab-test.md)（测试工具在 [`tools/skill-ab/`](tools/skill-ab/)）。
+
+<a id="layout"></a>
+### 仓库里有什么
+
+| 目录 | 内容 | 发布方式 |
+|---|---|---|
+| （根目录） | App 和手机上的运行器 | 标签 `vX.Y.Z`：`LoopCtrl.ipa` |
+| [`server/`](server/) | 中继和 Headscale 模板，用于自己部署连接层 | 标签 `server-vX.Y.Z`：`ghcr.io/souitou-iop/loopctrl-relay` |
+| [`pair/`](pair/) | LoopCtrl Pair，USB 配对助手（Windows、macOS、Linux、Android） | 标签 `pair-vX.Y.Z`：发布页上的安装包 |
+
+`server/` 和 `pair/` 原来是独立的 LoopCtrl-Server 和 LoopCtrl-Pair 仓库，历史都保留在这里。三者各自构建、各自发布（`.github/workflows/`），跨目录的改动作为一次提交一起合入。
 
 <a id="build"></a>
 ### 从源码构建

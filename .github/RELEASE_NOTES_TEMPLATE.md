@@ -15,7 +15,7 @@ like.
 2. Trust the certificate under Settings → General → VPN & Device Management,
    and turn on Developer Mode.
 3. Below iOS 27, pair once over USB with
-   [LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair) (Windows,
+   [LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl/tree/main/pair) (Windows,
    macOS, Linux, Android) or import a pairing file. On iOS 27 and later, pair
    on the phone.
 4. Open LoopCtrl → mount the Developer Disk Image (with LocalDevVPN or

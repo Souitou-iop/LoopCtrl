@@ -1,10 +1,10 @@
 <p align="right"><a href="README.md">English</a> · <b>简体中文</b></p>
 
-# LoopCtrl-Server
+# LoopCtrl 服务端
 
-[LoopCtrl](https://github.com/Souitou-iop/LoopCtrl) 的网络连接层：提供让操作员（Operator）从跨网络环境安全访问手机端 LoopCtrl 服务的服务端组件。本仓库包含的所有内容均可完全私有化自建部署。
+[LoopCtrl](../README.md) 的网络连接层：提供让操作员（Operator）从跨网络环境安全访问手机端 LoopCtrl 服务的服务端组件。本目录包含的所有内容均可完全私有化自建部署。
 
-LoopCtrl 在 iPhone 上运行长期驻留的 XCUITest runner，对外提供加密的 JSON-RPC API（协议 v1，默认端口 8300）。如果在同一 Wi-Fi 局域网内，操作员可直接直连；如果处于公网或跨网络环境，则需要一条通往手机的网络通路。本仓库提供两种可相互替换的方案：
+LoopCtrl 在 iPhone 上运行长期驻留的 XCUITest runner，对外提供加密的 JSON-RPC API（协议 v1，默认端口 8300）。如果在同一 Wi-Fi 局域网内，操作员可直接直连；如果处于公网或跨网络环境，则需要一条通往手机的网络通路。本目录提供两种可相互替换的方案：
 
 | | App 内置中继 (`connect/relay/`) | Headscale 虚拟专网 (`connect/headscale/`) |
 |---|---|---|
@@ -14,7 +14,7 @@ LoopCtrl 在 iPhone 上运行长期驻留的 XCUITest runner，对外提供加�
 | **操作员连入** | 手机自己的公网地址 `https://<slug>.<中继域名>/`：浏览器打开控制页面，智能体调用 `/rpc`。 | 从具有 `tag:operator` 标签的节点直接访问 `100.64.x.y:8300`。 |
 | **适用场景** | 默认首选。客户 iPhone 端无需繁琐网络配置。 | 备用方案，或适合团队自身已有 Tailnet 基础设施的场景。 |
 
-无论采用哪种连接方式，操作员与手机之间均建立端到端配对（X25519），每次请求都使用 LoopCtrl v1 信封在端侧封装与加密。**无论是中继服务器还是 Headscale 节点，均无法解密或伪造请求内容。** 邀请链接指明了手机预先信任的操作员公钥。浏览器打开的控制页面由中继转发，所以请使用自己部署或信任的中继（[原因](https://github.com/Souitou-iop/LoopCtrl/blob/main/docs/remote-control.md#trust)）。
+无论采用哪种连接方式，操作员与手机之间均建立端到端配对（X25519），每次请求都使用 LoopCtrl v1 信封在端侧封装与加密。**无论是中继服务器还是 Headscale 节点，均无法解密或伪造请求内容。** 邀请链接指明了手机预先信任的操作员公钥。浏览器打开的控制页面由中继转发，所以请使用自己部署或信任的中继（[原因](../docs/remote-control.md#trust)）。
 
 ## 目录结构
 

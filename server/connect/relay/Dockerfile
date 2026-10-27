@@ -11,7 +11,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 
 LABEL org.opencontainers.image.title="loopctrl-relay" \
       org.opencontainers.image.description="LoopCtrl relay: invite enrollment and a reverse tunnel that gives each phone a public address" \
-      org.opencontainers.image.source="https://github.com/Souitou-iop/LoopCtrl-Server" \
+      org.opencontainers.image.source="https://github.com/Souitou-iop/LoopCtrl" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 COPY --from=build /loopctrl-relay /loopctrl-relay

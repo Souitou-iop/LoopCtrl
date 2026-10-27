@@ -31,7 +31,7 @@ read or forge it.
   way, with per-stream flow control. So a browser gets the control page, the
   screen stream and `/rpc` exactly as on the LAN. The tunnel protocol is in
   LoopCtrl's
-  [docs/remote-control.md](https://github.com/Souitou-iop/LoopCtrl/blob/main/docs/remote-control.md#tunnel-protocol-v1).
+  [docs/remote-control.md](../../docs/remote-control.md#tunnel-protocol-v1).
 - **Tailnet** (`connect/headscale/`): plain TCP to `100.64.x.y:8300` over
   WireGuard. Headscale only coordinates keys and the DERP relay; the ACL limits
   operators to port 8300 on customer phones.
@@ -45,8 +45,8 @@ requests that came through the relay.
 The invite (`loopctrl://connect?v=1&server=…&code=…&op=…`), what the app
 checks, and every relay endpoint with its request, response, signature and
 error format are specified in LoopCtrl's
-**[docs/relay-enrollment.md](https://github.com/Souitou-iop/LoopCtrl/blob/main/docs/relay-enrollment.md)**.
-That page is the client contract and the **source of truth**; this repo
+**[docs/relay-enrollment.md](../../docs/relay-enrollment.md)**.
+That page is the client contract and the **source of truth**; the relay
 deliberately keeps no copy, so the two can't drift. The reference relay here
 implements exactly that API, and `connect/relay/relay_test.go` exercises it.
 

@@ -36,7 +36,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
 
-const val SOURCE_URL = "https://github.com/Souitou-iop/LoopCtrl-Pair"
+const val SOURCE_URL = "https://github.com/Souitou-iop/LoopCtrl/tree/main/pair"
 
 @Composable
 fun PairRoot(vm: PairViewModel = viewModel()) {

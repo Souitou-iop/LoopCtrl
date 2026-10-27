@@ -1,4 +1,4 @@
-module github.com/Souitou-iop/LoopCtrl-Server/connect/relay
+module github.com/Souitou-iop/LoopCtrl/server/connect/relay
 
 go 1.23
 

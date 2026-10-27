@@ -14,12 +14,12 @@ Anyone self-hosting a relay can implement the API from this page.
 
 > Status: implemented on both sides. The app's client is
 > `RelayRemoteServiceClient`. The reference relay lives in
-> [LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server): `connect/relay/`
+> [`server/connect/relay/`](../server/connect/relay/)
 > (Go) serves exactly this API, with `relay_test.go` as its test and
 > `relay_operator.py` as an operator client. **This page is the canonical
 > contract** for enrollment and sign-in; the tunnel the phone then holds, and
 > the public address it gets, are in [remote-control.md](remote-control.md).
-> LoopCtrl-Server links to both rather than keeping a copy.
+> The relay's own docs link to both rather than keeping a copy.
 
 ## Trust model
 
@@ -269,7 +269,7 @@ take one shared token (`Authorization: Bearer <LOOPCTRL_RELAY_OPERATOR_TOKEN>`):
 | `GET /v1/admin/devices` | Enrolled phones: id, name, organization, operators, public address, whether its tunnel is up. |
 | `GET /healthz` | `{"ok": true, "api": 1, "tunnel": 1, "server": "<its name>"}` |
 
-LoopCtrl-Server's `connect/relay/relay_operator.py` (`cli/loopctrl relay …`) drives these: `enroll --name …` prints the invite
+`server/connect/relay/relay_operator.py` (`server/cli/loopctrl relay …`) drives these: `enroll --name …` prints the invite
 with the operator's key ID in `op`; `pair` and `call` use the phone's public
 address with that key.
 
@@ -374,7 +374,7 @@ Clients that paired through the relay show the same source.
   clicking through every screen and failure without a server. Off by default:
   long-press the footer of Settings › 远程服务 for 2 s to turn it on, then
   relaunch. In DEBUG the demo launch arguments turn it on too.
-- [LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server) `connect/relay/`: the reference relay, its
+- [`server/connect/relay/`](../server/connect/relay/): the reference relay, its
   tests and an operator client.
 - `LoopCtrlApp/Models/RemoteServiceStore.swift`: enrollment, the channel and
   the log.

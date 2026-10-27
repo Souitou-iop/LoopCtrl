@@ -6,7 +6,7 @@ members = ["crates/pair-core", "crates/usbmux", "crates/pair-host", "crates/cli"
 version = "0.2.1"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/Souitou-iop/LoopCtrl-Pair"
+repository = "https://github.com/Souitou-iop/LoopCtrl"
 rust-version = "1.85"
 
 [workspace.dependencies]

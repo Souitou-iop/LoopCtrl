@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 /// The 远程服务 transport against a real relay: the API in
-/// docs/relay-enrollment.md, served by the reference relay in LoopCtrl-Server
+/// docs/relay-enrollment.md, served by the reference relay in server/connect/relay
 /// (connect/relay/loopctrl_relay_server.py) or by anyone's own implementation
 /// of it.
 ///

@@ -96,7 +96,7 @@ sequenceDiagram
    and turn on **Developer Mode** (Settings → Privacy & Security → Developer
    Mode, then restart).
 3. **Pair once.** On iOS 27 and later, pair on the phone. Below iOS 27, pair
-   once over USB with [LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair)
+   once over USB with [LoopCtrl Pair](pair/)
    or import a pairing file. See [Requirements](#requirements).
 4. **Mount the disk image.** Connect LocalDevVPN or Shadowrocket, open
    LoopCtrl and tap **Mount Disk Image**. The app walks you through it.
@@ -153,7 +153,7 @@ pair and which Developer Disk Image the app mounts:
 
 | iOS | Pairing | Disk image mounted on the phone |
 |---|---|---|
-| 16 | USB, once: [LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair), or import a lockdown pairing file (`idevicepair`, jitterbugpair, iLoader) | Legacy `DeveloperDiskImage.dmg`, over lockdownd ([details](docs/ios16-ddi-mount.md)) |
+| 16 | USB, once: [LoopCtrl Pair](pair/), or import a lockdown pairing file (`idevicepair`, jitterbugpair, iLoader) | Legacy `DeveloperDiskImage.dmg`, over lockdownd ([details](docs/ios16-ddi-mount.md)) |
 | 17.0–17.3 | Not supported on the phone yet (see [Known limits](#limits)) | Mount from Xcode instead |
 | 17.4–26.3 | USB, once: LoopCtrl Pair, or import a pairing file from iLoader | Personalized image |
 | 26.4–26.x | USB, once: LoopCtrl Pair, or import a pairing file from iLoader | Cryptex image |
@@ -290,13 +290,12 @@ juggling two VPNs.
 <a id="self-hosting"></a>
 ## Self-hosting
 
-[LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server) has what you
-need to run your own connection layer:
+[`server/`](server/) has what you need to run your own connection layer:
 
 - **Relay** for the remote service, with a container image:
-  [docs/self-host-relay.md](https://github.com/Souitou-iop/LoopCtrl-Server/blob/main/docs/self-host-relay.md).
+  [server/docs/self-host-relay.md](server/docs/self-host-relay.md).
 - **Headscale** with your own DERP server, for a tailnet:
-  [docs/self-host-headscale.md](https://github.com/Souitou-iop/LoopCtrl-Server/blob/main/docs/self-host-headscale.md).
+  [server/docs/self-host-headscale.md](server/docs/self-host-headscale.md).
 - An operator CLI for driving a phone through the relay.
 
 The app's side of the relay contract is
@@ -372,6 +371,19 @@ the [cross-app playbook design](docs/research/operation-playbook-design.md),
 [how app knowledge is kept](docs/research/app-knowledge-workflow.md) and the
 [SKILL.md A/B test](docs/research/skill-ab-test.md) (kit in
 [`tools/skill-ab/`](tools/skill-ab/)).
+
+<a id="layout"></a>
+### What's in this repository
+
+| Folder | What | Released as |
+|---|---|---|
+| (root) | The app and the runner on the phone | tag `vX.Y.Z`: `LoopCtrl.ipa` |
+| [`server/`](server/) | The relay and the Headscale templates, to host the connection layer yourself | tag `server-vX.Y.Z`: `ghcr.io/souitou-iop/loopctrl-relay` |
+| [`pair/`](pair/) | LoopCtrl Pair, the USB pairing helper for Windows, macOS, Linux and Android | tag `pair-vX.Y.Z`: installers on the release |
+
+`server/` and `pair/` were the LoopCtrl-Server and LoopCtrl-Pair
+repositories; their history is kept here. Each builds and releases on its
+own (`.github/workflows/`), and a change that spans them lands as one.
 
 <a id="build"></a>
 ### Build from source

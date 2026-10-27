@@ -1,14 +1,14 @@
 <p align="right"><b>English</b> · <a href="README.zh-CN.md">简体中文</a></p>
 
-# LoopCtrl-Server
+# LoopCtrl server
 
-The connection layer for [LoopCtrl](https://github.com/Souitou-iop/LoopCtrl):
+The connection layer for [LoopCtrl](../README.md):
 the server-side pieces that let an operator reach a phone's LoopCtrl from
 another network. Everything here can be self-hosted.
 
 LoopCtrl runs an XCUITest runner on the iPhone that serves an encrypted
 JSON-RPC API (protocol v1, port 8300). On the same Wi-Fi an operator talks to
-it directly. From anywhere else it needs a path to the phone, and this repo
+it directly. From anywhere else it needs a path to the phone, and this folder
 provides two interchangeable ones:
 
 | | In-app relay (`connect/relay/`) | Headscale tailnet (`connect/headscale/`) |
@@ -23,7 +23,7 @@ Either way the operator pairs with the phone (X25519) and every call is
 sealed end to end with the LoopCtrl v1 envelope. **Neither the relay nor
 Headscale can read or forge requests.** The invite names the operator keys the
 phone pre-approves. The relay does serve the control page a browser opens, so
-use a relay you run or trust ([why](https://github.com/Souitou-iop/LoopCtrl/blob/main/docs/remote-control.md#trust)).
+use a relay you run or trust ([why](../docs/remote-control.md#trust)).
 
 ## Layout
 

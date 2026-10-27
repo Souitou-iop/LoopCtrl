@@ -88,4 +88,4 @@ export const api = {
 
 export const APPLE_DEVICES_STORE = "ms-windows-store://pdp/?ProductId=9NP83LWLPZ9K";
 export const APPLE_DEVICES_WEB = "https://apps.microsoft.com/detail/9NP83LWLPZ9K";
-export const SOURCE_URL = "https://github.com/Souitou-iop/LoopCtrl-Pair";
+export const SOURCE_URL = "https://github.com/Souitou-iop/LoopCtrl/tree/main/pair";

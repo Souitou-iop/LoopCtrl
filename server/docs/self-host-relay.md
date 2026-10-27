@@ -13,7 +13,7 @@ and tunnels live in memory.
 
 The relay does serve the control page, so whoever runs it could change that
 page. Run it yourself, or use one run by someone you would trust with the
-phone anyway ([details](https://github.com/Souitou-iop/LoopCtrl/blob/main/docs/remote-control.md#trust)).
+phone anyway ([details](../../docs/remote-control.md#trust)).
 
 ## What you need
 

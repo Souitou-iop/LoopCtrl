@@ -5,6 +5,14 @@ Copyright 2026 Ebato and the LoopCtrl contributors
 
 Licensed under the **Apache License, Version 2.0** (see `LICENSE`).
 
+## In this repository
+
+`server/` (the relay and Headscale templates) and `pair/` (LoopCtrl Pair)
+are part of LoopCtrl, under the same license; each folder keeps a copy of
+`LICENSE`. They were the LoopCtrl-Server and LoopCtrl-Pair repositories, with
+the same copyright holders, until they were merged in with their history.
+Pair's own third-party notices are in `pair/THIRD_PARTY_NOTICES.md`.
+
 ## Origin
 
 LoopCtrl was split from iCTRL (OpenMinis/iCTRL) after that project was
