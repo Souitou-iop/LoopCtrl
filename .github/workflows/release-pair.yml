@@ -1,0 +1,55 @@
+# Tag pair-vX.Y.Z to build every LoopCtrl Pair bundle (pair.yml) and publish
+# them as a GitHub release, a pre-release when the tag has a "-". Notes come
+# from pair/docs/release-notes/vX.Y.Z.md when it exists. Never marked
+# "latest": that stays the app's.
+name: Release Pair
+
+on:
+  push:
+    tags: ["pair-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    uses: ./.github/workflows/pair.yml
+    with:
+      release: true
+    secrets: inherit
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          version="${tag#pair-}"   # pair-v0.2.1-beta → v0.2.1-beta
+          notes="$PWD/pair/docs/release-notes/$version.md"
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          ls -l
+          args=(--title "LoopCtrl Pair $version" --latest=false --verify-tag)
+          case "$version" in *-*) args+=(--prerelease) ;; esac
+          if [ -f "$notes" ]; then args+=(--notes-file "$notes"); else args+=(--generate-notes); fi
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" * --clobber
+          else
+            gh release create "$tag" * "${args[@]}"
+          fi

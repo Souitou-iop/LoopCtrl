@@ -1,32 +1,25 @@
 # The relay (server/connect/relay) and the server-side CLI (server/cli).
-# Runs when they change, or the RPC client the CLI shares with the app.
-name: Server CI
+# Called by ci.yml when they change, or the RPC client the CLI shares with
+# the app, and by release-server.yml before an image is published.
+name: Server
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "server/**"
-      - "Scripts/loopctrl_rpc.py"
-      - ".github/workflows/server-ci.yml"
-  pull_request:
-    paths:
-      - "server/**"
-      - "Scripts/loopctrl_rpc.py"
-      - ".github/workflows/server-ci.yml"
+  workflow_call:
 
 permissions:
   contents: read
 
 jobs:
   relay:
-    runs-on: ubuntu-latest
+    name: Relay
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: server/connect/relay/go.mod
-      - name: Vet and test
+          cache-dependency-path: server/connect/relay/go.sum
+      - name: Format, vet and test
         working-directory: server/connect/relay
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
@@ -34,13 +27,14 @@ jobs:
           go test -race ./...
 
   cli:
-    runs-on: ubuntu-latest
+    name: CLI (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         python: ["3.10", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
       - name: Compile
@@ -51,12 +45,16 @@ jobs:
           python server/cli/loopctrl relay --help > /dev/null
 
   lint:
-    runs-on: ubuntu-latest
+    name: Lint
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v3
+      - uses: actions/checkout@v7
+      # Only server/, with server/ruff.toml: the app's own scripts aren't
+      # held to it.
+      - uses: astral-sh/ruff-action@v4
         with:
-          args: check server server/cli/loopctrl
+          src: server
+          args: check server/cli/loopctrl
       - name: Shell scripts
         run: shellcheck server/connect/relay/systemd/render-unit.sh
       - name: Compose files
@@ -66,10 +64,11 @@ jobs:
           HEADSCALE_DOMAIN=hs.example.com docker compose -f server/connect/headscale/docker-compose.yml config -q
 
   image:
-    runs-on: ubuntu-latest
+    name: Relay image
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - name: Build the relay image
+      - uses: actions/checkout@v7
+      - name: Build
         run: docker build -t loopctrl-relay:ci server/connect/relay
       - name: Smoke test
         run: |

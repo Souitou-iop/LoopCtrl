@@ -310,7 +310,7 @@ make ipa                     # → LoopCtrl.ipa
 - 加上 `UNSIGNED=1` 可以跳过 Xcode 签名，改用 ad-hoc 签名（bundle 前缀为 `top.ebato`）。
   适合反正要交给 SideStore 或 `sign-ipa.sh` 重新签名的包。
 - 分享 `LoopCtrl.ipa` 之前，先用 `Scripts/package-release.sh` 去掉里面的描述文件（含你的姓名、team 和设备 UDID）。
-  正式发布由 [`.github/workflows/release.yml`](.github/workflows/release.yml) 构建。
+  正式发布由 [`.github/workflows/release-app.yml`](.github/workflows/release-app.yml) 构建。
 - 第一次运行 `make` 时，会从源码构建 idevice 框架（要几分钟，只需一次），还会生成包含你的 team 和 bundle 前缀的
   `Config/Local.xcconfig`，并根据 `project.yml` 生成 Xcode 工程。签名设置请改在这些文件里，不要在 Xcode 里改。
 - LoopCtrl 如何在进程内加载 runner，见 [`docs/runner-merge-spike.md`](docs/runner-merge-spike.md)。

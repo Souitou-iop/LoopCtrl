@@ -1,22 +1,16 @@
-# Build, test and package LoopCtrl Pair (pair/). Pushes to main and pull
-# requests that touch it run the checks and build every bundle; a pair-v* tag
-# also publishes a GitHub release with the bundles attached (pre-release when
-# the tag has a "-"). The app's own releases are tagged v*, the relay's
-# server-v*.
-name: Pair CI
+# LoopCtrl Pair (pair/): checks on Linux, then every bundle — Linux .deb and
+# CLI (x86_64, aarch64), macOS universal .dmg and CLI, Windows installer and
+# CLI, Android APKs — uploaded as artifacts. Called by ci.yml when pair/
+# changes and by release-pair.yml for a pair-v* tag, which publishes them.
+name: Pair
 
 on:
-  push:
-    branches: [main]
-    tags: ["pair-v*"]
-    paths:
-      - "pair/**"
-      - ".github/workflows/pair-ci.yml"
-  pull_request:
-    paths:
-      - "pair/**"
-      - ".github/workflows/pair-ci.yml"
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release:
+        description: A release build; the Android APK must be signed
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,10 +19,6 @@ permissions:
 defaults:
   run:
     working-directory: pair
-
-concurrency:
-  group: pair-ci-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -45,7 +35,7 @@ jobs:
     name: Check (Linux)
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: System packages
         run: sudo apt-get update && sudo apt-get install -y $LINUX_DEPS
       - uses: dtolnay/rust-toolchain@stable
@@ -107,7 +97,7 @@ jobs:
           - { arch: aarch64, runner: ubuntu-22.04-arm, deb: arm64 }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: System packages
         run: sudo apt-get update && sudo apt-get install -y $LINUX_DEPS
       - uses: dtolnay/rust-toolchain@stable
@@ -131,7 +121,7 @@ jobs:
           dpkg-deb --info out/*.deb | sed -n '1,30p'
           dpkg-deb --contents out/*.deb | grep -E 'udev|bin/'
           ls -l out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.arch }}
           path: pair/out/*
@@ -142,7 +132,7 @@ jobs:
     needs: check
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
@@ -166,7 +156,7 @@ jobs:
           cp loopctrl-pair LICENSE THIRD_PARTY_NOTICES.md cli/loopctrl-pair-$V-macos-universal/
           tar -C cli -czf out/loopctrl-pair-cli-$V-macos-universal.tar.gz loopctrl-pair-$V-macos-universal
           ls -l out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: pair/out/*
@@ -177,7 +167,7 @@ jobs:
     needs: check
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -199,7 +189,7 @@ jobs:
           cp target/release/loopctrl-pair.exe LICENSE THIRD_PARTY_NOTICES.md cli/
           (cd cli && 7z a ../out/loopctrl-pair-cli-$V-windows-x64.zip .)
           ls -l out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: pair/out/*
@@ -210,8 +200,8 @@ jobs:
     needs: check
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
@@ -226,11 +216,12 @@ jobs:
       - name: Release keystore
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          RELEASE: ${{ inputs.release }}
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "ANDROID_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
-          elif [[ "$GITHUB_REF" == refs/tags/pair-v* ]]; then
+          elif [ "$RELEASE" = true ]; then
             echo "::error::ANDROID_KEYSTORE_BASE64 is not set; a release needs a signed APK"
             exit 1
           else
@@ -252,40 +243,9 @@ jobs:
           if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
             cp android/app/build/outputs/apk/release/app-release.apk out/LoopCtrl-Pair-$V-android.apk
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android
           path: pair/out/*
           if-no-files-found: error
 
-  release:
-    name: Release
-    if: startsWith(github.ref, 'refs/tags/pair-v')
-    needs: [linux, macos, windows, android]
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Publish
-        working-directory: .
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          cd dist
-          sha256sum * > SHA256SUMS.txt
-          ls -l
-          tag="$GITHUB_REF_NAME"
-          version="${tag#pair-}"   # pair-v0.2.1-beta → v0.2.1-beta
-          pre=""; case "$version" in *-*) pre="--prerelease";; esac
-          notes=../pair/docs/release-notes/$version.md
-          if [ -f "$notes" ]; then n="--notes-file $notes"; else n="--generate-notes"; fi
-          if gh release view "$tag" > /dev/null 2>&1; then
-            gh release upload "$tag" * --clobber
-          else
-            gh release create "$tag" * $pre $n --title "LoopCtrl Pair $version"
-          fi

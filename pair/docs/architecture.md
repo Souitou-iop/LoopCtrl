@@ -70,7 +70,7 @@ Android has no usbmuxd, so the bridge runs one in-process (`crates/usbmux`, from
 
 ## CI and releases
 
-`.github/workflows/ci.yml`: on pushes and PRs, a Linux check job (fmt, clippy `-D warnings`, tests, the CLI against the mock backend and the built-in usbmuxd, cargo-deny, the JS license check, notices up to date), then bundles for Linux x86_64 and aarch64 (native arm runner), macOS universal, Windows x64 (NSIS) and Android (debug APK). A `v*` tag adds a release job that attaches everything with SHA256SUMS (pre-release when the tag has a `-`; notes from `docs/release-notes/<tag>.md` if present).
+`.github/workflows/pair.yml` (at the repository root, run by `ci.yml` when `pair/` changes): a Linux check job (fmt, clippy `-D warnings`, tests, the CLI against the mock backend and the built-in usbmuxd, cargo-deny, the JS license check, notices up to date), then bundles for Linux x86_64 and aarch64 (native arm runner), macOS universal, Windows x64 (NSIS) and Android (debug APK). A `pair-v*` tag runs it through `release-pair.yml`, which attaches everything with SHA256SUMS (pre-release when the tag has a `-`; notes from `docs/release-notes/<version>.md` if present).
 
 ## Licenses
 

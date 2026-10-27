@@ -1,0 +1,92 @@
+# One entry point for pushes to main and pull requests. It works out which
+# parts changed and runs only their workflows: the app (app.yml), the server
+# (server.yml), LoopCtrl Pair (pair.yml). The "CI" job at the end passes when
+# everything that ran passed, so it is the one check to require on main.
+# A change to this file, or a run from the Actions tab, runs all three.
+#
+# Releases have their own workflows, one per tag prefix: v* (release-app.yml),
+# server-v* (release-server.yml), pair-v* (release-pair.yml).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: What changed
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      app: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.app == 'true' || steps.filter.outputs.ci == 'true' }}
+      server: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.server == 'true' || steps.filter.outputs.ci == 'true' }}
+      pair: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.pair == 'true' || steps.filter.outputs.ci == 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name != 'workflow_dispatch'
+      - uses: dorny/paths-filter@v4
+        if: github.event_name != 'workflow_dispatch'
+        id: filter
+        with:
+          filters: |
+            app:
+              - "LoopCtrl*/**"
+              - "Tests/**"
+              - "Config/**"
+              - "Patches/**"
+              - "Scripts/**"
+              - "iCON/**"
+              - "project.yml"
+              - "Makefile"
+              - ".github/workflows/app.yml"
+            server:
+              - "server/**"
+              - "Scripts/loopctrl_rpc.py"
+              - ".github/workflows/server.yml"
+            pair:
+              - "pair/**"
+              - ".github/workflows/pair.yml"
+            ci:
+              - ".github/workflows/ci.yml"
+
+  app:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    uses: ./.github/workflows/app.yml
+
+  server:
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    uses: ./.github/workflows/server.yml
+
+  pair:
+    needs: changes
+    if: needs.changes.outputs.pair == 'true'
+    uses: ./.github/workflows/pair.yml
+    secrets: inherit
+
+  ci:
+    name: CI
+    if: always()
+    needs: [changes, app, server, pair]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Everything that ran passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "changes app server pair: $RESULTS"
+          case " $RESULTS " in
+            *" failure "*|*" cancelled "*) exit 1 ;;
+          esac

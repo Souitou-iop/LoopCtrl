@@ -1,0 +1,113 @@
+# The iPhone app: LoopCtrlKit's logic tests on macOS, then the unsigned
+# LoopCtrl.ipa (make ipa), checked and uploaded as an artifact. Called by
+# ci.yml on every change to the app and by release-app.yml for a v* tag.
+#
+# Unsigned means no team, no provisioning profile and no device UDIDs:
+# whoever installs the package re-signs it (SideStore, sign-ipa.sh, or Xcode),
+# which replaces the signature anyway.
+name: App
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: MARKETING_VERSION written into the bundles; empty keeps project.yml's
+        type: string
+        default: ""
+      artifact:
+        description: Name of the uploaded artifact
+        type: string
+        default: loopctrl-ipa
+    outputs:
+      xcode:
+        description: The Xcode version that built the package
+        value: ${{ jobs.build.outputs.xcode }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test and build the IPA
+    # macOS 26 ships Xcode 26.x, the first that compiles the Icon Composer
+    # document (LoopCtrlApp/AppIcon.icon) into Assets.car.
+    runs-on: macos-26
+    timeout-minutes: 60
+    outputs:
+      xcode: ${{ steps.toolchain.outputs.xcode }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Show toolchain
+        id: toolchain
+        run: |
+          xcodebuild -version
+          xcode-select -p
+          rustc --version || true
+          # Captured here, not where it's used: xcodebuild aborts with a
+          # broken-pipe exception when its output is piped into something that
+          # exits early (`head`).
+          echo "xcode=$(xcodebuild -version | sed -n 's/^Xcode //p')" >> "$GITHUB_OUTPUT"
+
+      - name: Install build tools
+        run: |
+          brew install xcodegen
+          rustup target add aarch64-apple-ios
+          rustup target list --installed | grep aarch64-apple-ios
+
+      # Config/Local.xcconfig is gitignored and normally created by
+      # Scripts/setup-signing.sh from a developer certificate. The unsigned
+      # build needs neither a team nor a certificate, so an empty file is
+      # enough — Config/Signing.xcconfig already carries the neutral prefix.
+      - name: Stub out the per-developer signing file
+        run: |
+          printf '// CI: unsigned build, no team.\nDEVELOPMENT_TEAM =\n' > Config/Local.xcconfig
+
+      # idevice is built from source with Patches/idevice applied (several
+      # minutes). Cache it keyed on the patch contents; build-idevice.sh skips
+      # the build when the cached .version stamp still matches. Tag builds
+      # restore what main saved.
+      - name: Cache the patched idevice xcframework
+        uses: actions/cache@v6
+        with:
+          path: Frameworks/IDevice.xcframework
+          key: idevice-${{ runner.os }}-${{ hashFiles('Patches/idevice/*.patch', 'Scripts/build-idevice.sh') }}
+
+      - name: Build the unsigned IPA
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          settings="CURRENT_PROJECT_VERSION=$GITHUB_RUN_NUMBER"
+          if [ -n "$VERSION" ]; then settings="MARKETING_VERSION=$VERSION $settings"; fi
+          make ipa UNSIGNED=1 EXTRA_BUILD_SETTINGS="$settings"
+          Scripts/package-release.sh
+
+      - name: LoopCtrlKit tests
+        run: xcodebuild test -project LoopCtrl.xcodeproj -scheme LoopCtrlKitTests -destination platform=macOS -quiet
+
+      - name: Verify the package
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          unzip -q release/LoopCtrl.ipa -d "$work"
+          app="$work/Payload/LoopCtrlAllInOne.app"
+          echo "bundle id : $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")"
+          echo "version   : $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist") ($(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Info.plist"))"
+          test -d "$app/PlugIns/LoopCtrlUITests.xctest" || { echo "runner missing"; exit 1; }
+          test -f "$app/PlugIns/LoopCtrlUITests.xctest/loopctrl" || { echo "cli missing"; exit 1; }
+          if find "$work" -name embedded.mobileprovision | grep -q .; then
+            echo "a provisioning profile survived"; exit 1
+          fi
+          echo "ok"
+
+      - name: Checksums
+        working-directory: release
+        run: shasum -a 256 LoopCtrl.ipa | tee SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact }}
+          path: |
+            release/LoopCtrl.ipa
+            release/SHA256SUMS.txt
+          if-no-files-found: error

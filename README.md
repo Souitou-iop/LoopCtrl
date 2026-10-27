@@ -401,7 +401,7 @@ make ipa                     # → LoopCtrl.ipa
   re-sign anyway.
 - `Scripts/package-release.sh` strips your provisioning profile (name, team,
   device UDIDs) from `LoopCtrl.ipa` before you share it. Releases are built by
-  [`.github/workflows/release.yml`](.github/workflows/release.yml).
+  [`.github/workflows/release-app.yml`](.github/workflows/release-app.yml).
 - The first `make` builds the idevice framework from source (several minutes,
   once). It also writes `Config/Local.xcconfig` with your team and bundle
   prefix, and generates the Xcode project from `project.yml`. Change signing

@@ -75,7 +75,7 @@ ESP32-S3 之类的单片机当 iPhone 的 USB 主机、通过 Wi-Fi 把 usbmux �
 
 ## 开发
 
-需要 Rust 1.85+、bun（或 pnpm）。Windows 还需要 WebView2 和 Apple Devices；Linux 需要 `libwebkit2gtk-4.1-dev` 等 Tauri 依赖（见 [.github/workflows/ci.yml](.github/workflows/ci.yml) 里的 `LINUX_DEPS`）。
+需要 Rust 1.85+、bun（或 pnpm）。Windows 还需要 WebView2 和 Apple Devices；Linux 需要 `libwebkit2gtk-4.1-dev` 等 Tauri 依赖（见 [.github/workflows/pair.yml](../.github/workflows/pair.yml) 里的 `LINUX_DEPS`）。
 
 ```bash
 bun install
