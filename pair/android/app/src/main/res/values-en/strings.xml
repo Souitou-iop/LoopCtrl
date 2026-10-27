@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LoopCtrl Pair</string>
+    <string name="nav_settings">Settings</string>
+
+    <string name="nav_back">Back</string>
+
+    <string name="home_title_empty">Connect iPhone</string>
+    <string name="home_sub_empty">Connect the iPhones to pair to this Android phone with a cable, one or several.</string>
+    <string name="home_hero_title">Plug in an iPhone; it is detected automatically</string>
+    <string name="home_hero_body">USB-C to Lightning or USB-C to USB-C both work. Android asks whether to allow access to the iPhone; tap “OK”. For several phones at once, use an OTG hub with its own power supply.</string>
+    <string name="home_detecting">Looking for iPhones…</string>
+    <string name="home_title_found">%1$d iPhone(s) detected</string>
+    <string name="home_sub_found">Once every iPhone to pair is connected, tap “Start pairing”.</string>
+    <string name="home_title_running">Pairing</string>
+    <string name="home_sub_running">%1$d/%2$d done · keep them connected and unlocked</string>
+    <string name="home_sub_running_act">%1$d/%2$d done · %3$d need you</string>
+    <string name="home_title_done">Paired</string>
+    <string name="home_sub_done">%1$d iPhone(s) have their pairing file written and verified. You can unplug now.</string>
+    <string name="home_start">Start pairing</string>
+    <string name="home_start_n">Pair %1$d iPhones</string>
+    <string name="home_stop">Stop</string>
+    <string name="home_finish">Done</string>
+    <string name="home_ready_n">%1$d ready · you can plug in more iPhones</string>
+    <string name="home_none_ready">No iPhone ready to pair</string>
+    <string name="home_waiting">Waiting for an iPhone…</string>
+    <string name="home_running_note">iPhones plugged in now join automatically</string>
+    <string name="home_done_note">Paired this session: %1$d</string>
+    <string name="home_later">From now on</string>
+    <string name="home_after_reboot">After every iPhone restart</string>
+    <string name="home_after_reboot_summary">Open LoopCtrl and tap “Mount”</string>
+    <string name="home_no_more">No cable needed</string>
+    <string name="home_no_more_summary">Unless you change phones, or mounting fails after an iOS update</string>
+    <string name="home_paired">Paired this session</string>
+    <string name="home_how_to_fix">How to fix</string>
+
+    <string name="row_reading">Reading</string>
+    <string name="row_ready">Ready</string>
+    <string name="row_too_old">iOS too old</string>
+    <string name="row_unplugged">Unplugged</string>
+    <string name="row_port">USB #%1$d</string>
+    <string-array name="steps">
+        <item>Trust</item>
+        <item>Dev Mode</item>
+        <item>Record</item>
+        <item>Write</item>
+        <item>Verify</item>
+    </string-array>
+
+    <string name="guide_trust_title">Tap “Trust” on the iPhone</string>
+    <string name="guide_trust_body">Unlock the iPhone, tap “Trust” in “Trust This Computer?” and enter the passcode. To the iPhone, this Android phone is a computer.</string>
+    <string name="guide_locked_title">Unlock the iPhone first</string>
+    <string name="guide_locked_body">It is locked; the Trust prompt appears after unlocking.</string>
+    <string name="guide_dev_off_title">Turn on Developer Mode</string>
+    <string name="guide_dev_off_body">The switch is visible now. Apple only lets the owner of an iPhone with a passcode turn it on, on the phone itself.</string>
+    <string-array name="guide_dev_steps">
+        <item>Settings › Privacy &amp; Security › Developer Mode</item>
+        <item>Turn the switch on</item>
+        <item>Tap “Restart”; keep the cable in</item>
+    </string-array>
+    <string name="guide_reboot_title">The iPhone is restarting</string>
+    <string name="guide_reboot_body">About one minute. It continues on its own once it is back; if Android asks again whether to allow access, tap “OK”.</string>
+    <string name="guide_no_unplug">Do not unplug the cable</string>
+    <string name="guide_unlock_title">Unlock and tap “Turn On”</string>
+    <string name="guide_unlock_body">The iPhone is back. Unlock it, tap “Turn On” in “Turn On Developer Mode?” and enter the passcode.</string>
+    <string name="guide_no_prompt">No prompt?</string>
+    <string name="guide_waiting">Waiting…</string>
+    <string name="guide_elapsed">Waited %1$s</string>
+    <string name="guide_unplugged_title">The iPhone was unplugged</string>
+    <string name="guide_unplugged_body">Plug it back in and unlock it; it resumes where it stopped.</string>
+    <string name="guide_skipped">This one is skipped; the other iPhones are not affected.</string>
+    <string name="guide_other">The other iPhones carry on.</string>
+
+    <string name="env_title">Environment</string>
+    <string name="env_checking">Checking</string>
+    <string name="env_ok">Ready</string>
+    <string name="env_bad">Problem</string>
+    <string name="env_usb_host">USB host (OTG)</string>
+    <string name="env_usb_host_summary">This phone can power and talk to an iPhone</string>
+    <string name="env_mux">Built-in USB service</string>
+    <string name="env_mux_summary">Replaces usbmuxd on a computer; nothing to install</string>
+    <string name="env_normal">OK</string>
+    <string name="env_unavailable">Unavailable</string>
+
+    <string name="chip_detected">Connected</string>
+    <string name="chip_trusting">Waiting for Trust</string>
+    <string name="chip_locked">Unlock</string>
+    <string name="chip_checking">Checking</string>
+    <string name="chip_dev_off">Developer Mode off</string>
+    <string name="chip_rebooting">Restarting</string>
+    <string name="chip_turn_on">Tap “Turn On”</string>
+    <string name="chip_generating">Creating</string>
+    <string name="chip_finding">Looking</string>
+    <string name="chip_writing">Writing</string>
+    <string name="chip_verifying">Verifying</string>
+    <string name="chip_done">Done</string>
+    <string name="chip_failed">Error</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="settings_about">About</string>
+    <string name="settings_version">Version %1$s</string>
+    <string name="settings_source">Source code</string>
+    <string name="settings_source_summary">Apache-2.0 · GitHub</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_theme_auto">System</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_lang_system">System</string>
+    <string name="settings_licenses">Open-source licenses</string>
+    <string name="settings_licenses_summary">idevice (MIT), iloader\'s USB code (MIT), miuix (Apache-2.0) and more</string>
+    <string name="settings_developer">Developer options</string>
+    <string name="settings_mock">Simulated devices</string>
+    <string name="settings_mock_summary">Run the whole flow without an iPhone</string>
+    <string name="settings_cache_dir">Pairing record cache</string>
+
+    <string name="dialog_cancel">Cancel</string>
+    <string name="dialog_retry">Retry</string>
+    <string name="dialog_later">Later</string>
+    <string name="dialog_recheck">Check again</string>
+    <string name="dialog_keep_waiting">Keep waiting</string>
+    <string name="dialog_redetect">Check again</string>
+    <string name="dialog_ok">OK</string>
+    <string name="dialog_detail">Details</string>
+    <string name="dialog_close">Close</string>
+
+    <string name="mock_tag">Simulate</string>
+    <string name="mock_plug">Plug in iPhone</string>
+    <string name="mock_trust">Tapped Trust</string>
+    <string name="mock_dont_trust">Tapped Don\'t Trust</string>
+    <string name="mock_unlock">Unlock</string>
+    <string name="mock_restart">Tapped Restart</string>
+    <string name="mock_turn_on">Tapped Turn On</string>
+    <string name="mock_cancel">Dismissed</string>
+    <string name="mock_install">LoopCtrl installed</string>
+    <string name="mock_unplug">Unplug</string>
+    <string name="mock_batch">Connect 5 phones</string>
+    <string name="mock_reset">Reset demo</string>
+    <string name="scenario_ready">iOS 18 · all set</string>
+    <string name="scenario_devModeOff">iOS 17.5 · Developer Mode off</string>
+    <string name="scenario_noRpService">iOS 26 · via CoreDeviceProxy</string>
+    <string name="scenario_legacy16">iOS 16.7 · lockdown record</string>
+    <string name="scenario_early17">iOS 17.2 · lockdown record</string>
+    <string name="scenario_noApp">LoopCtrl missing</string>
+    <string name="scenario_rebootHangs">Never comes back from restart</string>
+    <string name="scenario_unsupported">iOS 15.8 · unsupported</string>
+    <string name="scenario_locked">Locked</string>
+
+    <string name="err_noUsbmux_title">The built-in USB service is not running</string>
+    <string name="err_noUsbmux_body">The assistant cannot see iPhones right now.</string>
+    <string-array name="err_noUsbmux_steps">
+        <item>Quit the assistant completely and open it again</item>
+        <item>Restart this Android phone</item>
+        <item>Come back and tap “Check again”</item>
+    </string-array>
+    <string name="err_noHost_title">This phone has no USB host support</string>
+    <string name="err_noHost_body">It cannot connect to an iPhone by cable (no OTG). Use another Android phone or the computer version.</string>
+    <string name="err_untrusted_title">The iPhone did not trust this device</string>
+    <string name="err_untrusted_body">“Don\'t Trust” was tapped on the iPhone.</string>
+    <string-array name="err_untrusted_steps">
+        <item>Unplug the cable, wait two seconds, plug it in again</item>
+        <item>Unlock the iPhone and tap “Trust” this time</item>
+        <item>Enter the passcode</item>
+    </string-array>
+    <string name="err_untrusted_hint">No prompt after replugging: Settings › General › Transfer or Reset iPhone › Reset › Reset Location &amp; Privacy.</string>
+    <string name="err_devModeCancelled_title">Developer Mode is still off</string>
+    <string name="err_devModeCancelled_body">The prompt after the restart was dismissed or cancelled. The switch is visible now; turn it on once more.</string>
+    <string-array name="err_devModeCancelled_steps">
+        <item>Settings › Privacy &amp; Security › Developer Mode</item>
+        <item>Turn it on, tap “Restart”</item>
+        <item>After the restart unlock and tap “Turn On”</item>
+    </string-array>
+    <string name="err_rebootTimeout_title">The iPhone has not come back</string>
+    <string name="err_rebootTimeout_body">Waited 3 minutes.</string>
+    <string-array name="err_rebootTimeout_steps">
+        <item>Make sure the iPhone is on and has been unlocked once</item>
+        <item>Check the cable; unplug and replug if needed and tap “OK” when Android asks</item>
+        <item>Tap “Keep waiting”, or check again</item>
+    </string-array>
+    <string name="err_unsupported_title">This iPhone\'s iOS is too old</string>
+    <string name="err_unsupported_body">LoopCtrl needs iOS 16 or later.</string>
+    <string-array name="err_unsupported_steps">
+        <item>Settings › General › Software Update: update to iOS 16 or later</item>
+        <item>Reconnect the iPhone afterwards</item>
+    </string-array>
+    <string name="err_recordFailed_title">Couldn\'t create the pairing record</string>
+    <string name="err_recordFailed_body">The iPhone refused the request, usually because it locked or the connection is unstable.</string>
+    <string-array name="err_recordFailed_steps">
+        <item>Unlock the iPhone and keep the screen on</item>
+        <item>Try another cable or adapter</item>
+        <item>Tap “Retry”</item>
+    </string-array>
+    <string name="err_appNotFound_title">LoopCtrl not found</string>
+    <string name="err_appNotFound_body">The pairing file goes into LoopCtrl, which is not installed on this iPhone yet.</string>
+    <string-array name="err_appNotFound_steps">
+        <item>Install LoopCtrl on the iPhone</item>
+        <item>Open it once, then go back to the Home Screen</item>
+        <item>Tap “Retry”; keep the cable in</item>
+    </string-array>
+    <string name="err_writeFailed_title">Writing failed</string>
+    <string name="err_writeFailed_body">LoopCtrl did not let the assistant write the file, usually because of how it was installed.</string>
+    <string-array name="err_writeFailed_steps">
+        <item>Make sure LoopCtrl was signed and installed as described in the guide</item>
+        <item>Open LoopCtrl once, then go back to the Home Screen</item>
+        <item>Tap “Retry”</item>
+    </string-array>
+    <string name="err_writeFailed_hint">The record is saved on this phone; a retry does not need Trust again.</string>
+    <string name="err_verifyFailed_title">Verification failed</string>
+    <string name="err_verifyFailed_body">The file was written, but the iPhone does not accept the record.</string>
+    <string-array name="err_verifyFailed_steps">
+        <item>Unlock the iPhone and keep the screen on</item>
+        <item>Tap “Retry” to verify again</item>
+        <item>Still failing: unplug and pair again</item>
+    </string-array>
+    <string name="err_disconnected_title">The iPhone was unplugged</string>
+    <string name="err_disconnected_body">The cable came out in the middle of a step.</string>
+    <string-array name="err_disconnected_steps">
+        <item>Plug the cable back in and tap “OK” when Android asks</item>
+        <item>Unlock the iPhone</item>
+        <item>The assistant resumes from where it stopped</item>
+    </string-array>
+    <string name="err_internal_title">Something went wrong</string>
+    <string name="err_internal_body">The assistant hit an unexpected error.</string>
+    <string-array name="err_internal_steps">
+        <item>Unplug and replug the cable</item>
+        <item>Tap “Retry”</item>
+        <item>Still failing: restart the assistant and send the details below to support</item>
+    </string-array>
+</resources>

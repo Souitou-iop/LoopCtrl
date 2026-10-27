@@ -1,0 +1,35 @@
+[package]
+name = "loopctrl-pair-bridge"
+description = "UniFFI bridge between pair-core (plus the built-in usbmuxd) and the native Android app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "loopctrl_pair_bridge"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+required-features = ["cli"]
+
+[features]
+cli = ["uniffi/cli"]
+
+[dependencies]
+pair-core.workspace = true
+usbmux = { path = "../../crates/usbmux" }
+uniffi = "0.32"
+thiserror = "2"
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+# The muxer logs with tracing; without a subscriber, "log" forwards to `log`.
+tracing = { version = "0.1", features = ["log"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15"

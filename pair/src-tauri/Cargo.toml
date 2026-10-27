@@ -1,0 +1,34 @@
+[package]
+name = "loopctrl-pair"
+description = "LoopCtrl Pair (LoopCtrl 配对助手): one-time USB pairing for LoopCtrl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "loopctrl_pair_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# The cargo binary is renamed so it does not clash with the CLI's
+# `loopctrl-pair`; bundles use mainBinaryName ("LoopCtrl Pair") anyway.
+[[bin]]
+name = "loopctrl-pair-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+pair-core.workspace = true
+pair-host.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+tokio.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-log = "2"
