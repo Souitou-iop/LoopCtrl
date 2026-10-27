@@ -51,7 +51,8 @@ jobs:
       - uses: actions/checkout@v7
       # Only server/, with server/ruff.toml: the app's own scripts aren't
       # held to it.
-      - uses: astral-sh/ruff-action@v4
+      # No floating major tag for this one.
+      - uses: astral-sh/ruff-action@v4.1.0
         with:
           src: server
           args: check server/cli/loopctrl
