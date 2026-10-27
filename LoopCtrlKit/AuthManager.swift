@@ -507,6 +507,13 @@ class AuthManager {
     /// from an already-authenticated (enveloped) RPC, so the ticket inherits
     /// that request's proof of key possession. `<video src>` can't sign its own
     /// request, so this is what stands in for an envelope there.
+    /// The name a session paired with, for telling others who holds control.
+    func clientName(forTokenId tokId: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return sessions[tokId]?.clientName
+    }
+
     func issueStreamTicket(forTokenId tokId: String) -> (ticket: String, expiresIn: Int)? {
         guard let raw = SecureEnvelope.randomBytes(24) else { return nil }
         let ticket = raw.hexString
@@ -523,12 +530,15 @@ class AuthManager {
 
     /// Redeem a stream ticket. Single use: a valid ticket is removed as it is
     /// accepted, so a leaked URL can't be replayed.
-    func consumeStreamTicket(_ ticket: String) -> Bool {
+    /// Returns the key of the session the ticket was minted for, which the
+    /// video stream derives its encryption key from.
+    /// The pairing key and session a single-use ticket was minted for.
+    func consumeStreamTicket(_ ticket: String) -> (key: Data, tokId: String)? {
         lock.lock()
         defer { lock.unlock() }
-        guard let entry = streamTickets.removeValue(forKey: ticket) else { return false }
-        guard entry.expires > Date(), sessions[entry.sessionId] != nil else { return false }
-        return true
+        guard let entry = streamTickets.removeValue(forKey: ticket) else { return nil }
+        guard entry.expires > Date(), let key = sessions[entry.sessionId]?.key else { return nil }
+        return (key, entry.sessionId)
     }
 
     // MARK: - Management

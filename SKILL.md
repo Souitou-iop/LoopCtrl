@@ -39,7 +39,7 @@ $I call device_info                       # 401 → $I pair (user taps Allow)
 
 **1. Plan the route before the first call:** the apps in order, the path inside each (Settings › General › About), the values to carry between apps, the steps needing the user's OK, and what "done" looks like. A deep link (`open_url`) or an in-app search can replace a whole path; check where you landed.
 
-**2. Enter an app by bundle id, never by home-screen icons:** `resolve_app{text:"<brand>|<store name>|<alias>"}` (every name, one call; `country:"cn"` for China-only apps) → `launch_app{bundle_id}`.
+**2. Enter an app by bundle id, never by home-screen icons:** `launch_app{name:"<app name>"}` when the name is unambiguous (it says what it matched in `resolved`; several matches come back as `candidates`), else `resolve_app{text:"<brand>|<store name>|<alias>"}` (every name, one call; `country:"cn"` for China-only apps) → `launch_app{bundle_id}`.
 
 **3. One read per new screen, then act on everything it shows.** `page_source{visible_only:true, max_children:50}` (~0.4s) tells you where you really are: tab, title, sheet, keyboard. From that one read, send every step whose target you can already see, in **one command** (see Chaining).
 
@@ -82,10 +82,7 @@ r find_and_tap '{"element_id":"General"}' && r find_and_tap '{"element_id":"Abou
 `tap`, `double_tap`, `long_press`, `swipe`, `drag`, `page`, `scroll`, `type`, `clear_text`, `find_and_tap` wait until the screen stops changing (frame compare, up to 2s). They report `settle:{stable, screen_changed, waited_ms}` plus a `hint`:
 - `stable:true` → read right away.
 - `screen_changed:false` → the action did nothing visible. Check the target before repeating it.
-- `stable:false`, a spinner, or `loading:true` in `page_source` → read again in a capped loop. Each read takes 0.3–0.7s, so no sleep is needed:
-```bash
-for i in 1 2 3 4 5 6; do $I call screen_text '{"element_id":"<expected text>"}' | grep -q '"count" *: *[1-9]' && break; done
-```
+- `stable:false`, a spinner, or `loading:true` in `page_source` → wait for what you expect, in one call: `wait{text:"<expected text>", timeout:10}` returns as soon as it is on screen (tree, or OCR where the tree has no words: games, Flutter, canvas). `until:"absent"` waits for a loading text or spinner label to go. A timeout comes back as an error with `met:false` and what was on screen.
 - `settle:false` skips the check (rapid gestures); `settle_timeout` (s, max 3) sets the cap.
 
 ## Methods
@@ -98,7 +95,10 @@ for i in 1 2 3 4 5 6; do $I call screen_text '{"element_id":"<expected text>"}' 
 | `tap` / `double_tap` / `long_press` | `ref`, or `x`+`y` | `duration` |
 | `type` | `text` | `submit`, `clear`, `x`+`y` (tap to focus first) |
 | `resolve_app` | `text` | `country` |
-| `launch_app` / `activate_app` / `terminate_app` | `bundle_id` | — |
+| `wait` | `text` (or `duration`) | `until:"absent"`, `timeout` (≤60s), `source:"tree"\|"ocr"` |
+| `read_value` | `element_id` or `ref` | `match`, `max_length` (≤65536) — a long text's whole value, read-only |
+| `launch_app` | `bundle_id` or `name` | — |
+| `activate_app` / `terminate_app` | `bundle_id` | — |
 | `open_url` | `url` | — |
 | `home` | — | — |
 | `page_source` | — | `visible_only`, `max_children`, `filter`, `bundle_id`, `enhanced` |

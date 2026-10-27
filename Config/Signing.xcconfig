@@ -14,4 +14,9 @@
 DEVELOPMENT_TEAM =
 LOOPCTRL_BUNDLE_PREFIX = top.ebato
 
+// What `make ipa DEV=1` changes: a ".dev" bundle id and its own name, so a
+// test build installs next to the release app instead of replacing it.
+LOOPCTRL_BUNDLE_SUFFIX =
+LOOPCTRL_DISPLAY_NAME = LoopCtrl
+
 #include? "Local.xcconfig"

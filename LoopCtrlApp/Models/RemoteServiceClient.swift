@@ -44,6 +44,8 @@ struct RemoteEnrollment: Equatable {
     /// The certificate the enrolment went over; pinned from then on when the
     /// invite carried no pin.
     let spkiSHA256: Data?
+    /// Where a browser reaches this phone through the relay.
+    var publicURL: URL? = nil
 }
 
 enum RemoteChannelEvent: Equatable {
@@ -51,6 +53,8 @@ enum RemoteChannelEvent: Equatable {
     case latency(Int)
     case operatorStarted(String)
     case operatorEnded
+    /// The address the relay serves this phone at, from the tunnel's hello.
+    case publicURL(URL)
     /// One thing an operator did, for the operation log.
     case action(String)
     /// The channel dropped; the client is retrying.
@@ -76,6 +80,11 @@ struct RemoteConnection: Identifiable, Codable, Equatable {
     let enrolledAt: Date
     /// Reconnect on launch: it was connected when the app last ran.
     var autoConnect: Bool
+    /// Where a browser reaches this phone through the relay: the control
+    /// page is `remote` under it. Nil until the relay names it.
+    var publicURL: URL? = nil
+
+    var controlPageURL: URL? { publicURL.map { $0.appendingPathComponent("remote") } }
 
     var serverDisplay: String { RemoteInvite.serverName(serverURL) }
 }

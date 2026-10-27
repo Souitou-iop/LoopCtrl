@@ -14,20 +14,20 @@ Anyone self-hosting a relay can implement the API from this page.
 
 > Status: implemented on both sides. The app's client is
 > `RelayRemoteServiceClient`. The reference relay lives in
-> [LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server): `connect/relay/loopctrl_relay_server.py`
-> (Python standard library only) serves exactly this API, with
-> `connect/relay/selftest.py` as its test and `connect/relay/relay_operator.py`
-> as an operator client. **This page is the canonical contract**; LoopCtrl-Server
-> links here rather than keeping a copy. The channel is a repeated HTTPS poll, not a WebSocket. Relayed
-> requests reach the runner in-process, so only the all-in-one build can take
-> them for now.
+> [`server/connect/relay/`](../server/connect/relay/)
+> (Go) serves exactly this API, with `relay_test.go` as its test and
+> `relay_operator.py` as an operator client. **This page is the canonical
+> contract** for enrollment and sign-in; the tunnel the phone then holds, and
+> the public address it gets, are in [remote-control.md](remote-control.md).
+> The relay's own docs link to both rather than keeping a copy.
 
 ## Trust model
 
-- **The relay is untrusted.** It forwards bytes. Pairing (`POST /pair`, X25519)
-  and the v1 envelope stay end to end between the operator's client and the
-  runner on the phone, exactly as on the LAN. The relay never holds a pairing
-  key.
+- **The relay can't read or forge requests.** It forwards bytes. Pairing
+  (`POST /pair`, X25519) and the v1 envelope stay end to end between the
+  client and the runner on the phone, exactly as on the LAN. The relay never
+  holds a pairing key. It does serve the control page a browser opens at the
+  phone's public address; see [remote-control.md](remote-control.md#trust).
 - **The invite is the trust anchor, not the server.** The invite names the
   operators, by key. The app refuses to connect if the server reports different
   operators, so a malicious relay can't substitute its own key.
@@ -53,7 +53,7 @@ loopctrl://connect?v=1&server=<host[:port][/path]>&code=<code>&op=<keyID>[,<keyI
 | `server` | yes | The relay's host, optionally with a port and a path prefix: `relay.example.com`, `relay.example.com:8443`, `example.com/loopctrl-relay` (a relay behind a reverse-proxy location). `https://` is accepted and implied. Path segments are letters, digits and `-._~` only, never `.` or `..`. No query, fragment or user info. |
 | `code` | yes | One-time connection code (see below). Hyphens and spaces are ignored. |
 | `op` | no | Comma-separated operator key IDs: the full SHA-256 of each operator's X25519 public key, 64 lower-case hex characters. This is the key their client sends in `POST /pair`, hashed. The 8-hex fingerprint shown in prompts is only its prefix. It is too short to bind anything to and is rejected here. |
-| `pin` | no | SHA-256 of the relay certificate's SubjectPublicKeyInfo (DER), as 64 hex characters or base64/base64url (padding optional). When present, the app refuses a server that presents any other key. |
+| `pin` | no | SHA-256 of the relay certificate's SubjectPublicKeyInfo (DER), as 64 hex characters or base64/base64url (padding optional). When present, the app refuses a server that presents any other key, and accepts this one even when no CA vouches for it (a self-signed relay). |
 | `exp` | no | When the code stops working, in Unix seconds. An expired invite is refused before anything is sent. |
 
 `loopctrl-app://connect?…` is accepted too. That is the scheme of the
@@ -202,17 +202,17 @@ checks the proof **before** spending the code, so a bad proof can't burn it.
   "device_id": "dev_8f3a1c22e1b04d7a",
   "organization": "Example Ops",
   "operators": [ { "name": "Alex Chen", "key_id": "3f9a6c0d…a65" } ],
-  "poll_timeout": 25
+  "public_url": "https://k3x9m2qa7tbn5wcd.relay.example.com/",
+  "tunnel": 1
 }
 ```
 
 The code is now spent, whether or not the phone ever connects. A second
 redeem answers `410 expired_code`.
 
-### Channel
+### Sign-in and tunnel
 
-The phone keeps no socket open. It signs in with its key, then asks for work
-one held request at a time.
+The phone signs in with its key, then holds the tunnel.
 
 1. **`POST /v1/device/challenge`** `{"device_id": "…"}` → `200
    {"nonce": "<32 bytes>", "expires_in": 60}`. `404 unknown_device` means the
@@ -220,33 +220,23 @@ one held request at a time.
 2. **`POST /v1/device/session`**
    `{"device_id": "…", "nonce": "…", "sig": "<Ed25519>"}`, where `sig` signs
    `loopctrl-channel-v1\n<nonce as sent>\n<server name>`. → `200
-   {"device_token": "…", "expires_in": 3600, "poll_timeout": 25}`. The nonce
-   is single use. Signing in again replaces the token and keeps any work
-   already queued.
-3. **`POST /v1/device/poll`** with `Authorization: Bearer <device_token>`. The
-   relay holds the request until an operator sends something, at most
-   `poll_timeout` seconds, then answers either `204` (nothing; poll again) or
-   `200`:
+   {"device_token": "…", "expires_in": 3600, "public_url": "https://…/", "tunnel": 1}`.
+   The nonce is single use. Signing in again replaces the token.
+3. **`GET /v1/device/tunnel`** with `Authorization: Bearer <device_token>`,
+   upgraded to a WebSocket (subprotocol `loopctrl-tunnel-v1`). The relay
+   sends a `hello` naming the phone's public address, then opens one stream
+   per HTTP request a browser or agent sends to that address. The phone hands
+   each to its runner on the relay ingress (loopback, `port + 2`), where its
+   source is always `relay`, never `local`. Framing, flow control and the
+   headers the phone adds are in
+   [remote-control.md](remote-control.md#tunnel-protocol-v1). `401` on the
+   upgrade means the token lapsed: sign in again.
 
-   ```json
-   {"request_id": "<32 hex>", "path": "/pair", "body_b64": "<standard base64>"}
-   ```
-
-   `path` is `/pair` or `/rpc`. The body is the operator's request, byte for
-   byte. The phone hands it to its runner as a request with source
-   `PeerSource.relay` (never through loopback, which would make it `local`).
-   Over it the operator runs the ordinary protocol: `/pair` with its X25519
-   key, then v1 envelopes, which the relay can't read. `401` means the token
-   lapsed: sign in again.
-4. **`POST /v1/device/response`** with the same bearer:
-   `{"request_id": "…", "status": 200, "body_b64": "…", "content_type": "application/json"}`.
-   Each request ID is answered once; a second answer is `404`.
-
-The phone answers in the background and polls again at once, so a pairing
-prompt waiting for the user doesn't hold up other requests. The token is
-extended by every use. If a poll fails for any other reason, the app signs in
-again and retries, up to 5 times with backoff (1, 2, 4, 8, 16 s), before it
-shows 「无法连接服务器」. Each successful retry counts toward 「24 小时内重连」.
+The relay keeps the session alive while the tunnel is up. When the tunnel
+drops, the app signs in again and reconnects, up to 5 times with backoff (1, 2,
+4, 8, 16 s), before it shows 「无法连接服务器」. Each successful retry counts
+toward 「24 小时内重连」. The phone's public address stays the same across
+reconnects and relay restarts.
 
 The latency the home card shows is the round trip of the sign-in, then of a
 `GET /healthz` every 30 s. 「XX 正在操作」 comes from the relayed traffic
@@ -262,24 +252,26 @@ Unbind. Send the header
 `Authorization: LoopCtrl-Device sig=<Ed25519>, ts=<unix time>`, where `sig`
 signs `loopctrl-unbind-v1\n<device_id>\n<ts>\n<server name>` and `ts` is
 within 5 minutes of the relay's clock. The relay drops the device record,
-wakes any operator request waiting for it with `410`, and forgets its token.
+closes its tunnel, and forgets its token and public address.
 The app removes its own state whether or not this call succeeds.
 
 ### Operator side
 
-How operators reach a phone is up to the relay; the phone never sees it. The
-reference relay uses one shared operator token
-(`Authorization: Bearer <LOOPCTRL_RELAY_OPERATOR_TOKEN>`):
+Operators reach a phone at its public address, like any other client: the
+control page in a browser, or `/pair` and `/rpc` for agents. An invite's
+operators pair there without a prompt (see
+[Pre-approval](#pre-approval-on-the-phone)). The reference relay's admin calls
+take one shared token (`Authorization: Bearer <LOOPCTRL_RELAY_OPERATOR_TOKEN>`):
 
 | Call | Purpose |
 |---|---|
 | `POST /v1/admin/enrollments` `{"operators": [{"name", "key_id"}], "organization"?, "capabilities"?, "expires_in"?}` | Mint a code. `201 {"code", "display_code", "expires_at", "server", "invite"}`; `invite` is the ready `loopctrl://connect?…` link. Default lifetime 10 minutes, at most a day. |
-| `GET /v1/admin/devices` | Enrolled phones: id, name, organization, operators, whether one is polling. |
-| `POST /v1/operator/devices/{id}/pair`, `…/rpc` | Send one `/pair` or `/rpc` body to the phone and wait (90 s at most) for its answer, returned as the phone sent it. `503 device_offline` when the phone has no live channel, `504 device_timeout` when it didn't answer. |
-| `GET /healthz` | `{"ok": true, "api": 1, "server": "<its name>"}` |
+| `GET /v1/admin/devices` | Enrolled phones: id, name, organization, operators, public address, whether its tunnel is up. |
+| `GET /healthz` | `{"ok": true, "api": 1, "tunnel": 1, "server": "<its name>"}` |
 
-LoopCtrl-Server's `connect/relay/relay_operator.py` (`cli/loopctrl relay …`) drives these: `enroll --name …` prints the invite
-with the operator's key ID in `op`, `pair` and `call` talk to the phone.
+`server/connect/relay/relay_operator.py` (`server/cli/loopctrl relay …`) drives these: `enroll --name …` prints the invite
+with the operator's key ID in `op`; `pair` and `call` use the phone's public
+address with that key.
 
 ### Errors
 
@@ -343,11 +335,12 @@ Clients that paired through the relay show the same source.
 
 ## Self-hosting checklist
 
-- Serve the API over HTTPS with a certificate the phone trusts. Pin its SPKI in
-  your invites (`pin=`) if you can: `openssl x509 -in cert.pem -pubkey -noout |
-  openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64`.
-  Remember a pin breaks when the key changes (certbot renews with a new key
-  unless told to reuse it).
+- Serve the API over HTTPS. Pin its SPKI in your invites (`pin=`) if you can:
+  `openssl x509 -in cert.pem -pubkey -noout | openssl pkey -pubin -outform der
+  | openssl dgst -sha256 -binary | base64`. With a pin, the pin is what the
+  phone checks, so a self-signed certificate works too; without one, the
+  certificate must chain to a CA the phone trusts. Remember a pin breaks when
+  the key changes (certbot renews with a new key unless told to reuse it).
 - Tell the relay its public name, path prefix included. Every signature is
   bound to it.
 - Generate codes from the Crockford alphabet. Make them single-use, expire them
@@ -370,16 +363,19 @@ Clients that paired through the relay show the same source.
   - `RemoteConnection`;
   - the Keychain device key.
 - `LoopCtrlApp/Models/RelayRemoteServiceClient.swift`: the client for this
-  API (HTTPS with SPKI capture and pinning, the channel, the hand-off to the
-  runner).
-- `LoopCtrlKit/JSONRPCServer.swift` `handleRelayed`, reached through
-  `InProcessRunnerControl.relayed`: where relayed requests enter the runner.
+  API (HTTPS with SPKI capture and pinning).
+- `LoopCtrlApp/Models/RelayTunnel.swift`: sign-in and the tunnel, each
+  exchange carried to the runner's relay ingress.
+- `LoopCtrlKit/TunnelFrame.swift`: tunnel framing, and the request the
+  runner gets (relay headers stripped and set).
+- `LoopCtrlKit/JSONRPCServer.swift` `startRelayListener`: the relay ingress,
+  where every request is `relay`.
 - `LoopCtrlApp/Models/MockRemoteServiceClient.swift`: the mock relay, for
   clicking through every screen and failure without a server. Off by default:
   long-press the footer of Settings › 远程服务 for 2 s to turn it on, then
   relaunch. In DEBUG the demo launch arguments turn it on too.
-- [LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server) `connect/relay/`: the reference relay, its
-  self-test and an operator client.
+- [`server/connect/relay/`](../server/connect/relay/): the reference relay, its
+  tests and an operator client.
 - `LoopCtrlApp/Models/RemoteServiceStore.swift`: enrollment, the channel and
   the log.
 - `LoopCtrlApp/Views/RemoteServiceViews.swift`:

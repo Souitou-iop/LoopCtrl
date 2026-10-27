@@ -76,13 +76,17 @@ targets:
         codeSign: true
         copy:
           destination: plugins
+      # The remote-control Live Activity (docs/remote-control.md, "Control").
+      - target: LoopCtrlLiveActivity
+        embed: true
+        codeSign: true
     settings:
       base:
         # Its own product name: the LoopCtrl target still gets built (the UI test
         # target depends on it), and two LoopCtrl.app outputs collide.
         PRODUCT_NAME: LoopCtrlAllInOne
-        INFOPLIST_KEY_CFBundleDisplayName: LoopCtrl
-        PRODUCT_BUNDLE_IDENTIFIER: "$(LOOPCTRL_BUNDLE_PREFIX).loopctrl"
+        INFOPLIST_KEY_CFBundleDisplayName: "$(LOOPCTRL_DISPLAY_NAME)"
+        PRODUCT_BUNDLE_IDENTIFIER: "$(LOOPCTRL_BUNDLE_PREFIX).loopctrl$(LOOPCTRL_BUNDLE_SUFFIX)"
         GENERATE_INFOPLIST_FILE: YES
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: 1
@@ -127,6 +131,8 @@ targets:
       # License texts for the bundled CLI (musl) and the app's libraries.
       - path: LoopCtrlApp/ThirdPartyNotices.txt
         buildPhase: resources
+      # The Live Activity's state, which the runner starts and updates.
+      - path: LoopCtrlLiveActivity/RemoteActivityAttributes.swift
     dependencies:
       - target: LoopCtrl
     settings:
@@ -157,8 +163,34 @@ targets:
           rmdir  "${RUNNER_APP}/Frameworks" 2>/dev/null || true
           echo "✅ Frameworks stripped"
 
+  # The remote-control Live Activity: who is watching and operating, with
+  # Pause / Resume, on the Lock Screen and in the Dynamic Island. Embedded in
+  # the all-in-one app only: there the runner shares the app's process, which
+  # is what may start a Live Activity and what the buttons' intents run in.
+  LoopCtrlLiveActivity:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.2"
+    sources:
+      - path: LoopCtrlLiveActivity
+        excludes:
+          - Info.plist
+      - path: LoopCtrlApp/LiveActivity/RemoteActivityIntents.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(LOOPCTRL_BUNDLE_PREFIX).loopctrl$(LOOPCTRL_BUNDLE_SUFFIX).live"
+        INFOPLIST_FILE: LoopCtrlLiveActivity/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "$(LOOPCTRL_DISPLAY_NAME)"
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+
   # Logic tests for LoopCtrlKit code that needs nothing from iOS (pairing
-  # request bookkeeping, remote service invites and connection state). macOS, so they run without a simulator or device:
+  # request bookkeeping, remote service invites and connection state, the
+  # relay tunnel's framing and the screen stream's sealing). macOS, so they run without a simulator or device:
   #   xcodebuild test -scheme LoopCtrlKitTests -destination platform=macOS
   LoopCtrlKitTests:
     type: bundle.unit-test
@@ -168,6 +200,18 @@ targets:
       - path: LoopCtrlKit/PairRequestLedger.swift
       - path: LoopCtrlKit/RemoteInvite.swift
       - path: LoopCtrlKit/RemoteService.swift
+      - path: LoopCtrlKit/SecureEnvelope.swift
+      - path: LoopCtrlKit/ScreenStreamWire.swift
+      - path: LoopCtrlKit/TunnelFrame.swift
+      - path: LoopCtrlKit/PageUpdate.swift
+      - path: LoopCtrlKit/BuildStamp.swift
+      - path: LoopCtrlKit/RemoteHTML.swift
+      - path: LoopCtrlKit/AppNameMatch.swift
+      - path: LoopCtrlKit/RemoteSession.swift
+      - path: LoopCtrlKit/RPCTypes.swift
+      - path: LoopCtrlKit/AuthManager.swift
+      - path: LoopCtrlKit/KeychainStore.swift
+      - path: LoopCtrlKit/TokenFileStore.swift
       - path: Tests/LoopCtrlKitTests
     settings:
       base:

@@ -1,0 +1,21 @@
+[package]
+name = "loopctrl-pair-cli"
+description = "Headless LoopCtrl Pair: pair iPhones from a terminal, a kiosk or a Raspberry Pi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "loopctrl-pair"
+path = "src/main.rs"
+
+[dependencies]
+pair-core.workspace = true
+pair-host.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+tokio.workspace = true

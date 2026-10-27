@@ -11,9 +11,6 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     /// Notification id of the pairing request awaiting an answer (at most one).
     private var currentAuthRequestID: String?
     private let authLock = NSLock()
-    /// Live per-connection video streamers, retained while streaming.
-    private var videoStreamers: Set<VideoStreamer> = []
-    private let videoStreamersLock = NSLock()
 
     static let authCategoryID = "AUTH_REQUEST"
     static let allowActionID = "AUTH_ALLOW"
@@ -29,6 +26,12 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     static let disableNearbyActionID = "DISABLE_NEARBY"
     static let stopServerActionID = "STOP_SERVER"
     static let copyLogsActionID = "COPY_LOGS"
+    /// Remote viewing/control in progress, and paused by the owner.
+    static let remoteCategoryID = "REMOTE_SESSION"
+    static let remotePausedCategoryID = "REMOTE_PAUSED"
+    static let pauseRemoteActionID = "REMOTE_PAUSE"
+    static let resumeRemoteActionID = "REMOTE_RESUME"
+    static let remoteNotificationID = "loopctrl.remote"
 
     static let logBuffer = LogBuffer(capacity: 1000)
     /// Longest one accessibility message to an app may take (see setAXTimeout).
@@ -117,7 +120,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     ///
     /// Every step is probed: the selectors are private, and a wrong assumption
     /// here is a launch-time crash rather than a slow stream.
-    private static func grabJPEGFrame() -> UIImage? {
+    private static func grabJPEGFrame(quality: Double = captureJPEGQuality) -> (image: UIImage, jpeg: Data)? {
         if jpegCaptureAvailable == false { return nil }
 
         // These selectors were read out of a current Xcode SDK; an older OS
@@ -126,7 +129,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         // implementation raises an NSException, which `try?` does NOT catch —
         // it would abort the runner. So the whole probe runs inside an ObjC
         // @try, and any failure disables this path permanently.
-        var result: UIImage?
+        var result: (image: UIImage, jpeg: Data)?
         var sizeKB = 0
         var failStep = "unknown"
         let raised = ObjCException.catching {
@@ -148,7 +151,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             var diag: NSString?
             guard let encoding = ObjCException.makeImageEncoding(encodingClass,
                                                                  uti: "public.jpeg",
-                                                                 quality: captureJPEGQuality,
+                                                                 quality: quality,
                                                                  diagnosis: &diag) else {
                 failStep = "makeImageEncoding returned nil [\(diag ?? "no diagnosis")]"; return
             }
@@ -163,7 +166,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                     }
                     daemonCaptureWorks = true
                     daemonCaptureFailures = 0
-                    result = img
+                    result = (img, data)
                     sizeKB = data.count / 1024
                     return
                 }
@@ -201,16 +204,16 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             guard let img = UIImage(data: data), img.cgImage != nil else {
                 failStep = "UIImage(data:) failed on \(data.count) bytes"; return
             }
-            result = img
+            result = (img, data)
             sizeKB = data.count / 1024
         }
 
-        if let img = result {
+        if let frame = result {
             if jpegCaptureAvailable == nil {
                 jpegCaptureAvailable = true
-                logBuffer.append("📷 JPEG capture active (q=\(captureJPEGQuality), \(sizeKB) KB/frame)")
+                logBuffer.append("📷 JPEG capture active (q=\(quality), \(sizeKB) KB/frame)")
             }
-            return img
+            return frame
         }
         if jpegCaptureAvailable == nil {
             jpegCaptureAvailable = false
@@ -220,38 +223,71 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         return nil
     }
 
-    /// nil = not tried yet, true = the JPEG capture works off the main thread.
+    /// nil = not tried yet, true = the JPEG capture works off the main thread,
+    /// false = off for now (until `offMainRetryAt`).
     private static var offMainCaptureWorks: Bool?
+    private static var offMainFailures = 0
+    private static var offMainRetryAt: TimeInterval = 0
+    private static let offMainLock = NSLock()
 
     /// A stream frame captured on the caller's thread, so it does not queue
     /// behind an action holding the main thread (a drag blocks it for its
     /// whole duration, which froze the stream for as long). Tried once the
-    /// capture path has been probed on the main thread; an exception or a
-    /// missing frame turns it off for good.
-    static func offMainFrame() -> UIImage? {
-        guard jpegCaptureAvailable != nil, offMainCaptureWorks != false else { return nil }
-        var img: UIImage?
-        let raised = ObjCException.catching { img = captureFrame() }
-        if offMainCaptureWorks == nil || img == nil {
-            offMainCaptureWorks = img != nil
-            logBuffer.append(img != nil ? "📷 stream capture runs off the main thread"
-                                        : "📷 off-main capture failed (\(raised ?? "no frame")) — stream captures on the main thread")
+    /// capture path has been probed on the main thread.
+    ///
+    /// Three failures in a row turn it off, for a minute, then it is tried
+    /// again. It used to be one failure, for good: a single missed frame while
+    /// a touch was being synthesized was enough, and from then on every frame
+    /// waited behind every action on the main thread — with quick taps the
+    /// picture stopped while the taps went on.
+    static func offMainFrame(jpegQuality: Double) -> (image: UIImage, jpeg: Data?)? {
+        guard jpegCaptureAvailable != nil else { return nil }
+        let now = ProcessInfo.processInfo.systemUptime
+        offMainLock.lock()
+        let off = offMainCaptureWorks == false && now < offMainRetryAt
+        offMainLock.unlock()
+        if off { return nil }
+        var frame: (image: UIImage, jpeg: Data?)?
+        let raised = ObjCException.catching { frame = captureFrame(jpegQuality: jpegQuality) }
+        offMainLock.lock()
+        defer { offMainLock.unlock() }
+        if frame != nil {
+            if offMainCaptureWorks != true { logBuffer.append("📷 stream capture runs off the main thread") }
+            offMainCaptureWorks = true
+            offMainFailures = 0
+            return frame
         }
-        return img
+        offMainFailures += 1
+        if offMainFailures >= 3 {
+            if offMainCaptureWorks != false {
+                logBuffer.append("📷 off-main capture failed 3 times (\(raised ?? "no frame")) — "
+                                 + "the stream captures on the main thread for a minute")
+            }
+            offMainCaptureWorks = false
+            offMainRetryAt = now + 60
+            offMainFailures = 0
+        }
+        return nil
     }
 
     /// One screen frame, cheapest path first: a JPEG the capture side
     /// compressed for us, else the bitmap without the PNG round-trip, else the
-    /// public API. Main thread only. Shared by the video stream and the
-    /// post-action settle check.
+    /// public API. Main thread only. Used by the post-action settle check.
     static func captureFrame() -> UIImage? {
+        captureFrame(jpegQuality: captureJPEGQuality)?.image
+    }
+
+    /// The same, at a chosen JPEG quality, with the JPEG bytes when the fast
+    /// path produced them (the screen stream compares them to skip frames
+    /// that did not change).
+    static func captureFrame(jpegQuality: Double) -> (image: UIImage, jpeg: Data?)? {
         // Fast path: ask the capture side to hand back a JPEG. The
         // default `screenshot()` produces a full-resolution bitmap
         // (~6 MB at 828x1792) that we then copy again; capture and
         // that copy are what degrade 15-20x under thermal pressure,
         // while encoding barely moves. Compressing at the source
         // keeps the big buffer out of this process entirely.
-        if let img = Self.grabJPEGFrame() { return img }
+        if let frame = Self.grabJPEGFrame(quality: jpegQuality) { return (frame.image, frame.jpeg) }
         // Otherwise take the bitmap directly, still skipping the
         // PNG round-trip that `.image` would do. Also private, and
         // also behind an ObjC @try: on an OS where the selector
@@ -267,8 +303,8 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                   img.cgImage != nil else { return }  // encoder needs CGImage
             fast = img
         }
-        if let img = fast { return img }
-        return shot.image
+        if let img = fast { return (img, nil) }
+        return (shot.image, nil)
     }
 
     private static var lifecycleObserved = false
@@ -489,20 +525,6 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                     }
                 }
             }
-            // An operator's /pair or /rpc through a 远程服务 relay, same process.
-            NotificationCenter.default.addObserver(
-                forName: InProcessRunnerControl.relayed, object: nil, queue: nil
-            ) { [weak self] note in
-                guard let info = note.userInfo, let path = info["path"] as? String,
-                      let body = info["body"] as? Data, let connection = info["connection"] as? String,
-                      let reply = info["reply"] as? (Int, Data) -> Void else { return }
-                guard let server = self?.server else {
-                    reply(503, Data(#"{"error":{"code":"loopctrl_unavailable","message":"LoopCtrl service is not running"}}"#.utf8))
-                    return
-                }
-                server.handleRelayed(path: path, body: body, connectionID: connection,
-                                     server: info["server"] as? String ?? "relay", reply: reply)
-            }
             // The Remote Access switch on the LoopCtrl screen, same process.
             NotificationCenter.default.addObserver(
                 forName: InProcessRunnerControl.setRemoteAccess, object: nil, queue: nil
@@ -639,6 +661,8 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         server = newServer
         configureServerCallbacks(newServer)
         Self.serverStartedAt = ProcessInfo.processInfo.systemUptime
+        // While LoopCtrl is in front: iOS starts a Live Activity for no other app.
+        DispatchQueue.main.async { RemoteLiveActivity.shared.start() }
 
         defer { wireServerStateChange() }
         do {
@@ -675,6 +699,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         server?.onStateChange = nil
         server?.stop()
         announceStopped()
+        DispatchQueue.main.async { RemoteLiveActivity.shared.end() }
         guard parksWhenStopped else {
             keepRunning = false   // break the run loop → test ends → XCTest exit()s the runner
             return
@@ -1071,8 +1096,19 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             options: []
         )
 
+        // Remote viewing or control: Pause, at once (no unlock), so a phone in
+        // someone else's hands can always be taken back. Resuming needs the
+        // device unlocked, like Allow.
+        let pauseRemoteAction = action(Self.pauseRemoteActionID, .pauseRemote, "pause.circle", [.destructive])
+        let remoteCategory = UNNotificationCategory(identifier: Self.remoteCategoryID, actions: [pauseRemoteAction],
+                                                    intentIdentifiers: [], options: [])
+        let resumeRemoteAction = action(Self.resumeRemoteActionID, .resumeRemote, "play.circle", [.authenticationRequired])
+        let remotePausedCategory = UNNotificationCategory(identifier: Self.remotePausedCategoryID,
+                                                          actions: [resumeRemoteAction], intentIdentifiers: [], options: [])
+
         center.setNotificationCategories([authCategory, serverReadyCategory, serverRemoteCategory,
-                                          serverNearbyCategory, serverStoppedCategory])
+                                          serverNearbyCategory, serverStoppedCategory,
+                                          remoteCategory, remotePausedCategory])
 
         // Whatever a previous run left in Notification Centre is stale: pairing
         // prompts can no longer be answered (their requests died with that
@@ -1099,6 +1135,16 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     ) {
         let actionID = response.actionIdentifier
         let requestID = response.notification.request.identifier
+
+        // Pause / resume remote viewing and control (RemoteSession).
+        if actionID == Self.pauseRemoteActionID || actionID == Self.resumeRemoteActionID {
+            let pause = actionID == Self.pauseRemoteActionID
+            Self.logBuffer.append(pause ? "⏸ Remote control paused by the owner (notification)"
+                                        : "▶️ Remote control resumed by the owner (notification)")
+            RemoteSession.shared.setPaused(pause)
+            completionHandler()
+            return
+        }
 
         // Handle "Copy Logs"
         if actionID == Self.copyLogsActionID {
@@ -1232,12 +1278,13 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     /// runs directly on the RPC queue — no main-thread hop, so it can't be delayed
     /// by (or delay) a slow UI action.
     private static let mainThreadMethods: Set<String> = [
-        "tap", "double_tap", "long_press", "swipe", "scroll", "drag",
+        "tap", "double_tap", "long_press", "swipe", "scroll", "drag", "gesture",
         "page", "page_down", "page_up", "collect",
         "type", "clear_text", "screenshot", "page_source", "view_tree", "ui_tree",
         "scroll_to_element", "scroll_to", "find_element", "tap_element", "find_and_tap",
         "launch_app", "activate_app", "terminate_app",
-        "home", "lock", "unlock",
+        "home", "lock", "unlock", "rotate", "app_switcher", "notification_center", "control_center",
+        "read_value",
         // device_info reads app.frame to report the coordinate space. That is an
         // XCUITest call, so it must hop to the main thread — and it cannot use
         // UIScreen instead: the runner runs in iOS compatibility mode and would
@@ -1261,6 +1308,9 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         "config", "reset", "is_locked", "logs", "recent_logs",
         "resolve_app", "search_app", "search_apps",
         "list_apps", "installed_apps",
+        // Waits up to a minute; each of its looks hops to the main thread on
+        // its own, so touches from others go on meanwhile.
+        "wait",
         // Class-metadata introspection only — takes no snapshot, touches no
         // element. Belongs here precisely because you want to run it WHILE the
         // UI channel is wedged, to find out what the snapshot API supports.
@@ -1406,8 +1456,13 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     private static let extendedTimeoutMethods: Set<String> = ["page_source", "find_and_tap", "tap_element", "collect", "screen_text"]
     private static let extendedRpcTimeout: TimeInterval = 15
 
-    private static func rpcBudget(for method: String) -> TimeInterval {
-        extendedTimeoutMethods.contains(method) ? extendedRpcTimeout : rpcTimeout
+    private static func rpcBudget(for method: String, params: [String: JSONValue]?) -> TimeInterval {
+        if method == "wait" {
+            // As long as it was asked to wait, and a slow last look (OCR).
+            let asked = params?["text"] != nil ? (params?["timeout"]?.doubleValue ?? 10) : (params?["duration"]?.doubleValue ?? 1)
+            return min(max(asked, 0), 60) + 15
+        }
+        return extendedTimeoutMethods.contains(method) ? extendedRpcTimeout : rpcTimeout
     }
 
     /// Wire RPC dispatch + public logs onto a server instance.
@@ -1535,7 +1590,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             }
 
             // Watchdog: if the work doesn't finish in time, tell the client now.
-            let budget = Self.rpcBudget(for: method)
+            let budget = Self.rpcBudget(for: method, params: params)
             DispatchQueue.global().async {
                 if done.wait(timeout: .now() + budget) == .timedOut {
                     // Queued, not hung: this call never started because another
@@ -1544,20 +1599,20 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                     if isUIMethod, !started.get(), let holder = self.uiInFlightSummary() {
                         Self.logBuffer.append("⏱ TIMEOUT \(method) — still queued behind \(holder)")
                         self.noteUITimeout(method: method)
-                        replyOnce((nil, .serverError(
+                        replyOnce((nil, JSONRPCError(code: -32000, message:
                             "\(method) has NOT run yet: it is queued behind \(holder), which is stuck and can't be " +
                             "cancelled. It will still execute once that finishes — do not send it again. " +
                             "Wait, and watch logs{text:\"\(method)\"} for '⏱ ✓ \(method)'. If the stuck call is against " +
-                            "an app that left the screen, activate_app it or wait for it to fail on its own."
-                        )))
+                            "an app that left the screen, activate_app it or wait for it to fail on its own.",
+                            data: ["outcome": .string("queued"), "retry_safe": .bool(false)])))
                         return
                     }
                     Self.logBuffer.append("⏱ TIMEOUT \(method) (>\(Int(budget))s) — still running in background")
                     if isUIMethod { self.noteUITimeout(method: method) }
-                    replyOnce((nil, .serverError(
+                    replyOnce((nil, JSONRPCError(code: -32000, message:
                         "\(method) exceeded \(Int(budget))s and may still be running on the device. " +
-                        "Do NOT blindly retry — the action may have already succeeded. Call logs{text:\"\(method)\"} (an ordinary RPC on the non-UI lane, works even while UI calls are wedged) and look for '⏱ ✓ \(method)'. If UI calls keep timing out, reset rebuilds the accessibility connection."
-                    )))
+                        "Do NOT blindly retry — the action may have already succeeded. Call logs{text:\"\(method)\"} (an ordinary RPC on the non-UI lane, works even while UI calls are wedged) and look for '⏱ ✓ \(method)'. If UI calls keep timing out, reset rebuilds the accessibility connection.",
+                        data: ["outcome": .string("unknown"), "retry_safe": .bool(false)])))
                 }
             }
         }
@@ -1571,43 +1626,59 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         // Persisted-log endpoints (crash recovery — survive process restarts).
         srv.onLogFilesRequest = { Self.logBuffer.listLogFiles() }
         srv.onLogHistoryRequest = { Self.logBuffer.readLogFile(date: $0) }
-        // Live video: shared encoder grabs the current screen via XCUIScreen.
-        // Pipe VideoBroadcaster's internal events into the shared log buffer
-        // so `GET /logs` shows encoder start/stop/failure alongside RPC calls.
-        VideoBroadcaster.onLog = { msg in Self.logBuffer.append(msg) }
+        // Live screen for /stream: one capture loop and encoder for every
+        // viewer, logged with the RPC calls.
+        ScreenStream.onLog = { msg in Self.logBuffer.append(msg) }
+        // Someone watching or driving from afar: say so on the phone, with a
+        // way to pause it all from the notification.
+        ScreenStream.onViewersChange = { [weak self] _ in
+            DispatchQueue.main.async { self?.updateRemoteNotification() }
+        }
+        RemoteSession.shared.onLog = { line in Self.logBuffer.append(line) }
+        RemoteLiveActivity.shared.onLog = { line in Self.logBuffer.append(line) }
+        // The Live Activity's Pause and Resume (RemoteActivityIntents, run in
+        // this process by the app).
+        NotificationCenter.default.addObserver(forName: RemoteActivityRequest.pause, object: nil, queue: .main) { note in
+            let pause = note.userInfo?["paused"] as? Bool ?? true
+            Self.logBuffer.append(pause ? "⏸ Remote control paused by the owner (Live Activity)"
+                                        : "▶️ Remote control resumed by the owner (Live Activity)")
+            RemoteSession.shared.setPaused(pause)
+        }
+        // A Live Activity that couldn't start with the service (LoopCtrl was
+        // in the background), or that iOS ended after its 8 hours: try again
+        // whenever LoopCtrl is in front.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.server != nil, !RemoteLiveActivity.shared.isShowing else { return }
+            RemoteLiveActivity.shared.start()
+            // Say it all again, now on the activity, if anyone is there.
+            if RemoteSession.shared.paused || !RemoteSession.shared.present().isEmpty { self.remoteNotice = "" }
+            self.updateRemoteNotification()
+        }
+        RemoteSession.shared.onChange = { [weak self] in
+            ScreenStream.shared.broadcastState()
+            DispatchQueue.main.async { self?.updateRemoteNotification() }
+        }
+        let scale = Double(UIScreen.main.scale)
+        ScreenStream.shared.grab = { quality in
+            // Off the main thread when the capture path allows it, so a
+            // stream frame doesn't wait behind an action holding the main
+            // thread; XCUIScreen otherwise has to be called there.
+            var frame = Self.offMainFrame(jpegQuality: quality)
+            if frame == nil { DispatchQueue.main.sync { frame = Self.captureFrame(jpegQuality: quality) } }
+            guard let frame, let image = frame.image.cgImage else { return nil }
+            return (image, frame.jpeg, scale)
+        }
         // Cut click-to-reflect latency: when a UI-mutating RPC completes,
-        // capture + encode a fresh frame instead of waiting for the next
-        // 1/fps tick (a full 500 ms at 2 fps).
-        srv.onRPCUIChanged = { VideoBroadcaster.shared.nudgeFrame() }
-        srv.onVideoStream = { [weak self] connection, fps, qualityRaw, verbose in
-            guard self != nil else { connection.cancel(); return }
-            // Verbose logging is global to the shared broadcaster (all clients
-            // share one encoder); last connection wins — good enough for debug.
-            VideoBroadcaster.verbose = verbose
-            let quality = VideoBroadcaster.Quality(rawValue: qualityRaw) ?? .auto
-            // XCUIScreen.main.screenshot() is a private XCTest API that must run
-            // on the main thread — hop over there synchronously from whatever
-            // queue the broadcaster ticks on.
-            VideoBroadcaster.shared.configure(fps: fps, quality: quality) {
-                let grab: () -> UIImage? = { Self.captureFrame() }
-                if Thread.isMainThread { return grab() }
-                if let img = Self.offMainFrame() { return img }
-                var img: UIImage?
-                DispatchQueue.main.sync { img = grab() }
-                return img
-            }
-            let streamer = VideoStreamer(connection: connection)
-            self?.videoStreamersLock.lock()
-            self?.videoStreamers.insert(streamer)
-            self?.videoStreamersLock.unlock()
-            Self.logBuffer.append("🎥 video stream client connected (fps \(fps))")
-            streamer.start(onStop: { [weak self, weak streamer] in
-                Self.logBuffer.append("🎥 video stream client disconnected")
-                guard let streamer = streamer else { return }
-                self?.videoStreamersLock.lock()
-                self?.videoStreamers.remove(streamer)
-                self?.videoStreamersLock.unlock()
-            })
+        // capture a fresh frame instead of waiting for the next tick.
+        srv.onRPCUIChanged = { ScreenStream.shared.nudge() }
+        srv.onPageUpdated = { ScreenStream.shared.broadcastState() }
+        srv.onScreenStream = { connection, request in
+            ScreenStream.shared.add(connection, request: request)
+        }
+        srv.onStreamAck = { viewer, micros, queueMs, wantsKey in
+            ScreenStream.shared.ack(viewer: viewer, micros: micros, queueMs: queueMs, wantsKey: wantsKey)
         }
     }
 
@@ -2190,6 +2261,98 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             trigger: UNTimeIntervalNotificationTrigger(timeInterval: 0.5, repeats: false)
         )
         UNUserNotificationCenter.current().add(request)
+    }
+
+    // MARK: - Remote viewing notification
+
+    /// What the remote notification last said, so it is replaced only when
+    /// that changes.
+    private var remoteNotice = ""
+    /// The banner already went up for this spell of remote use: everything
+    /// after it updates the notification silently.
+    private var remoteBannerShown = false
+    /// When the last person left; the notification stays a little longer, so
+    /// a reload or a quality switch doesn't end the spell and alert again.
+    private var remoteQuietSince: Date?
+    private var remoteWatchTimer: Timer?
+    private static let remoteGrace: TimeInterval = 30
+    /// When this spell of remote use began, for the Live Activity's clock.
+    private var remoteSpellStart: Date?
+
+    /// Who is watching and operating, with Pause; or "paused", with Resume.
+    /// One banner when remote use starts; changes after that (who operates,
+    /// how many watch) replace it without a banner or a sound. Shown by the
+    /// Live Activity where it is up, by a notification otherwise.
+    private func updateRemoteNotification() {
+        let session = RemoteSession.shared
+        session.sweep()
+        let present = session.present()
+        let paused = session.paused
+        let now = Date()
+        let live = RemoteLiveActivity.shared
+
+        if !paused && present.isEmpty {
+            live.show([], paused: false, since: nil, alert: nil)
+            guard !remoteNotice.isEmpty else { return stopRemoteWatch() }
+            let quiet = remoteQuietSince ?? now
+            remoteQuietSince = quiet
+            startRemoteWatch()
+            guard now.timeIntervalSince(quiet) >= Self.remoteGrace else { return }
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [Self.remoteNotificationID])
+            remoteNotice = ""
+            remoteBannerShown = false
+            remoteQuietSince = nil
+            remoteSpellStart = nil
+            return stopRemoteWatch()
+        }
+        remoteQuietSince = nil
+        if remoteSpellStart == nil { remoteSpellStart = now }
+        startRemoteWatch()
+
+        let subtitle: String
+        if paused {
+            subtitle = L10n.t(.remotePaused)
+        } else {
+            let operators = present.filter(\.operating).map { entry -> String in
+                let p = entry.participant
+                return p.kind == .agent ? "🤖 " + p.name : p.name
+            }
+            let watchers = present.filter { $0.participant.watching > 0 }.count
+            var parts: [String] = []
+            if !operators.isEmpty { parts.append(String(format: L10n.t(.remoteOperating), operators.joined(separator: ", "))) }
+            if watchers > 0 { parts.append(String(format: L10n.t(.remoteWatchers), String(watchers))) }
+            subtitle = operators.isEmpty && watchers <= 1 ? L10n.t(.remoteWatched) : parts.joined(separator: " · ")
+        }
+        guard subtitle != remoteNotice else { return }
+        remoteNotice = subtitle
+        let banner = !remoteBannerShown && !paused
+        remoteBannerShown = true
+        if live.show(present, paused: paused, since: remoteSpellStart, alert: banner ? subtitle : nil) {
+            // The Live Activity says it all, Pause included.
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [Self.remoteNotificationID])
+            return
+        }
+        if paused {
+            sendNotification(subtitle: subtitle, body: L10n.t(.remotePausedBody),
+                             category: Self.remotePausedCategoryID, identifier: Self.remoteNotificationID, silent: true)
+        } else {
+            sendNotification(subtitle: subtitle, body: L10n.t(.remoteWatchedBody),
+                             category: Self.remoteCategoryID, identifier: Self.remoteNotificationID, silent: !banner)
+        }
+    }
+
+    /// Operators lapse quietly (nobody calls when they stop), and the grace
+    /// period runs out on its own: look again every few seconds meanwhile.
+    private func startRemoteWatch() {
+        guard remoteWatchTimer == nil else { return }
+        remoteWatchTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            self?.updateRemoteNotification()
+        }
+    }
+
+    private func stopRemoteWatch() {
+        remoteWatchTimer?.invalidate()
+        remoteWatchTimer = nil
     }
 
     /// Timer that re-posts the status notification so it stays reachable.

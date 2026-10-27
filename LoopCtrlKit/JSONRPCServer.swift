@@ -12,6 +12,11 @@ class JSONRPCServer {
     private var nearbyConnections: Set<ObjectIdentifier> = []
     private var nearbyListener: NWListener?
     private var nearbyAdvertiser: NearbyAdvertiser?
+    /// Loopback listener for requests the app's relay tunnel forwards
+    /// (docs/remote-control.md). Everything arriving on it is `relay`.
+    private var relayListener: NWListener?
+    private var relayConnections: Set<ObjectIdentifier> = []
+    var relayPort: UInt16 { ServerPort.relayIngress(for: port) }
     /// Port of the nearby listener: one above the main port.
     var nearbyPort: UInt16 { port &+ 1 }
     /// Nearby advertising state, readable from any thread. `.off` while nearby
@@ -32,10 +37,15 @@ class JSONRPCServer {
 
     var onRPCRequest: ((String, [String: JSONValue]?, @escaping ([String: JSONValue]?, JSONRPCError?) -> Void) -> Void)?
     var onStateChange: ((Bool) -> Void)?
-    /// Hand off an authorized connection to the video streamer (host owns the
-    /// frame grabber + VideoStreamer). The server stops managing this connection
-    /// once handed off — the streamer keeps it alive and closes it on disconnect.
-    var onVideoStream: ((NWConnection, _ fps: Double, _ quality: String, _ verbose: Bool) -> Void)?
+    /// Hand off an authorized connection to the screen stream (the host owns
+    /// capture and encoding). The server stops managing this connection once
+    /// handed off; the stream keeps it open and closes it on disconnect.
+    var onScreenStream: ((NWConnection, ScreenStreamRequest) -> Void)?
+    /// A viewer acknowledged the stream up to a frame (`stream_ack`).
+    /// A viewer's acknowledgement; `wantsKey`: it can't decode until the next keyframe.
+    /// The served control page changed (page_update): viewers are told.
+    var onPageUpdated: (() -> Void)?
+    var onStreamAck: ((_ viewer: String, _ micros: UInt64, _ queueMs: Double?, _ wantsKey: Bool) -> Void)?
 
     /// Fired right after a UI-mutating JSON-RPC completes (tap, swipe, home, …)
     /// so the host can nudge the video pipeline to emit a keyframe immediately
@@ -124,6 +134,38 @@ class JSONRPCServer {
 
         listener.start(queue: queue)
         log("🔊 NWListener.start called (port \(port), localOnly=\(localOnly))")
+        startRelayListener()
+    }
+
+    /// Open the relay ingress on 127.0.0.1:`relayPort`. Loopback only, and
+    /// independent of LAN access: the tunnel is a separate opt-in (the remote
+    /// service), and a caller here is never treated as local.
+    private func startRelayListener() {
+        guard let nwPort = NWEndpoint.Port(rawValue: relayPort), relayPort > port else {
+            log("🛰 Relay ingress: no port above \(port)")
+            return
+        }
+        let params = NWParameters.tcp
+        params.allowLocalEndpointReuse = true
+        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: nwPort)
+        guard let l = try? NWListener(using: params) else {
+            log("🛰 Relay ingress: could not open port \(relayPort)")
+            return
+        }
+        l.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready: self?.log("🛰 Relay ingress ready on 127.0.0.1:\(self?.relayPort ?? 0)")
+            case .failed(let error): self?.log("🛰 Relay ingress failed: \(error)")
+            default: break
+            }
+        }
+        l.newConnectionHandler = { [weak self] conn in
+            guard let self else { return }
+            self.relayConnections.insert(ObjectIdentifier(conn))
+            self.handleConnection(conn)
+        }
+        l.start(queue: queue)
+        relayListener = l
     }
 
     func stop() {
@@ -141,6 +183,8 @@ class JSONRPCServer {
         }
         connections.forEach { $0.cancel() }
         connections.removeAll()
+        relayListener?.cancel()
+        relayListener = nil
         listener?.cancel()
         listener = nil
         isRunning = false
@@ -381,6 +425,10 @@ class JSONRPCServer {
         nearbyConnections.contains(ObjectIdentifier(connection))
     }
 
+    private func isRelayed(_ connection: NWConnection) -> Bool {
+        relayConnections.contains(ObjectIdentifier(connection))
+    }
+
     // MARK: - Connection Handling
 
     private func handleConnection(_ connection: NWConnection) {
@@ -525,6 +573,9 @@ class JSONRPCServer {
                 "name": NearbyIdentity.name,
                 "protocol_version": RPCMethodRegistry.protocolVersion,
                 "server_version": RPCMethodRegistry.serverVersion,
+                // How this request arrived, so the control page can say so.
+                "via": isRelayed(connection) ? PeerSource.relay.rawValue
+                    : (Self.peer(of: connection)?.via ?? PeerSource.other.rawValue),
             ]
             let data = (try? JSONSerialization.data(withJSONObject: info, options: [.sortedKeys])) ?? Data("{}".utf8)
             // Same-origin only: any web page the phone (or a LAN browser)
@@ -561,23 +612,35 @@ class JSONRPCServer {
         case ("GET", "/docs"):
             handleDocsPage(connection: connection)
 
-        case ("GET", "/stream"), ("GET", "/stream.ts"):
-            handleVideoStream(headers: headers, query: query, connection: connection)
+        case ("GET", "/stream"):
+            handleScreenStream(query: query, connection: connection)
+
+        case ("GET", "/remote/"):
+            // The page's URLs are relative to /remote; under /remote/ they
+            // would resolve one level too deep.
+            sendHTTPResponse(connection: connection, status: 302, headers: ["Location": "../remote"], body: "")
 
         case ("GET", "/remote"):
-            // The page itself is unauthenticated (it needs to load so the user can
-            // paste a token). The RPC + stream calls it makes are authenticated.
-            // Revalidated on every load: the page ships inside the runner, and a
-            // Home Screen web app would otherwise keep an older copy after an update.
+            // The page itself is unauthenticated: it has to load before it can
+            // pair. Everything it then does is authenticated. Revalidated on
+            // every load: the page ships inside the runner, and a Home Screen
+            // web app would otherwise keep an older copy after an update.
             sendHTTPResponse(connection: connection, status: 200,
-                             headers: ["Cache-Control": "no-cache"],
-                             contentType: "text/html; charset=utf-8", body: RemoteHTML.page)
+                             headers: ["Cache-Control": "no-cache", "X-Frame-Options": "DENY"],
+                             contentType: "text/html; charset=utf-8", body: PageUpdate.page)
 
         // What a Home Screen web app made from /remote needs: its manifest
         // (which opens it full screen) and its icon. Unauthenticated, like the page.
         case ("GET", "/remote/manifest.webmanifest"):
             sendHTTPResponse(connection: connection, status: 200,
                              contentType: "application/manifest+json", body: RemoteHTML.manifest)
+
+        // The control page's service worker: keeps a copy of the page so it
+        // opens while the phone is offline (the relay answers 503 for it).
+        // At the root, so its scope covers /remote (and /d/<slug>/remote).
+        case ("GET", "/remote-sw.js"):
+            sendHTTPResponse(connection: connection, status: 200, headers: ["Cache-Control": "no-cache"],
+                             contentType: "text/javascript; charset=utf-8", body: RemoteHTML.serviceWorker)
 
         case ("GET", "/remote/icon.png"):
             sendHTTPData(connection: connection, status: 200,
@@ -601,10 +664,10 @@ class JSONRPCServer {
             handleLogs(connection: connection)
 
         case ("POST", "/pair"):
-            handlePair(body: body, exchange: exchange(connection))
+            handlePair(body: body, exchange: exchange(connection, headers: headers))
 
         case ("POST", "/rpc"):
-            handleRPC(body: body, exchange: exchange(connection))
+            handleRPC(body: body, exchange: exchange(connection, headers: headers))
 
         case ("OPTIONS", _):
             sendHTTPResponse(connection: connection, status: 200, headers: corsHeaders(), body: "")
@@ -811,8 +874,7 @@ class JSONRPCServer {
     ///     an ephemeral device key, so it is safe over the LAN.
     ///
     /// Blocks until the user taps Allow (or the alert times out).
-    /// One /pair or /rpc exchange: who sent it and where the reply goes — a
-    /// TCP connection, or a request the relay transport handed in.
+    /// One /pair or /rpc exchange: who sent it and where the reply goes.
     private struct Exchange {
         let peer: (address: String, via: String)?
         let isLoopback: Bool
@@ -822,31 +884,29 @@ class JSONRPCServer {
         let send: (_ status: Int, _ headers: [String: String], _ json: String) -> Void
     }
 
-    private func exchange(_ connection: NWConnection) -> Exchange {
-        Exchange(peer: Self.peer(of: connection), isLoopback: isLoopback(connection),
-                 nearby: isNearby(connection), relayConnection: nil) { [weak self] status, headers, json in
+    /// Headers the app's tunnel client sets on a relayed request. Read only
+    /// on the relay ingress, where the client strips any the relay sent.
+    static let relayConnectionHeader = "x-loopctrl-relay-connection"
+    static let relayServerHeader = "x-loopctrl-relay-server"
+    static let relayPeerHeader = "x-loopctrl-relay-peer"
+
+    private func exchange(_ connection: NWConnection, headers: [String: String]) -> Exchange {
+        let send: (Int, [String: String], String) -> Void = { [weak self] status, headers, json in
             self?.sendHTTPResponse(connection: connection, status: status, headers: headers,
                                    contentType: "application/json", body: json)
         }
-    }
-
-    /// A /pair or /rpc request an operator sent through a relay
-    /// (`InProcessRunnerControl.relayed`). Handled exactly like one from the
-    /// network — envelope, pairing prompt and all — except that its source
-    /// is `relay`, never loopback, so only the pre-approvals of the
-    /// connection it came through can let it in without a tap. `server` is
-    /// the relay's name, recorded as the peer address.
-    func handleRelayed(path: String, body: Data, connectionID: String, server: String,
-                       reply: @escaping (Int, Data) -> Void) {
-        let ex = Exchange(peer: (server, PeerSource.relay.rawValue), isLoopback: false, nearby: false,
-                          relayConnection: connectionID) { status, _, json in reply(status, Data(json.utf8)) }
-        queue.async { [weak self] in
-            switch path {
-            case "/pair": self?.handlePair(body: body, exchange: ex)
-            case "/rpc": self?.handleRPC(body: body, exchange: ex)
-            default: reply(404, Data(#"{"error":{"code":"not_found","message":"Only /pair and /rpc are relayed"}}"#.utf8))
-            }
+        if isRelayed(connection) {
+            // Never loopback, whatever address the socket has: only the
+            // pre-approvals of the connection it came through let it in
+            // without a tap. The browser's address, as the relay reports
+            // it, is what the prompt and the session list show.
+            let address = headers[Self.relayPeerHeader].flatMap { $0.isEmpty ? nil : $0 }
+                ?? headers[Self.relayServerHeader] ?? "relay"
+            return Exchange(peer: (address, PeerSource.relay.rawValue), isLoopback: false, nearby: false,
+                            relayConnection: headers[Self.relayConnectionHeader], send: send)
         }
+        return Exchange(peer: Self.peer(of: connection), isLoopback: isLoopback(connection),
+                        nearby: isNearby(connection), relayConnection: nil, send: send)
     }
 
     private func handlePair(body: Data?, exchange ex: Exchange) {
@@ -962,61 +1022,57 @@ class JSONRPCServer {
         ex.send(status, headers, String(data: data, encoding: .utf8) ?? "{}")
     }
 
-    /// GET /stream[.ts]?ticket=… — live H.264-in-MPEG-TS screen video.
+    /// GET /stream?ticket=…[&quality=low|medium|high][&codec=hevc][&enc=1][&ack=1]
+    /// — the live screen as framed H.264 or HEVC (docs/remote-control.md, "Stream").
     ///
-    /// `<video src>` can't sign its own request, so this is the one endpoint not
-    /// protected by an envelope. Instead it takes a single-use ticket minted over
-    /// the encrypted channel (`stream_ticket` RPC): short-lived, consumed on
-    /// first use, and useless to anyone who scrapes the URL afterwards.
-    /// Optional ?fps=N (0.5–30, default 5; what capture sustains depends on
-    /// the capture path and the device's temperature — see VideoBroadcaster).
-    /// Hands the connection to the host's
-    /// video streamer (kept open until the client disconnects).
-    private func handleVideoStream(headers: [String: String], query: String, connection: NWConnection) {
-        guard hasValidTicket(query) else {
+    /// A streamed GET can't carry an envelope, so it takes a single-use ticket
+    /// minted over the encrypted channel (`stream_ticket` RPC): short-lived,
+    /// consumed on first use, and useless to anyone who scrapes the URL. With
+    /// enc=1 the frames are sealed under a key derived from the pairing key
+    /// the ticket was minted for.
+    private func handleScreenStream(query: String, connection: NWConnection) {
+        guard let (key, client) = ticketOwner(query) else {
             sendHTTPResponse(connection: connection, status: 401,
                              body: "Unauthorized: GET /stream needs ?ticket=<t>. "
                                  + "Mint one with the stream_ticket RPC over the encrypted channel.")
             return
         }
-        guard let handoff = onVideoStream else {
-            sendHTTPResponse(connection: connection, status: 503, body: "Video streaming unavailable")
+        guard let handoff = onScreenStream else {
+            sendHTTPResponse(connection: connection, status: 503, body: "Screen streaming unavailable")
             return
         }
-        var fps = 5.0
-        var quality = "auto"
-        var verbose = false
+        let params = Self.queryItems(query)
+        let quality = ScreenStreamRequest.Quality(rawValue: params["quality"] ?? "") ?? .medium
+        let codec = ScreenStreamRequest.Codec(rawValue: params["codec"] ?? "") ?? .h264
+        let encrypt = params["enc"] == "1"
+        handedOff.insert(ObjectIdentifier(connection))
+        handoff(connection, ScreenStreamRequest(quality: quality, codec: codec, acks: params["ack"] == "1",
+                                                workers: params["workers"].flatMap { Int($0) },
+                                                key: encrypt ? key : nil, client: client))
+    }
+
+    private static func queryItems(_ query: String) -> [String: String] {
+        var out: [String: String] = [:]
         for pair in query.split(separator: "&") {
             let kv = pair.split(separator: "=", maxSplits: 1)
             guard kv.count == 2 else { continue }
-            switch kv[0] {
-            case "fps":     if let v = Double(kv[1]) { fps = v }
-            case "quality": quality = String(kv[1])
-            case "verbose": verbose = (kv[1] == "1" || kv[1] == "true")
-            default: break
-            }
+            out[String(kv[0])] = String(kv[1]).removingPercentEncoding ?? String(kv[1])
         }
-        handedOff.insert(ObjectIdentifier(connection))
-        handoff(connection, fps, quality, verbose)
+        return out
     }
 
-    /// True if the query carries a valid single-use `ticket=`.
+    /// The pairing key behind a valid single-use `ticket=`, or nil.
     ///
-    /// Browser-issued GETs (`<video src>`, log links) can't carry an encrypted
+    /// Browser-issued GETs (the stream, log links) can't carry an encrypted
     /// envelope, so they present a ticket instead — minted over the encrypted
     /// channel by the `stream_ticket` RPC, valid ~60s, and consumed on first use.
     /// No long-lived secret ever appears in a URL.
-    private func hasValidTicket(_ query: String) -> Bool {
-        for pair in query.split(separator: "&") {
-            let kv = pair.split(separator: "=", maxSplits: 1)
-            if kv.count == 2, kv[0] == "ticket",
-               let ticket = String(kv[1]).removingPercentEncoding,
-               AuthManager.shared.consumeStreamTicket(ticket) {
-                return true
-            }
-        }
-        return false
+    private func ticketOwner(_ query: String) -> (key: Data, tokId: String)? {
+        guard let ticket = Self.queryItems(query)["ticket"] else { return nil }
+        return AuthManager.shared.consumeStreamTicket(ticket)
     }
+
+    private func hasValidTicket(_ query: String) -> Bool { ticketOwner(query) != nil }
 
     /// Whether the peer is 127.0.0.1/::1 — the only source allowed to request a
     /// plaintext key grant at pairing time.
@@ -1117,6 +1173,58 @@ class JSONRPCServer {
             return
         }
 
+        // The control page acknowledges the stream a few times a second;
+        // answered here, off the action lanes, so it never waits behind a tap.
+        if rpcRequest.method == "stream_ack" {
+            guard let viewer = rpcRequest.params?["viewer"]?.stringValue,
+                  let ts = rpcRequest.params?["ts"]?.doubleValue, ts >= 0 else {
+                sendSealed(ex, seal: seal, json: Self.errorJSON(rpcRequest.id, .invalidParams))
+                return
+            }
+            onStreamAck?(viewer, UInt64(ts), rpcRequest.params?["queue_ms"]?.doubleValue,
+                         rpcRequest.params?["key"]?.boolValue == true)
+            sendSealed(ex, seal: seal, json: Self.resultJSON(rpcRequest.id, [:]))
+            return
+        }
+
+        // Who may act (docs/remote-control.md, "Control"): the owner's pause
+        // stops everything remote; otherwise anyone paired may act, and each
+        // action is logged under who sent it.
+        let session = RemoteSession.shared
+        // A newer control page, signed (PageUpdate): no reinstall needed.
+        if rpcRequest.method == "page_update" {
+            let (result, error) = PageUpdate.handle(rpcRequest.params)
+            if error == nil, rpcRequest.params?["html"] != nil { onLog?("📄 control page updated to \(PageUpdate.servedVersion)") }
+            sendSealed(ex, seal: seal, json: error.map { Self.errorJSON(rpcRequest.id, $0) }
+                ?? Self.resultJSON(rpcRequest.id, result ?? [:]))
+            onPageUpdated?()
+            return
+        }
+        if rpcRequest.method == "control" {
+            sendSealed(ex, seal: seal, json: Self.resultJSON(rpcRequest.id,
+                control(rpcRequest.params, tok: opened.tokId)))
+            return
+        }
+        // Agents on the phone itself too: the owner has taken it back.
+        // A wait for text reads the screen, so it waits for the owner too.
+        let readsScreen = rpcRequest.method == "wait" && rpcRequest.params?["text"] != nil
+        if session.paused, readsScreen || !RemoteSession.allowedWhilePaused.contains(rpcRequest.method) {
+            sendSealed(ex, seal: seal, json: Self.errorJSON(rpcRequest.id, JSONRPCError(
+                code: -32003,
+                message: "Paused by the phone's owner: nothing reads or touches the screen until they resume it on the phone.",
+                data: ["code": .string("paused_by_owner"), "outcome": .string("not_sent"), "retry_safe": .bool(true)])))
+            return
+        }
+        let controlled = Self.uiMutatingMethods.contains(rpcRequest.method)
+        var actionID = 0
+        if controlled {
+            let person = rpcRequest.params?["manual"]?.boolValue == true
+            let name = AuthManager.shared.clientName(forTokenId: opened.tokId) ?? opened.tokId
+            actionID = session.begin(tok: opened.tokId, name: name, kind: person ? .person : .agent,
+                                     method: rpcRequest.method,
+                                     detail: RemoteSession.describe(rpcRequest.method, rpcRequest.params))
+        }
+
         guard let handler = onRPCRequest else {
             sendSealed(ex, seal: seal, json: Self.errorJSON(rpcRequest.id, .internalError))
             return
@@ -1134,6 +1242,25 @@ class JSONRPCServer {
             params = p
         }
         handler(method, params) { [weak self] result, error in
+            // What became of a touch, so nobody replays one that may have
+            // landed: applied, failed (refused by the action itself), or
+            // whatever the runner said (queued, unknown) when it ran late.
+            var result = result
+            var error = error
+            if controlled {
+                if let e = error {
+                    var data = e.data ?? [:]
+                    if data["outcome"] == nil {
+                        data["outcome"] = .string("failed")
+                        data["retry_safe"] = .bool(true)
+                    }
+                    error = JSONRPCError(code: e.code, message: e.message, data: data)
+                } else {
+                    result = (result ?? [:]).merging(["outcome": .string("applied")]) { a, _ in a }
+                }
+                let outcome = (error?.data?["outcome"] ?? result?["outcome"])?.stringValue ?? "unknown"
+                session.finish(tok: opened.tokId, id: actionID, outcome: outcome)
+            }
             let json = error.map { Self.errorJSON(rpcRequest.id, $0) }
                 ?? Self.resultJSON(rpcRequest.id, result ?? [:])
             self?.sendSealed(ex, seal: seal, json: json)
@@ -1145,6 +1272,25 @@ class JSONRPCServer {
                 self?.onRPCUIChanged?()
             }
         }
+    }
+
+    /// `control {action: "status" | "release" | "log"}`: who is watching and
+    /// operating, stopping counting as an operator, and each one's actions.
+    private func control(_ params: [String: JSONValue]?, tok: String) -> [String: JSONValue] {
+        let session = RemoteSession.shared
+        var out: [String: JSONValue] = [:]
+        switch params?["action"]?.stringValue ?? "status" {
+        case "release":
+            session.release(tok: tok)
+        case "log":
+            let limit = params?["limit"]?.doubleValue.map { Int($0) } ?? RemoteSession.logLimit
+            out["logs"] = .array(session.logs(tok: params?["tok"]?.stringValue, limit: limit))
+        default:
+            break
+        }
+        out.merge(session.state()) { a, _ in a }
+        out["you"] = .string(tok)
+        return out
     }
 
     /// Encrypt a JSON-RPC reply into a response envelope and write it out.
@@ -1185,9 +1331,9 @@ class JSONRPCServer {
     /// band keyframe on the video stream so the browser reflects the change
     /// with sub-500 ms delay instead of waiting for the next capture tick.
     private static let uiMutatingMethods: Set<String> = [
-        "tap", "double_tap", "long_press", "swipe", "drag_up", "drag_down",
+        "tap", "double_tap", "long_press", "swipe", "drag", "gesture", "drag_up", "drag_down",
         "drag_move", "scroll", "scroll_to_element", "tap_element", "find_and_tap", "page", "collect",
-        "type", "clear_text", "home", "lock", "unlock",
+        "type", "clear_text", "home", "lock", "unlock", "rotate", "app_switcher", "notification_center", "control_center",
         "launch_app", "activate_app", "terminate_app", "open_url",
     ]
 
@@ -1260,6 +1406,7 @@ class JSONRPCServer {
         let statusText: String
         switch status {
         case 200: statusText = "OK"
+        case 302: statusText = "Found"
         case 400: statusText = "Bad Request"
         case 401: statusText = "Unauthorized"
         case 403: statusText = "Forbidden"
@@ -1298,6 +1445,8 @@ class JSONRPCServer {
     private func removeConnection(_ connection: NWConnection) {
         connections.removeAll { $0 === connection }
         nearbyConnections.remove(ObjectIdentifier(connection))
+        relayConnections.remove(ObjectIdentifier(connection))
+        handedOff.remove(ObjectIdentifier(connection))
     }
 
     deinit {

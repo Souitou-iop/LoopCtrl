@@ -1,0 +1,21 @@
+[package]
+name = "pair-host"
+description = "Where LoopCtrl Pair finds iPhones: the system usbmuxd, or the built-in one (Linux usbfs, USB bridges), plus the Linux environment checks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+pair-core.workspace = true
+usbmux = { path = "../usbmux" }
+log.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

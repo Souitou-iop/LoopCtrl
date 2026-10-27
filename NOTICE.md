@@ -5,6 +5,14 @@ Copyright 2026 Ebato and the LoopCtrl contributors
 
 Licensed under the **Apache License, Version 2.0** (see `LICENSE`).
 
+## In this repository
+
+`server/` (the relay and Headscale templates) and `pair/` (LoopCtrl Pair)
+are part of LoopCtrl, under the same license; each folder keeps a copy of
+`LICENSE`. They were the LoopCtrl-Server and LoopCtrl-Pair repositories, with
+the same copyright holders, until they were merged in with their history.
+Pair's own third-party notices are in `pair/THIRD_PARTY_NOTICES.md`.
+
 ## Origin
 
 LoopCtrl was split from iCTRL (OpenMinis/iCTRL) after that project was
@@ -29,6 +37,7 @@ third-party signing code those versions used (AltSign, `ldid`).
 | `idevice` | [jkcoxson/idevice](https://github.com/jkcoxson/idevice) | MIT | Linked as `IDevice.xcframework`, built from source with `Patches/idevice/` applied (the patch is MIT as well). Does the RSD tunnel, lockdownd, image mounter and pairing work for `LoopCtrlApp/DDI`. |
 | musl | [musl-libc.org](https://musl.libc.org) | MIT | Linked statically into `cli/loopctrl`, which the runner serves. Its notice is in `cli/musl-COPYRIGHT`. |
 | LocalDevVPN / StosVPN | [jkcoxson/LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN), [SideStore/StosVPN](https://github.com/SideStore/StosVPN) | Upstream's | Not included. Opened as a separate app through its URL scheme. |
+| miuix | [compose-miuix-ui/miuix](https://github.com/compose-miuix-ui/miuix) | Apache-2.0 | Not linked. The remote-control page (`LoopCtrlKit/RemoteHTML.swift`) reuses its colour, radius and spacing values in CSS. |
 | DeveloperDiskImage mirror | [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage) | Upstream's | Not included. Fetched at runtime from a pinned commit and checked against pinned SHA-256 hashes; users may supply their own copy from Xcode. |
 
 No code from StikDebug, StikPair or WebDriverAgent is included.

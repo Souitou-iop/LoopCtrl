@@ -347,7 +347,16 @@ class ActionHandler {
     /// Validate a coordinate is inside the tappable point-space.
     /// Uses the cached size — no quiescence wait.
     private func validateCoordinate(x: Double, y: Double, context: String) -> JSONRPCError? {
-        let size = pointSize
+        var size = pointSize
+        let inside = { (s: CGRect) in x >= 0 && y >= 0 && x <= s.width && y <= s.height }
+        if !inside(size), cachedPointSize != nil, inside(CGRect(x: 0, y: 0, width: size.height, height: size.width)) {
+            // Fits the screen turned the other way: the size was cached while
+            // it was (a landscape app, a turned phone). Read it again rather
+            // than refuse every portrait tap for the rest of the session.
+            cachedPointSize = nil
+            size = pointSize
+            LoopCtrlUITests.logBuffer.append("🔄 screen size re-read after rotation: \(Int(size.width))x\(Int(size.height))")
+        }
         let w = size.width, h = size.height
         guard x >= 0, y >= 0, x <= w, y <= h else {
             return JSONRPCError(
@@ -418,6 +427,177 @@ class ActionHandler {
             "one of its buttons' centers. Ref/element actions on the app underneath won't work until it is gone.", data: nil)
     }
 
+    /// A touch or text from someone watching the live screen (`manual:true`
+    /// from the /remote page): straight to a synthesized event. The alert,
+    /// hit-test, anti-bot and same-page checks exist for an agent acting on
+    /// what it last read; a person sees the screen as it is, and those checks
+    /// cost a few hundred milliseconds a touch. nil: not handled here.
+    private func manualAction(method: String, cmd: ActionCommand) -> ([String: JSONValue]?, JSONRPCError?)? {
+        switch method {
+        case "tap", "long_press":
+            guard let x = cmd.x, let y = cmd.y else { return nil }
+            if let err = validateCoordinate(x: x, y: y, context: method) { return (nil, err) }
+            return method == "tap" ? fastHandler.fastTap(x: x, y: y)
+                : fastHandler.fastLongPress(x: x, y: y, duration: min(max(cmd.duration ?? 1, 0.3), 10))
+        case "drag":
+            guard let fx = cmd.fromX, let fy = cmd.fromY, let tx = cmd.toX, let ty = cmd.toY else { return nil }
+            if let err = validateCoordinate(x: fx, y: fy, context: "drag start") { return (nil, err) }
+            let size = pointSize
+            return fastHandler.fastSwipe(fromX: fx, fromY: fy, toX: min(max(tx, 0), size.width),
+                                         toY: min(max(ty, 0), size.height),
+                                         duration: min(max(cmd.duration ?? 0.3, 0.05), 3))
+        case "type":
+            guard let text = cmd.text, !text.isEmpty, cmd.clear != true, cmd.x == nil else { return nil }
+            return fastHandler.fastTypeText(text)
+        default:
+            return nil
+        }
+    }
+
+    /// `gesture {fingers: [[{x, y, t}, …], …]}`: 1–5 fingers, each a path of
+    /// points in POINTS with t in seconds from the start (non-decreasing). A
+    /// drag that follows the finger's real path, a pinch, a hold with several
+    /// fingers. Points outside the screen are refused before anything is sent.
+    private func gesture(_ params: [String: JSONValue]?) -> ([String: JSONValue]?, JSONRPCError?) {
+        guard case .array(let rawFingers)? = params?["fingers"], (1...5).contains(rawFingers.count) else {
+            return (nil, JSONRPCError(code: -32602, message:
+                "gesture needs fingers: 1 to 5 paths, each [{x, y, t}, …] (points; t in seconds from the start).",
+                data: ["outcome": .string("not_sent"), "retry_safe": .bool(true)]))
+        }
+        var fingers: [[(point: CGPoint, t: Double)]] = []
+        for raw in rawFingers {
+            guard case .array(let samples) = raw, (1...400).contains(samples.count) else {
+                return (nil, JSONRPCError(code: -32602, message: "Each finger is a path of 1 to 400 points.",
+                                          data: ["outcome": .string("not_sent"), "retry_safe": .bool(true)]))
+            }
+            var path: [(point: CGPoint, t: Double)] = []
+            var lastT = 0.0
+            for sample in samples {
+                guard case .object(let o) = sample, let x = o["x"]?.doubleValue, let y = o["y"]?.doubleValue else {
+                    return (nil, JSONRPCError(code: -32602, message: "Each point is {x, y, t}.",
+                                              data: ["outcome": .string("not_sent"), "retry_safe": .bool(true)]))
+                }
+                if let err = validateCoordinate(x: x, y: y, context: "gesture") {
+                    return (nil, JSONRPCError(code: err.code, message: err.message,
+                                              data: (err.data ?? [:]).merging(["outcome": .string("not_sent"),
+                                                                               "retry_safe": .bool(true)]) { a, _ in a }))
+                }
+                let t = min(max(o["t"]?.doubleValue ?? lastT, lastT), 10)
+                path.append((CGPoint(x: x, y: y), t))
+                lastT = t
+            }
+            fingers.append(path)
+        }
+        return fastHandler.fastGesture(fingers)
+    }
+
+    private static let orientations: [String: UIDeviceOrientation] = [
+        "portrait": .portrait, "landscape_left": .landscapeLeft,
+        "landscape_right": .landscapeRight, "portrait_upside_down": .portraitUpsideDown,
+    ]
+
+    /// `rotate {orientation?}`: turn the phone. Without an orientation it
+    /// switches between portrait and landscape. The app in front decides
+    /// whether its interface follows (the Home Screen of most iPhones
+    /// doesn't), so the reply reports the screen size after the turn.
+    private func rotate(_ params: [String: JSONValue]?) -> ([String: JSONValue]?, JSONRPCError?) {
+        let current = XCUIDevice.shared.orientation
+        let target: UIDeviceOrientation
+        if let name = params?["orientation"]?.stringValue {
+            guard let o = Self.orientations[name] else {
+                return (nil, JSONRPCError(code: -32602, message:
+                    "orientation is one of portrait, landscape_left, landscape_right, portrait_upside_down.",
+                    data: ["outcome": .string("not_sent"), "retry_safe": .bool(true)]))
+            }
+            target = o
+        } else {
+            target = current.isLandscape ? .portrait : .landscapeLeft
+        }
+        let before = pointSize
+        _ = ObjCException.catching { XCUIDevice.shared.orientation = target }
+        Thread.sleep(forTimeInterval: 0.6)   // the turn's animation
+        cachedPointSize = nil
+        let after = pointSize
+        let name = Self.orientations.first { $0.value == target }?.key ?? "portrait"
+        let turned = (before.width > before.height) != (after.width > after.height)
+        LoopCtrlUITests.logBuffer.append("🔄 rotate → \(name): \(Int(after.width))x\(Int(after.height))")
+        return ([
+            "message": .string(turned ? "Turned to \(name)."
+                : "Turned the phone to \(name); the app in front kept its orientation."),
+            "orientation": .string(name),
+            "point_width": .double(after.width), "point_height": .double(after.height),
+        ], nil)
+    }
+
+    /// A finger from `from` to `to` over `duration`, eased, then held for
+    /// `hold`: the system's own edge gestures, made as a person makes them.
+    private func edgeSwipe(from: CGPoint, to: CGPoint, duration: Double, hold: Double)
+        -> ([String: JSONValue]?, JSONRPCError?) {
+        var path: [(point: CGPoint, t: Double)] = []
+        for i in 0...10 {
+            let f = Double(i) / 10, e = f * (2 - f)
+            path.append((CGPoint(x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e), duration * f))
+        }
+        if hold > 0 { path.append((to, duration + hold)) }
+        return fastHandler.fastGesture([path])
+    }
+
+    /// Phones with a Home button: Control Center comes up from the bottom,
+    /// and the screen is 16:9 rather than the taller Face ID shape.
+    private var hasHomeButton: Bool {
+        let size = pointSize
+        return max(size.width, size.height) / max(min(size.width, size.height), 1) < 1.9
+    }
+
+    /// `notification_center`: down from the top edge, a long swipe let go
+    /// while moving (a short pull with a rest, as for Control Center, leaves
+    /// it closed).
+    private func notificationCenter() -> ([String: JSONValue]?, JSONRPCError?) {
+        let size = pointSize
+        let x = size.width * (hasHomeButton ? 0.5 : 0.3)
+        let (result, error) = edgeSwipe(from: CGPoint(x: x, y: 1), to: CGPoint(x: x, y: size.height * 0.6),
+                                        duration: 0.3, hold: 0)
+        guard error == nil else { return (result, error) }
+        return (["message": .string("Opened Notification Center (swipe down from the top).")], nil)
+    }
+
+    /// `control_center`: down from the top-right corner, or up from the
+    /// bottom on a phone with a Home button. A short pull and a moment's rest
+    /// before lifting: pulled further or let go while moving, iOS takes the
+    /// rest of the swipe as paging and opens its last page. (Measured on an
+    /// iPhone 17 / iOS 27: a quarter of the screen, 0.25 s, then 0.15 s.)
+    private func controlCenter() -> ([String: JSONValue]?, JSONRPCError?) {
+        let size = pointSize
+        let (result, error) = hasHomeButton
+            ? edgeSwipe(from: CGPoint(x: size.width / 2, y: size.height - 1),
+                        to: CGPoint(x: size.width / 2, y: size.height * 0.4), duration: 0.3, hold: 0)
+            : edgeSwipe(from: CGPoint(x: size.width - 20, y: 2),
+                        to: CGPoint(x: size.width - 20, y: size.height * 0.25), duration: 0.25, hold: 0.15)
+        guard error == nil else { return (result, error) }
+        return (["message": .string("Opened Control Center.")], nil)
+    }
+
+    /// `app_switcher`: the multitasking view, by the gesture a person makes:
+    /// up from the bottom edge fast, then slowing right down before lifting.
+    /// The slowdown is what tells iOS "switcher" rather than "home"; a rest
+    /// does it too, but iOS keeps the cards still under a resting finger, so
+    /// they stopped before moving to the middle. Here they never stop.
+    private func appSwitcher() -> ([String: JSONValue]?, JSONRPCError?) {
+        let size = pointSize
+        let x = size.width / 2, top = size.height * 0.64
+        var path: [(point: CGPoint, t: Double)] = []
+        for i in 0...9 {
+            let f = Double(i) / 9, e = f * (2 - f)
+            path.append((CGPoint(x: x, y: size.height - 2 - (size.height - 2 - top) * e), 0.18 * f))
+        }
+        for i in 1...8 {
+            path.append((CGPoint(x: x, y: top - 4 * Double(i)), 0.18 + 0.03 * Double(i)))
+        }
+        let (result, error) = fastHandler.fastGesture([path])
+        guard error == nil else { return (result, error) }
+        return (["message": .string("Opened the app switcher (swipe up and hold).")], nil)
+    }
+
     func dispatch(method: String, params: [String: JSONValue]?) -> ([String: JSONValue]?, JSONRPCError?) {
         let cmd = ActionCommand(method: method, params: params)
         readFrame = nil
@@ -430,6 +610,40 @@ class ActionHandler {
         fastHandler.lastTouchPoint = nil
         tapTargetFrame = nil
         pageKeyboardTop = nil
+        if cmd.manual == true, let r = manualAction(method: method, cmd: cmd) { return r }
+        if method == "gesture" { return gesture(params) }
+        if method == "rotate" { return rotate(params) }
+        if method == "wait" { return wait(cmd, params: params) }
+        if method == "read_value" { return readValue(cmd, params: params) }
+        if method == "launch_app", cmd.bundleId == nil,
+           let name = (params?["name"]?.stringValue ?? cmd.text)?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
+            let app: AppNameMatch.App, how: String
+            switch resolveAppName(name) {
+            case .one(let a, let h):
+                app = a
+                how = h
+            case .several(let apps):
+                let list = apps.map { "\($0.name) (\($0.bundleId))" }.joined(separator: ", ")
+                return (nil, JSONRPCError(code: -32602,
+                    message: "'\(name)' matches several apps: \(list). Pass the one you mean as bundle_id.",
+                    data: ["candidates": .array(apps.map { .object(["name": .string($0.name), "bundle_id": .string($0.bundleId)]) })]))
+            case .none:
+                return (nil, JSONRPCError(code: -32602, message:
+                    "No app on this phone matches '\(name)'. resolve_app{text:\"\(name)\"} looks further (the App Store, other names).",
+                    data: nil))
+            }
+            var resolved = cmd
+            resolved.bundleId = app.bundleId
+            let (result, error) = launchApp(resolved)
+            let receipt: JSONValue = .object(["query": .string(name), "name": .string(app.name),
+                                              "bundle_id": .string(app.bundleId), "match": .string(how),
+                                              "from": .string(app.from)])
+            if let error {
+                return (nil, JSONRPCError(code: error.code, message: error.message,
+                                          data: (error.data ?? [:]).merging(["resolved": receipt]) { a, _ in a }))
+            }
+            return ((result ?? [:]).merging(["resolved": receipt]) { a, _ in a }, nil)
+        }
 
         if Self.uiActionMethods.contains(method), cmd.bundleId == nil {
             let coordinateBased = (cmd.x != nil && cmd.y != nil) || (cmd.fromX != nil && cmd.fromY != nil)
@@ -1027,6 +1241,12 @@ class ActionHandler {
             return clearText(cmd)
         case "home":
             return pressHome()
+        case "notification_center":
+            return notificationCenter()
+        case "control_center":
+            return controlCenter()
+        case "app_switcher":
+            return appSwitcher()
         case "lock":
             return lock()
         case "unlock":
@@ -1103,8 +1323,6 @@ class ActionHandler {
             return findAndTap(cmd)
         case "drag":
             return drag(cmd)
-        case "wait":
-            return wait(cmd)
         default:
             return (nil, Self.unknownMethodError(method))
         }
@@ -1113,10 +1331,10 @@ class ActionHandler {
     /// Every dispatchable method name, including aliases — the source of truth for
     /// "did you mean" suggestions. Keep in sync with the switch above.
     private static let knownMethods: [String] = [
-        "activate_app", "clear_text", "device_info", "double_tap", "drag", "snapshot_api",
+        "activate_app", "app_switcher", "clear_text", "control_center", "device_info", "double_tap", "drag", "snapshot_api",
         "find_and_tap", "find_element", "home", "installed_apps", "is_locked",
-        "launch_app", "list_apps", "lock", "long_press", "open", "open_url",
-        "page", "page_down", "page_source", "page_up", "reset", "resolve_app",
+        "launch_app", "list_apps", "lock", "long_press", "notification_center", "open", "open_url",
+        "page", "page_down", "page_source", "page_up", "read_value", "reset", "resolve_app", "rotate",
         "screenshot", "scroll", "scroll_to", "scroll_to_element", "search_app",
         "search_apps", "snapshot_bench", "swipe", "tap", "tap_element",
         "screen_text", "ocr", "terminate_app", "type", "ui_tree", "unlock", "view_tree", "wait",
@@ -7186,7 +7404,9 @@ class ActionHandler {
         request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
         if let q = query, !q.isEmpty { request.customWords = [q] }
         let handler = VNImageRequestHandler(cgImage: cg, orientation: .up, options: [:])
-        do { try handler.perform([request]) } catch { return nil }
+        guard Self.visionLock.wait(timeout: .now() + 20) == .success else { return nil }
+        do { try handler.perform([request]) } catch { Self.visionLock.signal(); return nil }
+        Self.visionLock.signal()
         let ocrMs = (nowMonotonic - ocrStart) * 1000
 
         // Same rule as screen_text: text the system draws over the app is not
@@ -7249,6 +7469,12 @@ class ActionHandler {
         if let q = cmd.elementId, !q.isEmpty { request.customWords = [q] }
 
         let handler = VNImageRequestHandler(cgImage: cg, orientation: .up, options: [:])
+        // One recognition at a time (see visionLock): a wait polling by OCR
+        // and this call would otherwise fight over the CPU.
+        guard Self.visionLock.wait(timeout: .now() + 12) == .success else {
+            return (nil, .serverError("OCR is busy with another request (a wait reading the screen). Try again in a moment."))
+        }
+        defer { Self.visionLock.signal() }
         do {
             try handler.perform([request])
         } catch {
@@ -7750,9 +7976,218 @@ class ActionHandler {
 
     // MARK: - Wait
 
-    private func wait(_ cmd: ActionCommand) -> ([String: JSONValue]?, JSONRPCError?) {
-        let duration = cmd.duration ?? 1.0
-        usleep(useconds_t(duration * 1_000_000))
-        return (["message": .string("Waited \(duration)s")], nil)
+    // MARK: - wait
+
+    /// Text compared the way a person reads it: case and spaces don't count.
+    static func squash(_ s: String) -> String { AppNameMatch.squash(s) }
+
+    /// `wait`: a fixed pause, or — with `text` — until that text is on screen
+    /// (or, with `until:"absent"`, gone), read from the accessibility tree and,
+    /// where the tree has no words (games, Flutter, canvas), from OCR.
+    ///
+    /// Runs on the non-UI queue: each look hops to the main thread only for
+    /// the read itself, so touches from others go on while it waits.
+    private func wait(_ cmd: ActionCommand, params: [String: JSONValue]?) -> ([String: JSONValue]?, JSONRPCError?) {
+        guard let text = cmd.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            let duration = min(max(cmd.duration ?? 1.0, 0), 60)
+            usleep(useconds_t(duration * 1_000_000))
+            return (["message": .string("Waited \(duration)s")], nil)
+        }
+        let absent = params?["until"]?.stringValue == "absent"
+        let source = params?["source"]?.stringValue ?? "any"
+        guard ["any", "tree", "ocr"].contains(source) else {
+            return (nil, JSONRPCError(code: -32602, message: "source is 'any' (default), 'tree' or 'ocr'.", data: nil))
+        }
+        let timeout = min(max(params?["timeout"]?.doubleValue ?? 10, 0.5), 60)
+        let needle = Self.squash(text)
+        let start = nowMonotonic
+        var rounds = 0
+        var lastSeen: [String] = []
+        while true {
+            rounds += 1
+            // Where it was seen this round (nil: not seen), and whether the
+            // round could read the screen at all: "absent" is only ever
+            // claimed from a read that worked.
+            var seen: (channel: String, text: String)?
+            var readOK = false
+            if source != "ocr" {
+                var texts: [String]?
+                DispatchQueue.main.sync { texts = self.visibleTexts() }
+                if let texts {
+                    readOK = true
+                    lastSeen = texts
+                    if let hit = texts.first(where: { Self.squash($0).contains(needle) }) { seen = ("tree", hit) }
+                }
+            }
+            if seen == nil, source != "tree" {
+                let left = timeout - (nowMonotonic - start)
+                if let texts = ocrTexts(waitingUpTo: max(left, 1)) {
+                    readOK = true
+                    if source == "ocr" || lastSeen.isEmpty { lastSeen = texts }
+                    // OCR breaks a line into boxes: the joined text counts too.
+                    if let hit = texts.first(where: { Self.squash($0).contains(needle) }) {
+                        seen = ("ocr", hit)
+                    } else if Self.squash(texts.joined()).contains(needle) {
+                        seen = ("ocr", text)
+                    }
+                }
+            }
+            let elapsed = ((nowMonotonic - start) * 100).rounded() / 100
+            if absent ? (readOK && seen == nil) : (seen != nil) {
+                var out: [String: JSONValue] = [
+                    "met": .bool(true), "until": .string(absent ? "absent" : "present"), "text": .string(text),
+                    "elapsed": .double(elapsed), "rounds": .int(rounds),
+                    "message": .string(absent ? "'\(text)' is no longer on screen." : "'\(text)' is on screen."),
+                ]
+                if let seen { out["source"] = .string(seen.channel); out["matched"] = .string(seen.text) }
+                return (out, nil)
+            }
+            if nowMonotonic - start >= timeout {
+                let sample = lastSeen.prefix(12).map { "'\($0)'" }.joined(separator: ", ")
+                return (nil, JSONRPCError(code: -32000, message:
+                    (absent ? "'\(text)' was still on screen" : "'\(text)' did not appear") +
+                    " within \(Int(timeout.rounded()))s (\(rounds) looks, source \(source))." +
+                    (sample.isEmpty ? "" : " On screen at the last look: \(sample)."),
+                    data: ["met": .bool(false), "elapsed": .double(elapsed), "rounds": .int(rounds)]))
+            }
+            usleep(350_000)
+        }
+    }
+
+    /// Every label and value on screen, from the bounded snapshot (main thread).
+    /// nil when the app's tree can't be read.
+    private func visibleTexts() -> [String]? {
+        guard let bid = resolveForegroundBundleId(),
+              let root = ForegroundApp.boundedSnapshot(
+                forBundleID: bid, maxDepth: Self.defaultMaxDepth,
+                maxChildren: Self.maxChildrenPerNode) else { return nil }
+        var n = 0
+        var t: ObjCBool = false
+        guard let body = ForegroundApp.renderBoundedSnapshot(
+                root, maxDepth: Self.defaultMaxDepth, maxElements: 1500,
+                visibleRect: CGRect(x: 0, y: 0, width: pointSize.width, height: pointSize.height),
+                nodesWritten: &n, truncated: &t) else { return nil }
+        var out: [String] = []
+        for line in body.split(separator: "\n") {
+            for key in [", label: '", ", value: '"] {
+                guard let r = line.range(of: key) else { continue }
+                let rest = line[r.upperBound...]
+                guard let e = rest.range(of: "', ") ?? rest.range(of: "'", options: .backwards) else { continue }
+                let v = String(rest[..<e.lowerBound])
+                if !v.isEmpty { out.append(v) }
+            }
+        }
+        return out
+    }
+
+    /// One Vision recognition at a time across the runner. Its first run after
+    /// the model was paged out can take over ten seconds; callers queue for it
+    /// with a deadline of their own rather than pile up behind it.
+    private static let visionLock = DispatchSemaphore(value: 1)
+
+    /// The app's text on screen by OCR (not the status bar's). The screenshot
+    /// is taken on the main thread; Vision runs on the caller's thread, so a
+    /// slow recognition doesn't hold up touches. nil: no capture, or Vision
+    /// stayed busy past `waitingUpTo`.
+    private func ocrTexts(waitingUpTo: TimeInterval) -> [String]? {
+        var cg: CGImage?
+        var overlays: [CGRect] = []
+        var frame = CGRect.zero
+        DispatchQueue.main.sync {
+            var image: UIImage?
+            _ = ObjCException.catching { image = XCUIScreen.main.screenshot().image }
+            cg = image?.cgImage
+            frame = self.pointSize
+            overlays = self.overlayRects()
+        }
+        guard let cg, Self.visionLock.wait(timeout: .now() + waitingUpTo) == .success else { return nil }
+        defer { Self.visionLock.signal() }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
+        do { try VNImageRequestHandler(cgImage: cg, orientation: .up, options: [:]).perform([request]) } catch { return nil }
+        return (request.results ?? []).compactMap { obs -> String? in
+            guard let top = obs.topCandidates(1).first, top.confidence >= 0.3 else { return nil }
+            let b = obs.boundingBox
+            let centre = CGPoint(x: b.midX * frame.width, y: (1 - b.midY) * frame.height)
+            return overlays.contains(where: { $0.contains(centre) }) ? nil : top.string
+        }
+    }
+
+    // MARK: - launch_app by name
+
+    /// The app a name means on this phone (AppNameMatch): apps known to be
+    /// installed or opened here first, the built-in catalog only if none of
+    /// them matches.
+    private func resolveAppName(_ query: String) -> AppNameMatch.Result {
+        var pools: [[AppNameMatch.App]] = [[], []]
+        var seen = Set<String>()
+        for e in ForegroundApp.installedAppsUserOnly(false) ?? [] {
+            guard let bid = e["bundle_id"] as? String, let name = e["name"] as? String, !name.isEmpty,
+                  seen.insert(bid).inserted else { continue }
+            pools[0].append(.init(bundleId: bid, name: name, from: "installed"))
+        }
+        for e in AppMemory.shared.openedApps() {
+            guard let bid = e["bundle_id"] as? String, seen.insert(bid).inserted else { continue }
+            let name = (e["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (e["store_name"] as? String) ?? ""
+            if !name.isEmpty { pools[0].append(.init(bundleId: bid, name: name, from: "opened_here")) }
+        }
+        for e in Self.builtInApps {
+            guard let bid = e["bundle_id"], let name = e["name"], seen.insert(bid).inserted else { continue }
+            pools[1].append(.init(bundleId: bid, name: name, from: "catalog"))
+        }
+        return AppNameMatch.best(query, pools: pools)
+    }
+
+    // MARK: - read_value
+
+    /// `read_value{element_id | ref}`: an element's whole label and value —
+    /// long text page_source shortens — without touching, focusing or taking
+    /// control. Never a password field's.
+    private func readValue(_ cmd: ActionCommand, params: [String: JSONValue]?) -> ([String: JSONValue]?, JSONRPCError?) {
+        let limit = min(max(Int(params?["max_length"]?.doubleValue ?? 8192), 1), 65536)
+        let element: XCUIElement
+        if let ref = cmd.ref {
+            let (e, err) = resolveRef(ref)
+            guard let e else { return (nil, err ?? JSONRPCError(code: -32602, message: "Unknown ref '\(ref)'.", data: nil)) }
+            element = e
+        } else if let id = cmd.elementId, !id.trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let (e, _, _) = locateElement(query: id, type: cmd.elementType, bundleId: cmd.bundleId,
+                                               matchMode: (cmd.matchMode ?? "exact").lowercased()) else {
+                return (nil, lastLocateError ?? JSONRPCError(code: -32602, message:
+                    "No element matching label/id '\(id)'. Check page_source, or try match:'contains'.", data: nil))
+            }
+            element = e
+        } else {
+            return (nil, JSONRPCError(code: -32602, message:
+                "read_value needs element_id (an accessibility label or identifier) or a ref from find_element.", data: nil))
+        }
+        var type = XCUIElement.ElementType.any
+        var label = ""
+        var raw: Any?
+        _ = ObjCException.catching {
+            type = element.elementType
+            label = element.label
+            raw = element.value
+        }
+        if type == .secureTextField {
+            return (nil, JSONRPCError(code: -32602, message: "That is a password field: its value is never read.", data: nil))
+        }
+        let value = (raw as? String) ?? (raw as? NSNumber)?.stringValue ?? ""
+        func cut(_ s: String) -> (String, Bool) {
+            let units = Array(s.utf16)
+            guard units.count > limit else { return (s, false) }
+            var end = limit
+            if end > 0, UTF16.isLeadSurrogate(units[end - 1]) { end -= 1 }   // never half a character
+            return (String(decoding: units[..<end], as: UTF16.self), true)
+        }
+        let (v, vCut) = cut(value), (l, lCut) = cut(label)
+        return ([
+            "element_type": .string(Self.elementTypeName(type)),
+            "label": .string(l), "value": .string(v),
+            "label_length": .int(label.utf16.count), "value_length": .int(value.utf16.count),
+            "truncated": .bool(vCut || lCut),
+        ], nil)
     }
 }

@@ -21,7 +21,7 @@ struct RPCMethodRegistry {
             description: "Read or update server settings and manage authorized sessions. With no params: returns current config plus the list of authorized sessions (client name, masked token prefix, granted/expiry times). Pass allow_remote_access and/or listen_port to change settings (persisted; server restarts, dropping the connection — reconnect at the returned address). Pass revoke_session_id to remove one session, or clear_sessions=true to revoke ALL tokens (including your own). Pass stop_server=true to SHUT DOWN the service (stops listening after replying; re-launch the runner to restart — tokens are preserved so no re-auth is needed).",
             params: [
                 RPCParamDef(name: "allow_remote_access", type: "boolean", required: false, description: "true = listen on all interfaces (LAN reachable); false = 127.0.0.1 only"),
-                RPCParamDef(name: "listen_port", type: "number", required: false, description: "TCP port to listen on (1024..65534, default 8300; the LoopCtrl app's Port setting)"),
+                RPCParamDef(name: "listen_port", type: "number", required: false, description: "TCP port to listen on (1024..65533, default 8300; the LoopCtrl app's Port setting)"),
                 RPCParamDef(name: "revoke_session_id", type: "string", required: false, description: "session_id of a single authorization to revoke"),
                 RPCParamDef(name: "clear_sessions", type: "boolean", required: false, description: "true = revoke all authorized tokens immediately"),
                 RPCParamDef(name: "nearby_discovery", type: "boolean", required: false, description: "Advertise to nearby Apple devices over peer-to-peer Wi-Fi (needs allow_remote_access). Switching it on is accepted only from this device (the LoopCtrl app or USB); switching it off from anyone"),
@@ -35,6 +35,36 @@ struct RPCMethodRegistry {
             description: "Mint a single-use, ~60s ticket authorizing ONE plain GET to /stream or /logs*. Those are raw byte responses a browser/player fetches directly, so they can't carry a per-request encrypted envelope; this hands out a short-lived credential instead. Call it over the encrypted channel (like every RPC), then append ?ticket=<ticket> to the URL. The ticket is consumed on first use — mint a new one per stream/log fetch.",
             params: [],
             returns: "{ticket, expires_in (seconds), hint}"
+        ),
+        RPCMethodDef(
+            name: "control",
+            description: "Who is watching and operating the phone. Several people and agents may operate at once; each counts as operating for 60 s (people) or 30 s (agents) after their last action, and each has their own log of actions with their outcomes. The phone's owner can pause all remote viewing and control from a notification: then every read and touch returns paused_by_owner until they resume.",
+            params: [
+                RPCParamDef(name: "action", type: "string", required: false, description: "'status' (default), 'release' (stop counting as an operator) or 'log' (each participant's actions since the runner started)"),
+                RPCParamDef(name: "tok", type: "string", required: false, description: "With action 'log': only this participant's actions"),
+                RPCParamDef(name: "limit", type: "number", required: false, description: "With action 'log': the newest this many actions each (default 500)"),
+            ],
+            returns: "{paused, people: [{tok, name, kind:'person'|'agent', watching, operating, since?, actions}], you (your tok), logs?: [{tok, name, kind, actions: [{at, method, detail, outcome}]}]}"
+        ),
+        RPCMethodDef(
+            name: "gesture",
+            description: "Several fingers at once, each along its own path: a drag that follows a real path (curves, pauses), a pinch, a hold with two to five fingers. fingers is a list of paths; each path is [{x, y, t}, …] in POINTS, t in seconds from the start (non-decreasing, at most 10). A finger touches down at its first point and lifts at its last; a finger whose points stay put is a hold. Every point is checked against the screen before anything is sent.",
+            params: [
+                RPCParamDef(name: "fingers", type: "array", required: true, description: "1–5 paths of 1–400 points each: [[{x, y, t}, …], …]"),
+                RPCParamDef(name: "manual", type: "boolean", required: false, description: "From a person driving the live screen (the /remote page)."),
+            ],
+            returns: "{message, outcome}"
+        ),
+        RPCMethodDef(
+            name: "stream_ack",
+            description: "Acknowledge the GET /stream you opened with ack=1: you have every frame up to the one stamped ts. The /remote page sends it a few times a second; the phone then holds frames back while too many are unacknowledged and lowers the bitrate to what gets through, so a slow link costs quality, not seconds of delay. Only for stream clients.",
+            params: [
+                RPCParamDef(name: "viewer", type: "string", required: true, description: "The viewer id from the stream's HELLO message"),
+                RPCParamDef(name: "ts", type: "number", required: true, description: "The ts (microseconds) of the newest frame received"),
+                RPCParamDef(name: "queue_ms", type: "number", required: false, description: "How much later than the quickest frame of the last 10 s that frame arrived (its arrival time minus its ts, minus the smallest such difference): the queueing delay on the way. Without it the phone can only judge by how long acknowledgements take, which counts their own trip too."),
+                RPCParamDef(name: "key", type: "boolean", required: false, description: "Your decoder can't go on until a keyframe (it dropped frames or failed): the phone sends one even if the screen is still."),
+            ],
+            returns: "{}"
         ),
         RPCMethodDef(
             name: "device_info",
@@ -96,6 +126,7 @@ struct RPCMethodRegistry {
             name: "tap",
             description: "Tap either by a stable 'ref' (from find_element/scroll_to_element — RECOMMENDED, re-resolves the live element and won't drift) OR by x,y coordinates in POINTS. If reading from a screenshot, convert: point = pixel / scale. Out-of-range coords return the valid range. Bottom tab bars sit just above the home-indicator safe area.",
             params: [
+                RPCParamDef(name: "manual", type: "boolean", required: false, description: "For a person driving the live screen (the /remote page): skip the agent safety checks (system alert, what is under the point, anti-bot, same page) and send the touch at once. Agents: leave it out."),
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
                 RPCParamDef(name: "ref", type: "string", required: false, description: "Element ref from find_element/scroll_to_element (preferred over x,y)"),
@@ -121,6 +152,7 @@ struct RPCMethodRegistry {
             name: "long_press",
             description: "Long press by a 'ref' (from find_element/scroll_to_element — preferred) OR by x,y in POINTS.",
             params: [
+                RPCParamDef(name: "manual", type: "boolean", required: false, description: "For a person driving the live screen (the /remote page): skip the agent safety checks (system alert, what is under the point, anti-bot, same page) and send the touch at once. Agents: leave it out."),
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
                 RPCParamDef(name: "ref", type: "string", required: false, description: "Element ref (preferred over x,y)"),
@@ -195,6 +227,7 @@ struct RPCMethodRegistry {
             name: "type",
             description: "Type text into the focused input field. A text field must already have keyboard focus — tap a real textfield first (see 'searching_and_typing'). Type always runs, but if no keyboard could be confirmed the response includes a 'warning' (keyboard detection can't see all third-party keyboards, so this is advisory, not a failure) — if the text didn't land, re-focus the field and type again. Set clear:true to EMPTY the field before typing (replace its contents); set submit:true to append Return/Search so the field's action (search/go/send) fires. See searching_and_typing guidance for the full search flow.",
             params: [
+                RPCParamDef(name: "manual", type: "boolean", required: false, description: "For a person driving the live screen (the /remote page): skip the agent safety checks (system alert, what is under the point, anti-bot, same page) and send the touch at once. Agents: leave it out."),
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
                 RPCParamDef(name: "text", type: "string", required: true, description: "Text to type (optional if clear:true — then it just empties the field)"),
@@ -217,6 +250,33 @@ struct RPCMethodRegistry {
             description: "Press the home button and wait until SpringBoard is actually frontmost. Verified, not fire-and-forget: it polls for the transition and retries once, then errors if the foreground app never changed (a modal alert or system sheet can swallow the press).",
             params: [],
             returns: "{message, foreground_app, previous_app}"
+        ),
+        RPCMethodDef(
+            name: "app_switcher",
+            description: "Open the app switcher (multitasking view) with the gesture a person uses: up from the bottom edge, then hold. Then swipe a card up to close that app, or tap one to switch to it.",
+            params: [],
+            returns: "{message}"
+        ),
+        RPCMethodDef(
+            name: "notification_center",
+            description: "Open Notification Center with the gesture a person uses: a swipe down from the top edge. Swipe up (or press home) to close it.",
+            params: [],
+            returns: "{message}"
+        ),
+        RPCMethodDef(
+            name: "control_center",
+            description: "Open Control Center with the gesture a person uses: down from the top-right corner, or up from the bottom on a phone with a Home button. Swipe it away (or press home) to close it.",
+            params: [],
+            returns: "{message}"
+        ),
+        RPCMethodDef(
+            name: "rotate",
+            description: "Turn the phone. Without orientation, switches between portrait and landscape. The app in front decides whether its interface turns (most iPhones' Home Screen doesn't); the reply gives the screen size afterwards, and every coordinate after it is in that orientation.",
+            params: [
+                RPCParamDef(name: "orientation", type: "string", required: false, description: "portrait, landscape_left, landscape_right or portrait_upside_down"),
+                RPCParamDef(name: "manual", type: "boolean", required: false, description: "From a person at the /remote page."),
+            ],
+            returns: "{message, orientation, point_width, point_height}"
         ),
         RPCMethodDef(
             name: "lock",
@@ -265,11 +325,12 @@ struct RPCMethodRegistry {
         ),
         RPCMethodDef(
             name: "launch_app",
-            description: "Open an app by bundle identifier (non-blocking, via LSApplicationWorkspace). If you don't know the bundle_id, use resolve_app to find it (e.g. 'Maps' → com.apple.Maps). There is no target app: every read and action applies to whatever is on screen, so if the app later jumps elsewhere, read the screen and decide. The app may still be drawing its first screen when this returns: read right away, and if you see a splash/placeholder, read again (poll ~0.5s, capped) — don't sleep a fixed time.",
+            description: "Open an app by bundle identifier, or by name when exactly one app on this phone matches it (non-blocking, via LSApplicationWorkspace). If the name matches none or several, use resolve_app to find the bundle_id (e.g. 'Maps' → com.apple.Maps). There is no target app: every read and action applies to whatever is on screen, so if the app later jumps elsewhere, read the screen and decide. The app may still be drawing its first screen when this returns: read right away, and if you see a splash/placeholder, read again (poll ~0.5s, capped) — don't sleep a fixed time.",
             params: [
-                RPCParamDef(name: "bundle_id", type: "string", required: true, description: "App bundle identifier (from resolve_app)"),
+                RPCParamDef(name: "bundle_id", type: "string", required: false, description: "App bundle identifier (from resolve_app). This or name."),
+                RPCParamDef(name: "name", type: "string", required: false, description: "Instead of bundle_id: the app's name, or the start of its words ('idol ludo' → 'Idol Ludo Board') or its initials. Launched only if exactly one app on this phone matches; otherwise the candidates come back."),
             ],
-            returns: "{message, hint}"
+            returns: "{message, hint, resolved?: {query, name, bundle_id, match:'exact'|'words'|'initials'|'contains', from:'installed'|'opened_here'|'catalog'}} (resolved: when launched by name)"
         ),
         RPCMethodDef(
             name: "activate_app",
@@ -286,6 +347,29 @@ struct RPCMethodRegistry {
                 RPCParamDef(name: "bundle_id", type: "string", required: true, description: "App bundle identifier"),
             ],
             returns: "{message}"
+        ),
+        RPCMethodDef(
+            name: "page_update",
+            description: "The /remote control page, updated without reinstalling the app. {} reports which page is served; {html, version, signature} installs a newer page signed with the project's page key (Scripts/page-update.swift); {reset:true} goes back to the app's own page. Unsigned, older or same-version pages are refused; a page older than the app's own build is dropped.",
+            params: [
+                RPCParamDef(name: "html", type: "string", required: false, description: "The page"),
+                RPCParamDef(name: "version", type: "number", required: false, description: "yyyyMMddHHmm; must be newer than the page served now"),
+                RPCParamDef(name: "signature", type: "string", required: false, description: "Ed25519 signature (hex) over 'loopctrl-page-v1\\n<version>\\n<sha256 hex of html>'"),
+                RPCParamDef(name: "reset", type: "boolean", required: false, description: "Serve the app's own page again"),
+            ],
+            returns: "{served:'app'|'update', served_version, app_version}"
+        ),
+        RPCMethodDef(
+            name: "read_value",
+            description: "Read an element's WHOLE label and value — long text (an article, a chat message, a note) that page_source shortens. Read-only: no tap, no focus, no control taken. Find it by element_id (label or identifier, as find_element) or by a ref from find_element. Refuses password fields.",
+            params: [
+                RPCParamDef(name: "element_id", type: "string", required: false, description: "Accessibility label or identifier"),
+                RPCParamDef(name: "ref", type: "string", required: false, description: "A ref from find_element"),
+                RPCParamDef(name: "match", type: "string", required: false, description: "'exact' (default) or 'contains'"),
+                RPCParamDef(name: "element_type", type: "string", required: false, description: "Only elements of this type (as find_element)"),
+                RPCParamDef(name: "max_length", type: "number", required: false, description: "Most UTF-16 characters to return, 1–65536 (default 8192)"),
+            ],
+            returns: "{element_type, label, value, label_length, value_length, truncated}"
         ),
         RPCMethodDef(
             name: "find_element",
@@ -328,6 +412,7 @@ struct RPCMethodRegistry {
             name: "drag",
             description: "Drag between two points. Endpoints may be coordinates (from_x/from_y/to_x/to_y in POINTS) OR element refs (from_ref/to_ref, which resolve to the element center). Use for reordering/sliders; for a simple scroll flick use swipe.",
             params: [
+                RPCParamDef(name: "manual", type: "boolean", required: false, description: "For a person driving the live screen (the /remote page): skip the agent safety checks (system alert, what is under the point, anti-bot, same page) and send the touch at once. Agents: leave it out."),
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
                 RPCParamDef(name: "from_ref", type: "string", required: false, description: "Start element ref (alternative to from_x/from_y)"),
@@ -342,11 +427,15 @@ struct RPCMethodRegistry {
         ),
         RPCMethodDef(
             name: "wait",
-            description: "Pause for a fixed duration. Almost never the right tool: tap/swipe/page/type already wait for the screen to settle and report it in `settle` — when settle.stable is true, read right away; if not, read again (with a cap). A fixed pause is too long when the app is fast and too short when it is slow. Use it only for a delay that is genuinely time-based (a countdown, a video).",
+            description: "Wait until TEXT is on screen (or, with until:'absent', gone) — or, without text, pause for a fixed duration. With text it reads the accessibility tree and, where that has no words (games, Flutter, canvas-drawn screens), OCR; case and spaces don't count, and OCR text split over lines still matches. Returns as soon as the condition holds; error with met:false and what was on screen if it doesn't within timeout. Actions already wait for the screen to settle (see their `settle`): use wait{text} for what comes later (a loading screen, a result that takes time), and a fixed duration only for something truly time-based.",
             params: [
-                RPCParamDef(name: "duration", type: "number", required: false, description: "Duration in seconds (default: 1.0)"),
+                RPCParamDef(name: "text", type: "string", required: false, description: "Text to wait for (substring; case and spaces ignored)"),
+                RPCParamDef(name: "until", type: "string", required: false, description: "'present' (default) or 'absent'"),
+                RPCParamDef(name: "source", type: "string", required: false, description: "'any' (default: the tree, then OCR), 'tree' or 'ocr'"),
+                RPCParamDef(name: "timeout", type: "number", required: false, description: "Seconds to wait for it, 0.5–60 (default 10)"),
+                RPCParamDef(name: "duration", type: "number", required: false, description: "Without text: seconds to pause (default 1, at most 60)"),
             ],
-            returns: "{message}"
+            returns: "{met:true, until, text, source:'tree'|'ocr', matched, elapsed, rounds} or {message} for a fixed pause"
         ),
     ]
 
@@ -397,7 +486,7 @@ struct RPCMethodRegistry {
     static let capabilityTags: [String] = [
         "envelope_v1",         // /pair + encrypted /rpc envelopes (HMAC-SHA256)
         "stream_ticket",       // stream_ticket RPC → single-use ?ticket= for /stream + /logs
-        "video_stream",        // GET /stream (H.264-in-MPEG-TS live screen)
+        "video_stream",        // GET /stream (framed H.264, docs/remote-control.md)
         "remote_ui",           // GET /remote (browser control page)
         "page_source_filter",  // page_source{filter:{...}}
         "visible_only",        // page_source{visible_only:true} — viewport culling for long lists
@@ -436,7 +525,7 @@ struct RPCMethodRegistry {
                 "skill": "GET /skill — START HERE. The operating manual in Skill (Markdown) format; read it ONCE to learn the fast-path workflow and best practices, then treat LoopCtrl as a Skill.",
                 "pair": "POST /pair  {client_name, plain:true | pub:<b64 raw 32B X25519>} → the 32-byte key K. IMPORTANT: this BLOCKS until the device user manually taps Allow/Deny on an on-screen prompt — use a long client timeout (at least 60s) and do NOT retry early; a retry queues another prompt. `plain:true` returns K in the clear and is accepted ONLY from 127.0.0.1 (USB/iproxy); over the LAN send `pub` and unwrap: K = token_ct XOR HMAC(HMAC(X25519(c_priv,d_pub), \"loopctrl-pair\"||c_pub||d_pub), \"loopctrl-wrap\"). Returns 403 if denied.",
                 "rpc": "POST /rpc   an ENCRYPTED v1 envelope (no plaintext path, no Bearer header): {v:1, tok, ts, nonce:<32 hex>, ct:<b64>, tag:<64 hex>} wrapping the JSON-RPC body. See guidance.authorization for the construction.",
-                "stream": "GET /stream[.ts]?ticket=<t>  live H.264 screen video (default 5 fps, ?fps=N in 0.5-30 to change). Screen capture is the limit, not encoding: where XCTest can capture straight to JPEG the full 30 is reachable on a cool device and somewhat less on a hot one; where it can't, capture caps the rate near 7. A byte pipe can't carry a per-request envelope, so it takes a SINGLE-USE ~60s ticket minted over the encrypted channel by the `stream_ticket` RPC. One shared encoder fans out to all clients; encoding stops when the last client disconnects.",
+                "stream": "GET /stream?ticket=<t>[&quality=low|medium|high][&codec=hevc][&enc=1][&ack=1][&workers=1-3]  the live screen for the /remote page: length-prefixed messages carrying H.264 or HEVC access units (length-prefixed NAL units) and their decoder configuration, sealed with AES-256-GCM under a key derived from your pairing key when enc=1 (format in LoopCtrl's docs/remote-control.md). Up to 60 fps at medium and high (30 at low), captured by `workers` overlapping captures (default 3; one capture takes ~30 ms on a phone); an unchanged screen sends nothing. A byte pipe can't carry a per-request envelope, so it takes a SINGLE-USE ~60s ticket minted over the encrypted channel by the `stream_ticket` RPC. One shared encoder fans out to all clients; a slow client skips frames; encoding stops when the last client disconnects. For one picture, use the screenshot RPC instead.",
                 "remote": "GET /remote  browser control page (shadcn-styled): plays the stream via MSE and drives the device with tap/swipe/scroll/keyboard + a side panel of buttons. Paste the 64-hex pairing key once; the page does the v1 crypto in-browser (WebCrypto) and keeps K in localStorage — it is never sent.",
                 "whoami": "GET /whoami   unauthenticated {device_id, name, protocol_version, server_version}. device_id is stable per installation: store one key per device under it and use that key over every channel (USB, LAN, nearby). Every response also carries it as the X-LOOPCTRL-Device header",
                 "logs": "GET /logs?ticket=<t>   plain-text recent logs (current process, in-memory). Browser-issued GET, so it uses the same single-use ticket as /stream. Sensitive values are redacted",

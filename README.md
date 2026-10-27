@@ -96,7 +96,7 @@ sequenceDiagram
    and turn on **Developer Mode** (Settings → Privacy & Security → Developer
    Mode, then restart).
 3. **Pair once.** On iOS 27 and later, pair on the phone. Below iOS 27, pair
-   once over USB with [LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair)
+   once over USB with [LoopCtrl Pair](pair/)
    or import a pairing file. See [Requirements](#requirements).
 4. **Mount the disk image.** Connect LocalDevVPN or Shadowrocket, open
    LoopCtrl and tap **Mount Disk Image**. The app walks you through it.
@@ -153,7 +153,7 @@ pair and which Developer Disk Image the app mounts:
 
 | iOS | Pairing | Disk image mounted on the phone |
 |---|---|---|
-| 16 | USB, once: [LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair), or import a lockdown pairing file (`idevicepair`, jitterbugpair, iLoader) | Legacy `DeveloperDiskImage.dmg`, over lockdownd ([details](docs/ios16-ddi-mount.md)) |
+| 16 | USB, once: [LoopCtrl Pair](pair/), or import a lockdown pairing file (`idevicepair`, jitterbugpair, iLoader) | Legacy `DeveloperDiskImage.dmg`, over lockdownd ([details](docs/ios16-ddi-mount.md)) |
 | 17.0–17.3 | Not supported on the phone yet (see [Known limits](#limits)) | Mount from Xcode instead |
 | 17.4–26.3 | USB, once: LoopCtrl Pair, or import a pairing file from iLoader | Personalized image |
 | 26.4–26.x | USB, once: LoopCtrl Pair, or import a pairing file from iLoader | Cryptex image |
@@ -215,15 +215,16 @@ who can *ask* to pair; every client still needs your Allow.
 | Default | Apps on this phone, and a computer over USB |
 | **LAN Access** on | Anyone on the same Wi-Fi who knows the address |
 | **LAN + Nearby** | Also Apple devices close by, with no shared network (AWDL); the phone announces itself |
-| **Remote service** | Operators named in an invite you accepted, through a relay |
+| **Remote service** | A browser or agent at the address a relay gives this phone; operators named in an invite you accepted need no tap |
 | **Tailnet** | Devices on your Tailscale or Headscale network, with LAN Access on |
 
 ### LAN Access
 
 Switch it on from the home screen or the server notification. The home screen
 shows the server's addresses (tap one to copy it). The default port is
-**8300**; change it in Settings (1024–65534) and the service restarts on the
-new port. Nearby discovery uses the port above it. Don't share the port with
+**8300**; change it in Settings (1024–65533) and the service restarts on the
+new port. Nearby discovery uses the port above it, and requests from a relay
+arrive on loopback two above it. Don't share the port with
 another automation app, because two runners on one port get in each other's
 way.
 
@@ -250,16 +251,30 @@ come through that relay. An invite that names none (manual entry, text form)
 pre-approves nobody: you compare fingerprints, and each operator is asked about
 like any other client.
 
+Once connected, the relay gives the phone a **public address**, shown on the
+connection's page with Copy and Share. Open it in any browser to drive the
+phone: tap **Pair**, allow it on the phone, and you get the live screen, touch,
+the keyboard and the view tree, the same page as `http://<phone>:8300/remote`
+on the LAN. Agents use the same address in place of `host:port`
+(`loopctrl_rpc.py --host https://<slug>.relay.example.com …`).
+Several people and agents can drive at once; the page shows who is watching
+and operating and each one's own log of actions. The phone's owner can pause
+everything remote from a Live Activity or a notification, and the page can
+record what you do and replay it.
+
 From the connection's page you can **disconnect** (keep the binding, reconnect
 later) or **unbind** (the relay forgets this phone). It also shows who is
 operating, recent activity and the relay's certificate.
 
-The relay is **untrusted**. It forwards end-to-end encrypted envelopes, and
-pairing and every request stay sealed between the operator's client and the
-phone. The phone's own credential is an Ed25519 key that stays in its Keychain.
+The relay **cannot read or forge** what passes through it: pairing and every
+request stay sealed between the client and the phone, and the screen is
+encrypted for any `https://` page. It does serve the control page a browser
+opens, so use a relay you run or one you'd trust with the phone
+([why](docs/remote-control.md#trust)). The phone's own credential is an Ed25519 key that stays in its Keychain.
 There is **no server built into the app**: use a provider, or host your own
-(see [Self-hosting](#self-hosting)). Protocol and enrollment API:
-[docs/relay-enrollment.md](docs/relay-enrollment.md).
+(see [Self-hosting](#self-hosting)). Enrollment API:
+[docs/relay-enrollment.md](docs/relay-enrollment.md); the tunnel, the stream
+and the control page: [docs/remote-control.md](docs/remote-control.md).
 
 <a id="tailnet"></a>
 ### Tailscale and Headscale
@@ -275,18 +290,18 @@ juggling two VPNs.
 <a id="self-hosting"></a>
 ## Self-hosting
 
-[LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server) has what you
-need to run your own connection layer:
+[`server/`](server/) has what you need to run your own connection layer:
 
 - **Relay** for the remote service, with a container image:
-  [docs/self-host-relay.md](https://github.com/Souitou-iop/LoopCtrl-Server/blob/main/docs/self-host-relay.md).
+  [server/docs/self-host-relay.md](server/docs/self-host-relay.md).
 - **Headscale** with your own DERP server, for a tailnet:
-  [docs/self-host-headscale.md](https://github.com/Souitou-iop/LoopCtrl-Server/blob/main/docs/self-host-headscale.md).
+  [server/docs/self-host-headscale.md](server/docs/self-host-headscale.md).
 - An operator CLI for driving a phone through the relay.
 
 The app's side of the relay contract is
-[docs/relay-enrollment.md](docs/relay-enrollment.md), so you can also write
-a relay of your own.
+[docs/relay-enrollment.md](docs/relay-enrollment.md) and
+[docs/remote-control.md](docs/remote-control.md), so you can also write a
+relay of your own.
 
 <a id="developers"></a>
 ## For agents and developers
@@ -306,9 +321,10 @@ plaintext mode. `GET /schema` lists every method and parameter, and
 
 `device_info` reports a `capabilities` list, so a client checks features
 instead of comparing versions. Plain HTTP: `/skill`, `/schema`, `/whoami`,
-`/docs` and `/pair` need no key. `/remote` is a browser control page that asks
-for a key before it controls anything. `/stream` (live H.264) and `/logs` take
-a single-use ticket from `stream_ticket`.
+`/docs` and `/pair` need no key. `/remote` is a browser control page that
+pairs before it controls anything. `/stream` (live H.264, framed as in
+[docs/remote-control.md](docs/remote-control.md)) and `/logs` take a
+single-use ticket from `stream_ticket`.
 
 ### Clients
 
@@ -355,6 +371,19 @@ the [cross-app playbook design](docs/research/operation-playbook-design.md),
 [how app knowledge is kept](docs/research/app-knowledge-workflow.md) and the
 [SKILL.md A/B test](docs/research/skill-ab-test.md) (kit in
 [`tools/skill-ab/`](tools/skill-ab/)).
+
+<a id="layout"></a>
+### What's in this repository
+
+| Folder | What | Released as |
+|---|---|---|
+| (root) | The app and the runner on the phone | tag `vX.Y.Z`: `LoopCtrl.ipa` |
+| [`server/`](server/) | The relay and the Headscale templates, to host the connection layer yourself | tag `server-vX.Y.Z`: `ghcr.io/souitou-iop/loopctrl-relay` |
+| [`pair/`](pair/) | LoopCtrl Pair, the USB pairing helper for Windows, macOS, Linux and Android | tag `pair-vX.Y.Z`: installers on the release |
+
+`server/` and `pair/` were the LoopCtrl-Server and LoopCtrl-Pair
+repositories; their history is kept here. Each builds and releases on its
+own (`.github/workflows/`), and a change that spans them lands as one.
 
 <a id="build"></a>
 ### Build from source

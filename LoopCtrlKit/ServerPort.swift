@@ -13,9 +13,13 @@ import Foundation
 enum ServerPort {
     static let defaultPort: UInt16 = 8300
     static let defaultsKey = "serverPort"
-    /// Ports a user may pick. Above 1023 (no privileged ports), and one short
-    /// of 65535 because nearby discovery listens on the port above this one.
-    static let allowed: ClosedRange<Int> = 1024...65534
+    /// Ports a user may pick. Above 1023 (no privileged ports), and two short
+    /// of 65535: nearby discovery listens on the port above this one, and
+    /// relayed requests arrive on loopback two above it.
+    static let allowed: ClosedRange<Int> = 1024...65533
+
+    /// The loopback port relayed requests arrive on (docs/remote-control.md).
+    static func relayIngress(for port: UInt16) -> UInt16 { port &+ 2 }
 
     static var stored: UInt16 {
         get {
@@ -44,15 +48,6 @@ enum InProcessRunnerControl {
     /// (`notRunningError` when no server is up).
     static let rpc = Notification.Name("LoopCtrlInProcessRPC")
     static let rpcMethods: Set<String> = ["config", "logs"]
-    /// A `/pair` or `/rpc` request an operator sent through a remote service
-    /// relay (docs/relay-enrollment.md), handed to the runner as it arrived:
-    /// still an envelope, still subject to pairing, but with source `relay`
-    /// so the invite's pre-approval applies — and so it is never mistaken
-    /// for a loopback caller, which forwarding it to 127.0.0.1 would do.
-    /// userInfo: "path": "/pair" or "/rpc", "body": Data, "connection": the
-    /// 远程服务 connection id, "server": the relay's name (shown as the
-    /// address), "reply": (Int, Data) -> Void — HTTP status and body.
-    static let relayed = Notification.Name("LoopCtrlInProcessRelayed")
     static let notRunningError = "not-running"
     /// The runner's own UserDefaults keys, which this process shares with it.
     static let remoteAccessKey = "allowRemoteAccess"

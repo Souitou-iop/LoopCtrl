@@ -80,7 +80,7 @@ sequenceDiagram
    `Scripts/sign-ipa.sh -i LoopCtrl.ipa`，再安装生成的包。然后在 设置 → 通用 → VPN 与设备管理
    中信任证书，并打开 **开发者模式**（设置 → 隐私与安全性 → 开发者模式，开启后重启）。
 3. **配对一次。** iOS 27 及以上直接在手机上配对。iOS 27 以下，用数据线连一次
-   [LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair)，或者导入配对文件。见[系统要求](#requirements)。
+   [LoopCtrl Pair](pair/)，或者导入配对文件。见[系统要求](#requirements)。
 4. **挂载磁盘镜像。** 连上 LocalDevVPN 或 Shadowrocket，打开 LoopCtrl，点 **挂载磁盘镜像**，App 会带你一步步完成。
 5. **启动。** 点 **启动服务**。第一次启动时，iOS 会要求输入锁屏密码，并请求 **通知** 和 **本地网络** 权限。
    两个都要允许，因为批准客户端就是在通知里完成的。
@@ -122,7 +122,7 @@ App 在 **iOS 16 及以上**都能运行。不同版本的区别在于怎么配�
 
 | iOS | 配对 | 在手机上挂载的磁盘镜像 |
 |---|---|---|
-| 16 | 用数据线连一次：[LoopCtrl Pair](https://github.com/Souitou-iop/LoopCtrl-Pair)，或导入 lockdown 配对文件（`idevicepair`、jitterbugpair、iLoader） | 旧式 `DeveloperDiskImage.dmg`，经 lockdownd 挂载（[说明](docs/ios16-ddi-mount.md)） |
+| 16 | 用数据线连一次：[LoopCtrl Pair](pair/)，或导入 lockdown 配对文件（`idevicepair`、jitterbugpair、iLoader） | 旧式 `DeveloperDiskImage.dmg`，经 lockdownd 挂载（[说明](docs/ios16-ddi-mount.md)） |
 | 17.0–17.3 | 暂不支持在手机上完成（见[已知局限](#limits)） | 请改用 Xcode 挂载 |
 | 17.4–26.3 | 用数据线连一次：LoopCtrl Pair，或导入 iLoader 导出的配对文件 | 个性化镜像（Personalized） |
 | 26.4–26.x | 用数据线连一次：LoopCtrl Pair，或导入 iLoader 导出的配对文件 | Cryptex 镜像 |
@@ -169,13 +169,13 @@ LoopCtrl 的挂载功能基于 [idevice](https://github.com/jkcoxson/idevice)。
 | 默认 | 本机上的 App，以及通过 USB 连接的电脑 |
 | 打开 **局域网访问** | 同一 Wi-Fi 下知道地址的任何设备 |
 | **局域网 + 近场** | 附近的 Apple 设备也可以，不需要同一个网络（AWDL）；手机会主动广播自己 |
-| **远程服务** | 你接受的邀请里列出的操作员，经由中继 |
+| **远程服务** | 中继分配给这台手机的地址上的浏览器或 Agent；你接受的邀请里列出的操作员无需再点允许 |
 | **Tailnet 组网** | 你的 Tailscale 或 Headscale 网络里的设备（需打开局域网访问） |
 
 ### 局域网访问
 
 在主屏幕或服务通知里打开。主屏幕会显示服务地址（点一下即可复制）。默认端口是 **8300**，可以在设置里改
-（1024–65534），服务会在新端口上重启。近场发现会占用它的下一个端口。不要和其他自动化 App 使用同一个端口，
+（1024–65533），服务会在新端口上重启。近场发现会占用它的下一个端口，来自中继的请求从本机回环上再下一个端口进入。不要和其他自动化 App 使用同一个端口，
 两个 runner 抢同一个端口会互相干扰。
 
 近场发现只能在手机上打开。打开后，客户端连地址都不需要：先运行 `python3 loopctrl_rpc.py scan`，
@@ -195,12 +195,19 @@ LoopCtrl 的挂载功能基于 [idevice](https://github.com/jkcoxson/idevice)。
 而且只对经过这个中继的请求生效。没有列出操作员的邀请（手动输入、文字形式）不会预先授权任何人：你需要自己核对指纹，
 每个操作员第一次连接时都会像普通客户端一样询问你。
 
+连接后，中继会给手机分配一个 **公网地址**，显示在连接详情页上，可以复制或分享。在任何浏览器里打开它即可操控手机：
+点 **配对**，在手机上允许，就能看到实时画面，进行触控、键盘输入并查看视图树。这和局域网里的 `http://<手机>:8300/remote`
+是同一个页面。Agent 也可以把这个地址当作 `host:port` 使用（`loopctrl_rpc.py --host https://<slug>.relay.example.com …`）。
+多人和多个 Agent 可以同时操作，页面会显示谁在查看、谁在操控，以及每个人各自的操作记录；机主可以在实时活动或通知里暂停所有远程操作；页面还能录制你的操作并回放。
+
 在连接详情页可以 **断开**（保留绑定，之后再连）或 **解除绑定**（中继会忘掉这台手机）。这里还能看到谁正在操作、
 最近操作记录和中继的证书。
 
-中继是 **不受信任的**：它只转发端到端加密的信封，配对和每个请求都只在操作员的客户端和手机之间解开。
+中继 **无法读取或伪造** 经过它的内容：配对和每个请求都只在客户端和手机之间解开，`https://` 页面上的画面也是加密的。
+但浏览器打开的控制页面由中继转发，所以请使用自己部署的中继，或你愿意把手机交给它的运营方（[原因](docs/remote-control.md#trust)）。
 手机自己的凭据是一把 Ed25519 密钥，保存在它的钥匙串里。**App 里没有内置服务器**：可以使用服务商提供的服务，
-也可以自己部署（见[自行部署](#self-hosting)）。协议和接入 API 见 [docs/relay-enrollment.md](docs/relay-enrollment.md)。
+也可以自己部署（见[自行部署](#self-hosting)）。接入 API 见 [docs/relay-enrollment.md](docs/relay-enrollment.md)，
+隧道、画面流和控制页面见 [docs/remote-control.md](docs/remote-control.md)。
 
 <a id="tailnet"></a>
 ### Tailscale 与 Headscale
@@ -212,15 +219,15 @@ Tailnet 来源，并且一律按远程处理，不会被当成本机。Shadowroc
 <a id="self-hosting"></a>
 ## 自行部署
 
-[LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server) 提供自己搭建连接层所需的一切：
+[`server/`](server/) 提供自己搭建连接层所需的一切：
 
 - **中继**，用于远程服务，附带容器镜像：
-  [docs/self-host-relay.md](https://github.com/Souitou-iop/LoopCtrl-Server/blob/main/docs/self-host-relay.md)。
+  [server/docs/self-host-relay.md](server/docs/self-host-relay.md)。
 - **Headscale**，配合自建 DERP 服务器，用于 Tailnet 组网：
-  [docs/self-host-headscale.md](https://github.com/Souitou-iop/LoopCtrl-Server/blob/main/docs/self-host-headscale.md)。
+  [server/docs/self-host-headscale.md](server/docs/self-host-headscale.md)。
 - 操作员命令行工具，用来通过中继操作手机。
 
-App 一侧的中继约定见 [docs/relay-enrollment.md](docs/relay-enrollment.md)，也可以照着它自己实现中继。
+App 一侧的中继约定见 [docs/relay-enrollment.md](docs/relay-enrollment.md) 和 [docs/remote-control.md](docs/remote-control.md)，也可以照着它们自己实现中继。
 
 <a id="developers"></a>
 ## Agent 与开发者
@@ -238,8 +245,8 @@ JSON-RPC 2.0，走 `POST /rpc`，装在加密信封里，没有明文模式。`G
 - **服务**：`config`、`logs`、`reset`、`stream_ticket`
 
 `device_info` 会给出 `capabilities` 列表，客户端按能力判断功能，不必比较版本号。普通 HTTP：`/skill`、`/schema`、
-`/whoami`、`/docs` 和 `/pair` 无需密钥。`/remote` 是浏览器控制页，真正控制前会要求填入密钥。`/stream`（实时 H.264）
-和 `/logs` 需要先用 `stream_ticket` 换一张一次性票据。
+`/whoami`、`/docs` 和 `/pair` 无需密钥。`/remote` 是浏览器控制页，真正控制前会先配对。`/stream`（实时 H.264，格式见
+[docs/remote-control.md](docs/remote-control.md)）和 `/logs` 需要先用 `stream_ticket` 换一张一次性票据。
 
 ### 客户端
 
@@ -277,6 +284,17 @@ python3 loopctrl_rpc.py --host <手机>:8300 call find_element '{"element_id":"W
 [`docs/research/`](docs/research/) 里是说明书背后的测量和设计：[操控速度与准确率](docs/research/control-speed-accuracy.md)、
 [跨 App 操作手册设计](docs/research/operation-playbook-design.md)、[App 知识如何积累和维护](docs/research/app-knowledge-workflow.md)，
 以及 [SKILL.md A/B 测试](docs/research/skill-ab-test.md)（测试工具在 [`tools/skill-ab/`](tools/skill-ab/)）。
+
+<a id="layout"></a>
+### 仓库里有什么
+
+| 目录 | 内容 | 发布方式 |
+|---|---|---|
+| （根目录） | App 和手机上的运行器 | 标签 `vX.Y.Z`：`LoopCtrl.ipa` |
+| [`server/`](server/) | 中继和 Headscale 模板，用于自己部署连接层 | 标签 `server-vX.Y.Z`：`ghcr.io/souitou-iop/loopctrl-relay` |
+| [`pair/`](pair/) | LoopCtrl Pair，USB 配对助手（Windows、macOS、Linux、Android） | 标签 `pair-vX.Y.Z`：发布页上的安装包 |
+
+`server/` 和 `pair/` 原来是独立的 LoopCtrl-Server 和 LoopCtrl-Pair 仓库，历史都保留在这里。三者各自构建、各自发布（`.github/workflows/`），跨目录的改动作为一次提交一起合入。
 
 <a id="build"></a>
 ### 从源码构建

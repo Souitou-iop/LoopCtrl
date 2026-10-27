@@ -57,7 +57,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// unrecognized selector" the first time a frame is encoded.
 ///
 /// Private, so treat both as optional: call sites must fall back to `.image`
-/// when either is unavailable (see VideoBroadcaster's frame grabber).
+/// when either is unavailable (see captureFrame(jpegQuality:)).
 /// How a captured frame is encoded — a UTI ("public.jpeg") plus a 0…1 quality.
 /// Declared as a protocol rather than an @interface: the class lives in a
 /// private framework we do not link, so declaring the class would leave the

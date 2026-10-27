@@ -1,7 +1,7 @@
 # Phase 0 relay transport prototype
 
 > **Moved.** The `relay/` paths below now live in
-> [LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server) under
+> [`server/`](../server/) under
 > `connect/relay/` (see `docs/server.md`).
 >
 > **Superseded.** The relay now serves the invite enrollment API in
@@ -10,7 +10,7 @@
 > `RelayRPCClient`, the enrollment token and the `relay-debug` URL described
 > below are gone; relayed requests no longer go through 127.0.0.1. This page
 > is kept for the Phase 0 measurements and reasoning. The `relay/` paths
-> below now live in [LoopCtrl-Server](https://github.com/Souitou-iop/LoopCtrl-Server) under `connect/relay/`.
+> below now live in [`server/`](../server/) under `connect/relay/`.
 
 Status: prototype, not a product. It proves one path and nothing else.
 

@@ -1,0 +1,84 @@
+# The relay (server/connect/relay) and the server-side CLI (server/cli).
+# Runs when they change, or the RPC client the CLI shares with the app.
+name: Server CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "Scripts/loopctrl_rpc.py"
+      - ".github/workflows/server-ci.yml"
+  pull_request:
+    paths:
+      - "server/**"
+      - "Scripts/loopctrl_rpc.py"
+      - ".github/workflows/server-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/connect/relay/go.mod
+      - name: Vet and test
+        working-directory: server/connect/relay
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+          go vet ./...
+          go test -race ./...
+
+  cli:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Compile
+        run: python -m compileall -q server/connect server/cli && python -m py_compile server/cli/loopctrl
+      - name: CLI help
+        run: |
+          python server/cli/loopctrl direct --help > /dev/null
+          python server/cli/loopctrl relay --help > /dev/null
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check server server/cli/loopctrl
+      - name: Shell scripts
+        run: shellcheck server/connect/relay/systemd/render-unit.sh
+      - name: Compose files
+        run: |
+          cp server/connect/relay/relay.env.example server/connect/relay/relay.env
+          docker compose -f server/connect/relay/docker-compose.yml config -q
+          HEADSCALE_DOMAIN=hs.example.com docker compose -f server/connect/headscale/docker-compose.yml config -q
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the relay image
+        run: docker build -t loopctrl-relay:ci server/connect/relay
+      - name: Smoke test
+        run: |
+          docker run -d --name relay -p 127.0.0.1:8787:8787 \
+            -e LOOPCTRL_RELAY_OPERATOR_TOKEN=ci-token-0123456789abcdefghij \
+            -e LOOPCTRL_RELAY_PUBLIC_SERVER=relay.test \
+            loopctrl-relay:ci
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8787/healthz && docker exec relay /loopctrl-relay -healthcheck; then exit 0; fi
+            sleep 1
+          done
+          docker logs relay; exit 1
