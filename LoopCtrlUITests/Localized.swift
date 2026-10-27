@@ -39,6 +39,9 @@ enum L10n {
         // Title "LoopCtrl"; state and address in the subtitle; the body only for
         // what matters next. Words match the app's (服务, 局域网访问, 本机, 局域网, 近场).
         case allow, deny, enableRemote, disableRemote, enableNearby, disableNearby, stopServer, copyLogs
+        // Remote viewing and control (the /remote page, agents)
+        case pauseRemote, resumeRemote, remoteWatched, remoteOperating, remoteWatchers, remoteWatchedBody,
+             remotePaused, remotePausedBody
         // Status notification: subtitle, then body lines.
         case statusRunning          // %@ = address:port
         case statusLocal, statusLAN, statusNoLAN
@@ -118,6 +121,27 @@ enum L10n {
                       .ko: "서비스 중지", .es: "Detener servicio", .de: "Dienst stoppen", .ru: "Остановить сервис"],
         .copyLogs: [.en: "Copy Logs", .zhHans: "复制日志", .zhHant: "複製日誌", .ja: "ログをコピー",
                     .ko: "로그 복사", .es: "Copiar registros", .de: "Logs kopieren", .ru: "Копировать логи"],
+
+        .pauseRemote: [.en: "Pause Remote Control", .zhHans: "暂停远程控制", .zhHant: "暫停遠端控制", .ja: "リモート操作を一時停止",
+                       .ko: "원격 제어 일시 중지", .es: "Pausar control remoto", .de: "Fernsteuerung pausieren", .ru: "Приостановить удалённое управление"],
+        .resumeRemote: [.en: "Resume", .zhHans: "继续", .zhHant: "繼續", .ja: "再開",
+                        .ko: "재개", .es: "Reanudar", .de: "Fortsetzen", .ru: "Продолжить"],
+        .remoteWatched: [.en: "Being viewed remotely", .zhHans: "正在被远程查看", .zhHant: "正在被遠端查看", .ja: "リモートで表示中",
+                         .ko: "원격으로 보는 중", .es: "Vista remota activa", .de: "Wird aus der Ferne angesehen", .ru: "Идёт удалённый просмотр"],
+        .remoteOperating: [.en: "%@ operating", .zhHans: "%@ 正在操控", .zhHant: "%@ 正在操控",
+                           .ja: "%@ が操作中", .ko: "%@ 제어 중", .es: "%@ controlando",
+                           .de: "%@ steuert", .ru: "%@ управляет"],
+        .remoteWatchers: [.en: "%@ watching", .zhHans: "%@ 人在查看", .zhHant: "%@ 人在查看",
+                          .ja: "%@ 人が表示中", .ko: "%@명 보는 중", .es: "%@ viendo",
+                          .de: "%@ sehen zu", .ru: "Смотрят: %@"],
+        .remoteWatchedBody: [.en: "Pause stops the screen and every remote action until you resume.",
+                             .zhHans: "暂停后，画面和所有远程操作都会停下，直到你点“继续”。",
+                             .zhHant: "暫停後，畫面和所有遠端操作都會停下，直到你點「繼續」。"],
+        .remotePaused: [.en: "Remote control paused", .zhHans: "远程控制已暂停", .zhHant: "遠端控制已暫停", .ja: "リモート操作を一時停止中",
+                        .ko: "원격 제어 일시 중지됨", .es: "Control remoto en pausa", .de: "Fernsteuerung pausiert", .ru: "Удалённое управление приостановлено"],
+        .remotePausedBody: [.en: "No one can see or touch the screen remotely until you resume.",
+                            .zhHans: "在你继续之前，远程看不到画面，也不能操作。",
+                            .zhHant: "在你繼續之前，遠端看不到畫面，也不能操作。"],
 
         // ── Status notification ──
         .statusRunning: [.en: "Running · %@", .zhHans: "运行中 · %@", .zhHant: "執行中 · %@", .ja: "稼働中 · %@",

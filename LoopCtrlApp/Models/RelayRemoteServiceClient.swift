@@ -7,13 +7,10 @@ import Security
 /// (connect/relay/loopctrl_relay_server.py) or by anyone's own implementation
 /// of it.
 ///
-/// The channel is a repeated HTTPS poll, not a held socket: each poll is one
-/// request the relay holds until an operator sends something (or
-/// `poll_timeout`), so nothing has to survive iOS suspending the app. What
-/// arrives is an operator's `/pair` or `/rpc` body, opaque here; it goes to
-/// the runner in this process with source `relay` (`InProcessRunnerControl
-/// .relayed`) and the runner's answer goes back the same way. The relay never
-/// sees a pairing key, and this client never opens an envelope.
+/// The channel is the tunnel in docs/remote-control.md (`RelayChannel`): one
+/// WebSocket the relay opens HTTP exchanges on, each carried to the runner's
+/// relay ingress on loopback with source `relay`. The relay never sees a
+/// pairing key, and this client never opens an envelope.
 final class RelayRemoteServiceClient: RemoteServiceClient {
     private var channels: [String: Task<Void, Never>] = [:]
     private let lock = NSLock()
@@ -48,7 +45,8 @@ final class RelayRemoteServiceClient: RemoteServiceClient {
             throw RemoteServiceError.invalidResponse
         }
         return RemoteEnrollment(deviceID: deviceID, organization: body["organization"] as? String ?? "",
-                                operators: try Self.operators(body), spkiSHA256: api.seenSPKI)
+                                operators: try Self.operators(body), spkiSHA256: api.seenSPKI,
+                                publicURL: (body["public_url"] as? String).flatMap(URL.init(string:)))
     }
 
     // MARK: - Channel
@@ -115,215 +113,6 @@ final class RelayRemoteServiceClient: RemoteServiceClient {
     }
 }
 
-/// One open channel: authenticate with the device key, poll, hand each
-/// request to the runner, answer, and retry through drops.
-private final class RelayChannel {
-    private let connection: RemoteConnection
-    private let key: Curve25519.Signing.PrivateKey
-    private let emit: (RemoteChannelEvent) -> Void
-    private let api: RelayHTTP
-    private var token: String?
-    private var pollTimeout: TimeInterval = 25
-    private var established = false
-    private var needsEstablished = true
-    private var failures = 0
-
-    /// Who is operating, from the relayed traffic itself: a `/pair` whose key
-    /// is one of this connection's operators, and the session id (`tok`) the
-    /// runner gave it, which every later envelope carries in the clear.
-    private let state = NSLock()
-    private var operatorByToken: [String: String] = [:]
-    private var activeOperator: String?
-    private var lastActivity = Date.distantPast
-    private static let operatorIdle: TimeInterval = 120
-
-    init(connection: RemoteConnection, key: Curve25519.Signing.PrivateKey,
-         emit: @escaping (RemoteChannelEvent) -> Void) {
-        self.connection = connection
-        self.key = key
-        self.emit = emit
-        self.api = RelayHTTP(base: connection.serverURL, pin: connection.spkiPin)
-    }
-
-    func run() async {
-        let ticker = Task { await self.tick() }
-        defer { ticker.cancel() }
-        while !Task.isCancelled {
-            do {
-                if token == nil { try await authenticate() }
-                try await pollOnce()
-                failures = 0
-            } catch is CancellationError {
-                return
-            } catch let error as RemoteServiceError where [.pinMismatch, .tlsFailure, .disconnectedByServer].contains(error) {
-                emit(.failed(error))
-                return
-            } catch {
-                if Task.isCancelled { return }
-                failures += 1
-                // Five tries with backoff, then 无法连接服务器 (the store's
-                // machine counts the same drops for its reconnect state).
-                if failures > RemoteConnectionMachine.maxReconnectAttempts {
-                    emit(.failed(.serverUnreachable))
-                    return
-                }
-                if established { emit(.lost) }
-                // Sign in again on the way back, so 已连接 shows as soon as
-                // the relay answers rather than after the next held poll.
-                token = nil
-                needsEstablished = true
-                let delay = min(16, pow(2, Double(failures - 1)))
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            }
-        }
-    }
-
-    /// Challenge, signature, device token. Reports the round trip as latency.
-    private func authenticate() async throws {
-        let started = Date()
-        let (status, body) = try await api.post("/v1/device/challenge", ["device_id": connection.deviceID])
-        let rtt = Int(Date().timeIntervalSince(started) * 1000)
-        if status == 404 { throw RemoteServiceError.disconnectedByServer }   // unbound on the server
-        guard status == 200, let nonce = body["nonce"] as? String else { throw RelayHTTP.Retry() }
-        let message = "loopctrl-channel-v1\n\(nonce)\n\(connection.serverDisplay)"
-        let sig = try key.signature(for: Data(message.utf8))
-        let (s2, session) = try await api.post("/v1/device/session", [
-            "device_id": connection.deviceID, "nonce": nonce, "sig": RelayHTTP.base64url(sig),
-        ])
-        if s2 == 404 { throw RemoteServiceError.disconnectedByServer }
-        guard s2 == 200, let t = session["device_token"] as? String else { throw RelayHTTP.Retry() }
-        token = t
-        if let p = session["poll_timeout"] as? Double, p > 0 { pollTimeout = p }
-        // First sign-in, or back after a drop: connected. A token that just
-        // lapsed while all was well only refreshes the latency.
-        if needsEstablished {
-            needsEstablished = false
-            established = true
-            emit(.established(latencyMS: rtt))
-        } else {
-            emit(.latency(rtt))
-        }
-    }
-
-    private func pollOnce() async throws {
-        guard let token else { return }
-        let (status, body) = try await api.send("POST", "/v1/device/poll", Data(),
-                                                headers: ["Authorization": "Bearer \(token)"],
-                                                timeout: pollTimeout + 15)
-        switch status {
-        case 204: return
-        case 401: self.token = nil; return   // lapsed: sign in again with the key
-        case 200: break
-        default: throw RelayHTTP.Retry()
-        }
-        guard let work = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
-              let requestID = work["request_id"] as? String, let path = work["path"] as? String,
-              let b64 = work["body_b64"] as? String, let payload = Data(base64Encoded: b64) else {
-            throw RelayHTTP.Retry()
-        }
-        // Answer in the background and poll again at once: a pairing prompt
-        // can wait a minute for the user, and nothing else should wait with it.
-        Task { await self.answer(requestID: requestID, path: path, payload: payload, token: token) }
-    }
-
-    private func answer(requestID: String, path: String, payload: Data, token: String) async {
-        let (status, reply) = await RelayRunnerBridge.deliver(path: path, body: payload, connection: connection)
-        observe(path: path, request: payload, status: status, reply: reply)
-        let response: [String: Any] = [
-            "request_id": requestID, "status": status,
-            "body_b64": reply.base64EncodedString(), "content_type": "application/json",
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: response) else { return }
-        _ = try? await api.send("POST", "/v1/device/response", data,
-                                headers: ["Authorization": "Bearer \(self.token ?? token)"])
-    }
-
-    /// Operator presence for the home card and the log. Display only: what
-    /// an operator may do is decided by pairing and the envelope, not here.
-    private func observe(path: String, request: Data, status: Int, reply: Data) {
-        let req = (try? JSONSerialization.jsonObject(with: request)) as? [String: Any]
-        state.lock()
-        var started: String?
-        if path == "/pair", status == 200,
-           let pub = (req?["pub"] as? String).flatMap({ Data(base64Encoded: $0) }),
-           let tok = ((try? JSONSerialization.jsonObject(with: reply)) as? [String: Any])?["tok"] as? String {
-            let keyID = PairRequestLedger.keyID(forPublicKey: pub)
-            let name = connection.operators.first { $0.keyID == keyID }?.name
-                ?? (req?["client_name"] as? String) ?? keyID.prefix(8).description
-            operatorByToken[tok] = name
-            started = name
-        } else if path == "/rpc", let tok = req?["tok"] as? String, let name = operatorByToken[tok] {
-            started = name
-        }
-        if let name = started {
-            lastActivity = Date()
-            if activeOperator != name {
-                activeOperator = name
-                state.unlock()
-                emit(.operatorStarted(name))
-                return
-            }
-        }
-        state.unlock()
-    }
-
-    /// Ends an operator's session after a quiet spell; refreshes latency.
-    private func tick() async {
-        while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 30_000_000_000)
-            guard !Task.isCancelled else { return }
-            state.lock()
-            let ended = activeOperator != nil && Date().timeIntervalSince(lastActivity) > Self.operatorIdle
-            if ended { activeOperator = nil }
-            state.unlock()
-            if ended { emit(.operatorEnded) }
-            guard established else { continue }
-            let started = Date()
-            if let (status, _) = try? await api.send("GET", "/healthz", nil, timeout: 10), status == 200 {
-                emit(.latency(Int(Date().timeIntervalSince(started) * 1000)))
-            }
-        }
-    }
-}
-
-/// Hands a relayed request to the runner and waits for its answer.
-enum RelayRunnerBridge {
-    static func deliver(path: String, body: Data, connection: RemoteConnection) async -> (Int, Data) {
-        #if LOOPCTRL_ALL_IN_ONE
-        // Longer than a pairing prompt waits (60 s), shorter than the relay
-        // waits for us.
-        let timeout: TimeInterval = path == "/pair" ? 80 : 60
-        return await withCheckedContinuation { continuation in
-            let once = NSLock()
-            var done = false
-            func finish(_ status: Int, _ data: Data) {
-                once.lock(); defer { once.unlock() }
-                guard !done else { return }
-                done = true
-                continuation.resume(returning: (status, data))
-            }
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                finish(504, Self.error("loopctrl_timeout", "LoopCtrl did not answer in time"))
-            }
-            // No observer until the runner has started: the timeout answers.
-            NotificationCenter.default.post(name: InProcessRunnerControl.relayed, object: nil, userInfo: [
-                "path": path, "body": body, "connection": connection.id,
-                "server": connection.serverDisplay,
-                "reply": { (status: Int, data: Data) in finish(status, data) } as (Int, Data) -> Void,
-            ])
-        }
-        #else
-        // The two-app build's runner is another process; it has no relayed
-        // entry point yet, and loopback would make the request `local`.
-        return (503, error("loopctrl_unavailable", "This build cannot take relayed requests"))
-        #endif
-    }
-
-    private static func error(_ code: String, _ message: String) -> Data {
-        (try? JSONSerialization.data(withJSONObject: ["error": ["code": code, "message": message]])) ?? Data()
-    }
-}
-
 /// HTTPS to one relay: JSON in and out, the certificate's SPKI recorded,
 /// and the invite's pin (if any) enforced before a byte is sent.
 final class RelayHTTP: NSObject, URLSessionDelegate {
@@ -379,6 +168,25 @@ final class RelayHTTP: NSObject, URLSessionDelegate {
         }
     }
 
+    /// The tunnel WebSocket at `path`, over this session (so the pin holds).
+    func webSocket(_ path: String, headers: [String: String]) -> URLSessionWebSocketTask? {
+        var prefix = base.absoluteString
+        while prefix.hasSuffix("/") { prefix.removeLast() }
+        guard var components = URLComponents(string: prefix + path) else { return nil }
+        components.scheme = components.scheme == "http" ? "ws" : "wss"
+        guard let url = components.url else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: 30)
+        for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
+        let task = session.webSocketTask(with: request)
+        task.maximumMessageSize = 1 << 20
+        return task
+    }
+
+    /// After a failed call: the certificate refusal, if that was the cause.
+    func refusalOrRetry() throws -> Error {
+        refusal ?? Retry()
+    }
+
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
@@ -386,15 +194,22 @@ final class RelayHTTP: NSObject, URLSessionDelegate {
             completionHandler(.performDefaultHandling, nil)
             return
         }
-        guard SecTrustEvaluateWithError(trust, nil) else {
-            refusal = .tlsFailure
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
         let spki = Self.spkiSHA256(trust)
         seenSPKI = spki
-        if let pin, spki != pin {
-            refusal = .pinMismatch
+        if let pin {
+            // A pinned key is the trust anchor: the invite carried it out of
+            // band, which says more than any CA could. So a self-hosted relay
+            // with its own certificate works when its invite pins it.
+            guard spki == pin else {
+                refusal = .pinMismatch
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
+            completionHandler(.useCredential, URLCredential(trust: trust))
+            return
+        }
+        guard SecTrustEvaluateWithError(trust, nil) else {
+            refusal = .tlsFailure
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }

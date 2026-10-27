@@ -12,6 +12,9 @@ struct ActionCommand {
     var elementType: String?
     var bundleId: String?
     var fast: Bool?
+    /// From a person driving the live screen (the /remote page): they see the
+    /// result themselves, so the agent safety checks are skipped for speed.
+    var manual: Bool?
     var fromX: Double?
     var fromY: Double?
     var toX: Double?
@@ -59,6 +62,7 @@ struct ActionCommand {
         self.elementType = params?["element_type"]?.stringValue
         self.bundleId = params?["bundle_id"]?.stringValue
         self.fast = params?["fast"]?.boolValue
+        self.manual = params?["manual"]?.boolValue
         self.fromX = params?["from_x"]?.doubleValue
         self.fromY = params?["from_y"]?.doubleValue
         self.toX = params?["to_x"]?.doubleValue

@@ -9,6 +9,7 @@ Usage:
     ./loopctrl_rpc.py --host 10.0.0.5:8300 call device_info
     ./loopctrl_rpc.py --host 10.0.0.5:8300 call tap '{"x":100,"y":200}'
     ./loopctrl_rpc.py --host 10.0.0.5:8300 shot out.jpg          # JPEG by default
+    ./loopctrl_rpc.py --host https://<slug>.relay.example.com call device_info   # through a relay
 
 Discovery (the phone has Nearby Discovery on): found on the LAN from any OS,
 and over Apple peer-to-peer Wi-Fi from macOS with no shared network needed:
@@ -244,6 +245,14 @@ _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _ZonedHan
 _answered_by: list = [None]
 
 
+def _url(host: str, path: str) -> str:
+    """`host` is host:port on the LAN, or a whole base URL such as a relay's
+    public address (https://<slug>.relay.example.com/)."""
+    if "://" in host:
+        return host.rstrip("/") + path
+    return f"http://{host}{path}"
+
+
 def _post(url: str, obj: dict, timeout: float) -> tuple[int, dict]:
     body = json.dumps(obj).encode()
     req = urllib.request.Request(url, data=body,
@@ -265,7 +274,7 @@ def _post(url: str, obj: dict, timeout: float) -> tuple[int, dict]:
 def whoami(host: str, timeout: float = 5.0) -> dict | None:
     """GET /whoami: {device_id, name, …}; None when the server predates it."""
     try:
-        with _opener.open(f"http://{host}/whoami", timeout=timeout) as resp:
+        with _opener.open(_url(host, "/whoami"), timeout=timeout) as resp:
             info = json.loads(resp.read() or b"{}")
             return info if info.get("device_id") else None
     except (urllib.error.HTTPError, json.JSONDecodeError):
@@ -740,7 +749,7 @@ def pair(host: str, client_name: str, plain: bool, timeout: float = 90.0,
     A refused or timed-out attempt can be allowed afterwards on the phone
     (LoopCtrl → recent requests → Allow This Client); running `pair` again
     within 10 minutes then succeeds without another prompt."""
-    url = f"http://{host}/pair"
+    url = _url(host, "/pair")
     if plain:
         status, resp = _post(url, {"client_name": client_name, "plain": True}, timeout)
         if status != 200:
@@ -797,7 +806,7 @@ def _call_with(host: str, record: dict, method: str, params: dict | None,
     signed = b"v1" + bytes.fromhex(tok) + ts.to_bytes(8, "big") + nonce + ct
     tag = _hmac(k_mac, signed)
 
-    status, resp = _post(f"http://{host}/rpc", {
+    status, resp = _post(_url(host, "/rpc"), {
         "v": 1, "tok": tok, "ts": ts, "nonce": nonce.hex(),
         "ct": base64.b64encode(ct).decode(), "tag": tag.hex(),
     }, timeout)
@@ -893,7 +902,8 @@ def device_call(host: str, method: str, params: dict | None = None, *,
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--host", default="127.0.0.1:8300")
+    ap.add_argument("--host", default="127.0.0.1:8300",
+                    help="host:port, or a base URL such as a relay's public address")
     ap.add_argument("--nearby", metavar="NAME_OR_ID",
                     help="reach a discovered device by name or id instead of --host "
                          "(over the LAN, else peer-to-peer Wi-Fi on macOS)")
@@ -909,7 +919,7 @@ def main() -> int:
 
     c = sub.add_parser("call", help="make an RPC call")
     c.add_argument("method")
-    c.add_argument("params", nargs="?", default="{}")
+    c.add_argument("params", nargs="?", default="{}", help="JSON object, or @file holding one")
 
     sub.add_parser("list", help="list paired devices")
 
@@ -995,7 +1005,13 @@ def main() -> int:
               f"{px_w}x{px_h}px  ->  {pt_w}x{pt_h}pt  (scale {sc}: tap_x = px/{sc}, tap_y = py/{sc})  "
               f"{(time.time() - t0) * 1000:.0f}ms end-to-end")
     else:
-        out = rpc(args.method, json.loads(args.params))
+        # "@file": the params are in that file (a page_update is too big to type).
+        if args.params.startswith("@"):
+            with open(args.params[1:], encoding="utf-8") as fh:
+                params = json.load(fh)
+        else:
+            params = json.loads(args.params)
+        out = rpc(args.method, params)
         print(json.dumps(out, indent=2, ensure_ascii=False))
     return 0
 

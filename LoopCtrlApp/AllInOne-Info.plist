@@ -18,6 +18,10 @@
 		<string>zh-Hans</string>
 		<string>zh-Hant</string>
 	</array>
+	<!-- The remote-control Live Activity (LoopCtrlLiveActivity), started by
+	     the in-process runner. -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>LoopCtrlDDIMirrors</key>
 	<array/>
 	<key>CFBundleURLTypes</key>

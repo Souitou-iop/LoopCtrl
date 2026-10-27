@@ -1171,6 +1171,9 @@ struct RemoteConnectionDetailView: View {
                     ValueRow(title: L10n.rs(.organization), systemImage: "building.2", value: c.organization)
                     Text(L10n.rs(.providedByServer)).font(.caption2).foregroundColor(.secondary).padding(.leading, 36)
                 }
+                if let page = c.controlPageURL {
+                    ControlPageRow(url: page)
+                }
                 CopyRow(title: L10n.rs(.deviceID), systemImage: "iphone", value: c.deviceID)
                 if let since = m.connectedSince {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -1290,6 +1293,44 @@ struct RemoteConnectionDetailView: View {
         calendar.locale = RemoteServiceText.locale
         f.calendar = calendar
         return f.string(from: max(0, seconds)) ?? "—"
+    }
+}
+
+/// The relay's address for this phone's control page: open it in any
+/// browser, pair, and drive the phone (docs/remote-control.md).
+private struct ControlPageRow: View {
+    let url: URL
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(L10n.rs(.controlPage), systemImage: "safari")
+            Text(verbatim: url.absoluteString)
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundColor(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(2)
+                .truncationMode(.middle)
+            HStack(spacing: 16) {
+                Button {
+                    UIPasteboard.general.url = url
+                    copied = true
+                    Task {
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        copied = false
+                    }
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                }
+                ShareLink(item: url) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .accessibilityLabel(L10n.rs(.shareControlPage))
+            }
+            .buttonStyle(.borderless)
+            .padding(.leading, 36)
+        }
+        .padding(.vertical, 2)
     }
 }
 

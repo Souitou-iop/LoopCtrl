@@ -1,4 +1,4 @@
-.PHONY: build ipa ipa-allinone ipa-twoapp clean help
+.PHONY: page-push build ipa ipa-allinone ipa-twoapp clean help
 
 PROJECT       = LoopCtrl.xcodeproj
 SCHEME        = LoopCtrl
@@ -21,6 +21,13 @@ ifdef UNSIGNED
 XCODE_SIGNING = CODE_SIGNING_ALLOWED=NO LOOPCTRL_BUNDLE_PREFIX=top.ebato
 else
 XCODE_SIGNING = -allowProvisioningUpdates
+endif
+
+# `make ipa DEV=1` (usually with UNSIGNED=1): a test build with its own bundle
+# id (<prefix>.loopctrl.dev) and name (LoopCtrl Dev), packaged as
+# LoopCtrl-Dev.ipa, so it installs next to the release app.
+ifdef DEV
+DEV_SETTINGS  = LOOPCTRL_BUNDLE_SUFFIX=.dev "LOOPCTRL_DISPLAY_NAME=LoopCtrl Dev"
 endif
 
 # Signing identity is read from the freshly-built app (below) so the
@@ -243,7 +250,7 @@ ipa-twoapp: build
 #   their internal name, LoopCtrlAllInOne.
 # ──────────────────────────────────────────────
 ALLINONE_APP  = LoopCtrlAllInOne.app
-ALLINONE_IPA  = LoopCtrl.ipa
+ALLINONE_IPA  = $(if $(DEV),LoopCtrl-Dev.ipa,LoopCtrl.ipa)
 
 # Old name of `ipa`, kept so existing scripts and habits still work.
 ipa-allinone: ipa
@@ -257,6 +264,7 @@ ipa: Frameworks/IDevice.xcframework $(PROJECT)/project.pbxproj
 		-destination "generic/platform=iOS" \
 		$(XCODE_SIGNING) \
 		ARCHS=arm64 \
+		$(DEV_SETTINGS) \
 		$(EXTRA_BUILD_SETTINGS)
 	@# Same two steps the runner gets in `ipa-twoapp`, for the same reasons: the
 	@# plug-in carries the host's bundle id, and is re-signed before the host.
@@ -273,6 +281,7 @@ ipa: Frameworks/IDevice.xcframework $(PROJECT)/project.pbxproj
 	IDENT="$${SHA:-$$AUTH}"; if [ "$$AUTH" = "-" ]; then IDENT="-"; fi; \
 	for dylib in "$$APP/"*.dylib; do [ -f "$$dylib" ] && codesign --force --sign "$$IDENT" "$$dylib"; done; \
 	codesign --force --sign "$$IDENT" "$$APP/PlugIns/$(XCTEST_BUNDLE)"; \
+	for ext in "$$APP/PlugIns/"*.appex; do [ -d "$$ext" ] && codesign --force --sign "$$IDENT" --preserve-metadata=entitlements "$$ext"; done; \
 	codesign --force --sign "$$IDENT" --preserve-metadata=entitlements "$$APP"; \
 	codesign --verify --deep --strict "$$APP"
 	rm -rf "$(BUILD_DIR)/Payload"
@@ -284,9 +293,19 @@ ipa: Frameworks/IDevice.xcframework $(PROJECT)/project.pbxproj
 	@echo "✅ $(ALLINONE_IPA)"
 
 # ──────────────────────────────────────────────
+# The control page without reinstalling (docs/remote-control.md, "Page
+# updates"): sign it, then push it to a paired phone. HOST is what
+# Scripts/loopctrl_rpc.py takes: host:port, or a relay's public address.
+page-push:
+	@test -n "$(HOST)" || { echo "usage: make page-push HOST=<host:port or https://…/d/<slug>/>"; exit 2; }
+	@set -e; OUT="$$(mktemp -t loopctrl-page)"; trap 'rm -f "$$OUT"' EXIT; \
+	swift Scripts/page-update.swift "$$OUT"; \
+	python3 Scripts/loopctrl_rpc.py --host "$(HOST)" call page_update @"$$OUT"
+
+# ──────────────────────────────────────────────
 clean:
 	rm -rf $(DERIVED_DATA)
-	rm -f $(ALLINONE_IPA) $(MAIN_IPA) $(RUNNER_IPA) LoopCtrl-AllInOne.ipa
+	rm -f LoopCtrl.ipa LoopCtrl-Dev.ipa $(MAIN_IPA) $(RUNNER_IPA) LoopCtrl-AllInOne.ipa
 	@echo "✅ Cleaned"
 
 help:
@@ -294,6 +313,7 @@ help:
 	@echo ""
 	@echo "  make ipa     Build + package LoopCtrl.ipa (the default build, what releases ship)"
 	@echo "  make ipa UNSIGNED=1   Same, ad-hoc signed (no team/device needed)"
+	@echo "  make ipa UNSIGNED=1 DEV=1   A test build: .dev bundle id, LoopCtrl-Dev.ipa"
 	@echo "  make ipa-twoapp   Older two-app build: LoopCtrl-TwoApp.ipa + LoopCtrlUITests-Runner.ipa"
 	@echo "  make build   Build the two-app targets with Xcode signing (used by ipa-twoapp)"
 	@echo "  Scripts/package-release.sh [--two-app]   Strip profiles/team ids into release/"

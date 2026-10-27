@@ -97,6 +97,43 @@ class FastActionHandler {
     /// `hold`: how long the finger rests at the end before lifting. A finger
     /// that stops before it lifts leaves with no velocity, so the content
     /// stops where the drag ended — no momentum, whatever the drag speed.
+    /// Several fingers at once, each along its own path: (point, seconds from
+    /// the start). A finger touches down at its first point and lifts at its
+    /// last; a finger whose points don't move is a hold. One record, so iOS
+    /// sees the fingers together (a pinch, a two-finger hold).
+    func fastGesture(_ fingers: [[(point: CGPoint, t: Double)]]) -> ([String: JSONValue]?, JSONRPCError?) {
+        let eventRecord = XCSynthesizedEventRecord(name: "Gesture")
+        var end = 0.0
+        for finger in fingers {
+            guard let first = finger.first, let last = finger.last else { continue }
+            let path = XCPointerEventPath(forTouchAt: first.point, offset: first.t)
+            path.pressDown(atOffset: first.t)
+            // A finger resting in place still needs samples, or iOS reads a
+            // lift-off velocity from the last move; identical points may be
+            // coalesced away, so a resting one wobbles by a third of a point.
+            var jitter = 0.3
+            var previous = first.point
+            for sample in finger.dropFirst() {
+                var p = sample.point
+                if p == previous {
+                    p.y += jitter
+                    jitter = -jitter
+                }
+                previous = sample.point
+                path.move(to: p, atOffset: sample.t)
+            }
+            path.liftUp(atOffset: max(last.t, first.t + 0.05))
+            end = max(end, last.t)
+            eventRecord.add(path)
+        }
+        do {
+            try eventRecord.synthesize()
+            return (["message": .string("Performed a \(fingers.count)-finger gesture over \(String(format: "%.2g", end))s")], nil)
+        } catch {
+            return (nil, .serverError("Gesture failed: \(error.localizedDescription)"))
+        }
+    }
+
     func fastSwipe(fromX: Double, fromY: Double, toX: Double, toY: Double, duration: Double = 0.3,
                    hold: Double = 0.05) -> ([String: JSONValue]?, JSONRPCError?) {
         let eventRecord = XCSynthesizedEventRecord(name: "Fast Swipe")

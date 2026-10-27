@@ -1,1839 +1,2193 @@
 import Foundation
 
-/// Static HTML for GET /remote — a browser control page: plays the live MPEG-TS
-/// stream in <video> (via mpegts.js) and drives the device with the same JSON-RPC
-/// as the desktop GUI (tap/swipe/scroll/keyboard + a side panel of buttons).
-/// The visual style is a light-touch shadcn/ui port — Tailwind-flavor tokens,
-/// Radix-ish surfaces (zinc, subtle border, rounded, focus rings) — hand-written
-/// in CSS so the page stays a single self-contained file.
+/// GET /remote: the control page a person drives the phone from, on the LAN,
+/// a tailnet or the relay's public address (docs/remote-control.md).
 ///
-/// The page has NO external network dependency: CSS is inline, mpegts.js is
-/// vendored into MpegtsJS.swift and inlined at build time. Works fully offline.
+/// One self-contained file with no external requests. Every URL it uses is
+/// relative, so it works at `/remote` and under a relay's `/d/<slug>/` alike.
+/// It pairs from the browser (X25519, approved on the phone), keeps the
+/// 32-byte key in this origin's storage, and seals every /rpc call itself:
+/// the key never leaves the browser. The crypto falls back to plain
+/// JavaScript where WebCrypto is missing (an http:// LAN address is not a
+/// secure context).
 ///
-/// The page holds the 32-byte pairing key and does the protocol-v1 crypto in
-/// the browser (WebCrypto HMAC-SHA256): every /rpc body is sealed locally and
-/// the key itself is never transmitted.
+/// The look is miuix's (compose-miuix-ui/miuix, Apache-2.0): its colours,
+/// type sizes and component shapes recreated in CSS, light and dark,
+/// following the system unless the viewer picks one.
 enum RemoteHTML {
-    /// Web app manifest for GET /remote/manifest.webmanifest. Added to the Home
-    /// Screen, the page opens in full screen with nothing of the browser around it.
+    /// GET /remote/manifest.webmanifest. Added to a Home Screen, the page opens
+    /// full screen. Relative URLs resolve against the manifest's own address.
     static let manifest: String = #"""
 {
-  "name": "LoopCtrl Remote",
-  "short_name": "LoopCtrl Remote",
-  "start_url": "/remote?fullscreen=1",
-  "scope": "/remote",
+  "name": "LoopCtrl",
+  "short_name": "LoopCtrl",
+  "start_url": "../remote",
+  "scope": "../",
   "display": "fullscreen",
-  "background_color": "#000000",
-  "theme_color": "#000000",
-  "icons": [{ "src": "/remote/icon.png", "sizes": "180x180", "type": "image/png" }]
+  "background_color": "#0b0b0d",
+  "theme_color": "#0b0b0d",
+  "icons": [{ "src": "icon.png", "sizes": "180x180", "type": "image/png" }]
 }
 """#
 
-    /// Full HTML for GET /remote. The stream is fragmented MP4 (`Content-Type:
-    /// video/mp4`) via MSE — every major browser decodes it natively, so this
-    /// page has zero JS decoder dependency.
+    /// GET /remote-sw.js. Network first, always: a copy is used only when the
+    /// phone can't be reached (no connection, or the relay's 503 for an
+    /// offline phone), and only for the page, its icon and its manifest.
+    static let serviceWorker: String = #"""
+const CACHE = "loopctrl-page-v1";
+const PAGE = /\/remote(\/(icon\.png|manifest\.webmanifest))?$/;
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener("fetch", (e) => {
+  const req = e.request;
+  if (req.method !== "GET" || !PAGE.test(new URL(req.url).pathname)) return;
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    try {
+      const res = await fetch(req, { cache: "no-store" });
+      if (res.ok) { cache.put(req, res.clone()); return res; }
+      return (await cache.match(req)) || res;
+    } catch (err) {
+      const kept = await cache.match(req);
+      if (kept) return kept;
+      throw err;
+    }
+  })());
+});
+"""#
+
     static let page: String = #"""
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<!-- Opened from the Home Screen, the page runs without Safari's bars: the only
-     full screen an iPhone offers a page that isn't a bare <video>. -->
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#09090b">
-<meta name="apple-mobile-web-app-title" content="LoopCtrl Remote">
-<link rel="manifest" href="/remote/manifest.webmanifest">
-<link rel="apple-touch-icon" href="/remote/icon.png">
-<link rel="icon" type="image/png" href="/remote/icon.png">
-<title>LoopCtrl Remote</title>
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f7f7f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="referrer" content="no-referrer">
+<link rel="manifest" href="remote/manifest.webmanifest">
+<link rel="apple-touch-icon" href="remote/icon.png">
+<link rel="icon" type="image/png" href="remote/icon.png">
+<title>LoopCtrl</title>
+<script>
+// The theme before first paint, so a dark page never flashes white.
+try { const th = localStorage.getItem("loopctrl.theme"); if (th === "light" || th === "dark") document.documentElement.dataset.theme = th; } catch (_) {}
+</script>
 <style>
-  /* ── shadcn-inspired tokens (dark) ── */
-  :root {
-    --bg: #09090b;          /* zinc-950 */
-    --card: #18181b;        /* zinc-900 */
-    --card-hi: #27272a;     /* zinc-800 */
-    --border: #27272a;
-    --border-hi: #3f3f46;   /* zinc-700 */
-    --fg: #fafafa;          /* zinc-50 */
-    --muted: #a1a1aa;       /* zinc-400 */
-    --muted-2: #71717a;     /* zinc-500 */
-    --primary: #fafafa;
-    --primary-fg: #18181b;
-    --accent: #22c55e;      /* green-500 */
-    --danger: #ef4444;      /* red-500 */
-    --warn: #f59e0b;        /* amber-500 */
-    --ring: rgba(250,250,250,.35);
-    --radius: 10px;
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; overscroll-behavior: none; }
-  body {
-    margin: 0;
-    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
-    color: var(--fg); background: var(--bg);
-    -webkit-font-smoothing: antialiased;
-  }
-  .app {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) clamp(280px, 26vw, 340px);
-    gap: 12px;
-    padding: 12px;
-    padding-bottom: 44px;   /* leave room for the fixed #status bar */
-    height: 100vh;
-    height: 100dvh;         /* mobile: exclude URL bar */
-  }
-  /* ── panels ── */
-  .panel {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-  }
-  /* A sidebar panel must keep its natural height. As flex items they default to
-     flex-shrink:1, so an overfull sidebar squashed each panel instead of
-     scrolling — and `overflow:hidden` then clipped the contents away with no
-     scrollbar anywhere. Pinning the basis to the content height makes the
-     overflow real, which is what lets aside's own scrollbar appear. */
-  aside > .panel { flex: 0 0 auto; }
-  .stage {
-    position: relative; display: flex; align-items: center; justify-content: center;
-    background: #000; user-select: none;
-    min-height: 0; min-width: 0;
-  }
-  #video {
-    width: 100%; height: 100%; display: block; background: #000;
-    object-fit: contain;
-    outline: none;
-  }
-  .stage .overlay {
-    position: absolute; inset: 0;
-    /* invisible input catcher — sits above <video>, receives clicks/keys */
-    cursor: crosshair;
-    /* On a phone, a drag here is a swipe for the device — not a page scroll,
-       pinch-zoom or double-tap zoom of this page. */
-    touch-action: none;
-  }
-  /* Shown while disconnected: nothing connects on its own (each connection
-     streams video and polls the device), and on a phone the Connect button
-     in the drawer is out of sight. */
-  #connectCta {
-    position: absolute; z-index: 6;
-    left: 50%; top: 50%; transform: translate(-50%, -50%);
-    display: flex; flex-direction: column; align-items: center; gap: 10px;
-    color: var(--muted); font-size: 12px; text-align: center;
-  }
-  #connectCta[hidden] { display: none; }
-  #connectCta .btn { min-height: 44px; padding: 10px 28px; font-size: 15px; }
-  .stage .hud {
-    position: absolute; top: 10px; left: 12px; right: 12px;
-    display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
-    color: var(--muted); font-size: 12px; pointer-events: none;
-    /* Above the input overlay, which comes later in the stage and would
-       otherwise take the clicks meant for the HUD's buttons. */
-    z-index: 5;
-  }
-  /* Device badge and connection state stay on one line, full stage width. */
-  .hud-row {
-    align-self: stretch;
-    display: flex; justify-content: space-between; align-items: center;
-  }
-  .badge {
-    background: rgba(0,0,0,.5); border: 1px solid var(--border);
-    padding: 2px 8px; border-radius: 999px;
-  }
-  .hud-end { display: flex; align-items: center; gap: 6px; }
-  .hud-btn {
-    pointer-events: auto;
-    background: rgba(0,0,0,.5); border: 1px solid var(--border); color: var(--fg);
-    border-radius: 999px; width: 26px; height: 26px; padding: 0;
-    font-size: 13px; line-height: 1; cursor: pointer;
-  }
-  .hud-btn:hover { border-color: var(--border-hi); }
-  /* ── device health overlay ──
-     Sits in the HUD directly under the device badge, so identity and live state
-     read as one top-left cluster. A portrait phone on a landscape stage leaves
-     letterbox margin here, so it lands beside the video rather than on it; the
-     blur covers the case where a wide device does reach across. */
-  .sysmon {
-    position: relative; z-index: 5;
-    background: rgba(9,9,11,.72);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    /* Right padding leaves a lane for the collapse button, which is positioned
-       in the corner — without it the value column runs underneath. */
-    padding: 6px 22px 6px 8px;
-    font-size: 11px; line-height: 1.5;
-    color: var(--muted);
-    backdrop-filter: blur(8px);
-    max-width: 190px;
-    pointer-events: auto;   /* the collapse button needs clicks */
-    transition: opacity .15s;
-  }
-  .sysmon.collapsed .sysmon-body { display: none; }
-  .sysmon.collapsed { padding: 2px 6px; }
-  .sysmon-toggle {
-    position: absolute; top: 2px; right: 4px;
-    background: none; border: none; color: var(--muted-2);
-    font-size: 10px; cursor: pointer; padding: 2px 4px; line-height: 1;
-  }
-  .sysmon-toggle:hover { color: var(--fg); }
-  .sysmon-row { display: flex; justify-content: space-between; gap: 10px; }
-  .sysmon-row .k { color: var(--muted-2); }
-  .sysmon-row .v { color: var(--fg); font-variant-numeric: tabular-nums; }
-  .sysmon .warn { color: var(--warn); }
-  .sysmon .bad  { color: var(--danger); }
-  /* No letterbox margin to hide in on a narrow stage — shrink out of the way. */
-  @media (max-width: 900px) {
-    .sysmon { max-width: 140px; font-size: 10px; }
-  }
-  .dot { display:inline-block; width:6px; height:6px; border-radius: 999px; margin-right:6px; vertical-align: middle; }
-  .dot.on { background: var(--accent); }
-  .dot.off { background: var(--muted-2); }
-  .dot.err { background: var(--danger); }
+/* miuix / HyperOS look: values from compose-miuix-ui/miuix (Apache-2.0) —
+   theme/Colors.kt, TextStyles, basic/*Defaults, dialogs (32px), bottom sheets
+   (28px) — recreated in CSS as LoopCtrl Pair does. No Xiaomi fonts or assets. */
+:root {
+  --primary: #3482ff; --on-primary: #ffffff; --disabled-primary: #c2d9ff;
+  --error: #e94634; --error-container: #fdf6f4;
+  --secondary-variant: #f0f0f0; --on-secondary-variant: #303030;
+  --secondary-container: #f0f0f0; --on-secondary-container: #8a8a8a;
+  --tertiary-container: #eaf2ff; --on-tertiary-container: #3482ff;
+  --background: #ffffff; --surface: #f7f7f7; --card: #ffffff;
+  --on-surface: #000000; --on-surface-secondary: rgba(0,0,0,.8); --summary: rgba(0,0,0,.6); --actions: rgba(0,0,0,.4);
+  --small-title: #8c93b0; --divider: #e0e0e0; --dim: rgba(0,0,0,.3);
+  --slider-bg: rgba(0,0,0,.06); --press: rgba(0,0,0,.05); --switch-off: #e6e6e6; --thumb: #ffffff; --handle: rgba(0,0,0,.15);
+  --snack: #2b2b2b; --snack-ink: #ffffff; --screen-edge: rgba(0,0,0,.08);
+  --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --r-card: 16px; --r-btn: 16px; --r-dialog: 32px;
+  --spring: cubic-bezier(.22,1.2,.36,1); --ease: cubic-bezier(.2,.9,.1,1);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --primary: #277af7; --disabled-primary: #253e64; --error: #f12522; --error-container: #2e0603;
+  --secondary-variant: #434343; --on-secondary-variant: #d9d9d9; --secondary-container: #434343; --on-secondary-container: #a0a0a0;
+  --tertiary-container: #2b3b54; --on-tertiary-container: #4788ff;
+  --background: #000000; --surface: #000000; --card: #242424;
+  --on-surface: #f2f2f2; --on-surface-secondary: rgba(255,255,255,.8); --summary: rgba(255,255,255,.5); --actions: rgba(255,255,255,.4);
+  --small-title: #787e96; --divider: #393939; --dim: rgba(0,0,0,.6);
+  --slider-bg: rgba(255,255,255,.15); --press: rgba(255,255,255,.06); --switch-off: #505050; --thumb: #ffffff; --handle: rgba(255,255,255,.2);
+  --snack: #e9e9e9; --snack-ink: #000000; --screen-edge: rgba(255,255,255,.1); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --primary: #277af7; --disabled-primary: #253e64; --error: #f12522; --error-container: #2e0603;
+  --secondary-variant: #434343; --on-secondary-variant: #d9d9d9; --secondary-container: #434343; --on-secondary-container: #a0a0a0;
+  --tertiary-container: #2b3b54; --on-tertiary-container: #4788ff;
+  --background: #000000; --surface: #000000; --card: #242424;
+  --on-surface: #f2f2f2; --on-surface-secondary: rgba(255,255,255,.8); --summary: rgba(255,255,255,.5); --actions: rgba(255,255,255,.4);
+  --small-title: #787e96; --divider: #393939; --dim: rgba(0,0,0,.6);
+  --slider-bg: rgba(255,255,255,.15); --press: rgba(255,255,255,.06); --switch-off: #505050; --thumb: #ffffff; --handle: rgba(255,255,255,.2);
+  --snack: #e9e9e9; --snack-ink: #000000; --screen-edge: rgba(255,255,255,.1); color-scheme: dark; }
 
-  /* ── sidebar ── */
-  aside {
-    display: flex; flex-direction: column; gap: 12px;
-    overflow-y: auto; overflow-x: hidden;
-    /* Bound the sidebar to the grid row so overflow triggers the scrollbar
-       instead of the whole page scrolling. */
-    min-height: 0; max-height: 100%;
-    /* subtle scrollbar */
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-hi) transparent;
-  }
-  aside::-webkit-scrollbar { width: 8px; }
-  aside::-webkit-scrollbar-track { background: transparent; }
-  aside::-webkit-scrollbar-thumb {
-    background: var(--border-hi); border-radius: 999px; border: 2px solid var(--card);
-  }
-  aside::-webkit-scrollbar-thumb:hover { background: #52525b; }
-  .section { padding: 12px; }
-  .section h3 {
-    margin: 0 0 10px; font-size: 12px; font-weight: 600;
-    color: var(--muted); text-transform: uppercase; letter-spacing: .06em;
-  }
-  .row { display: flex; gap: 8px; }
-  .row + .row { margin-top: 8px; }
-  .col { display: flex; flex-direction: column; gap: 8px; }
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; background: var(--surface); color: var(--on-surface); font-family: var(--font);
+  -webkit-font-smoothing: antialiased; overscroll-behavior: none; }
+button { font: inherit; color: inherit; }
+input { font: inherit; color: inherit; }
+svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
-  /* ── buttons (shadcn variants) ── */
-  .btn {
-    appearance: none; border: 1px solid var(--border-hi);
-    background: var(--card-hi); color: var(--fg);
-    padding: 8px 12px; border-radius: 8px;
-    font-size: 13px; font-weight: 500;
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    cursor: pointer; transition: background .12s, border-color .12s, transform .06s;
-    min-height: 34px;
-  }
-  .btn:hover { background: #2d2d31; border-color: #52525b; }
-  .btn:active { transform: translateY(1px); }
-  .btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
-  .btn.primary { background: var(--fg); color: var(--primary-fg); border-color: var(--fg); }
-  .btn.primary:hover { background: #e4e4e7; }
-  .btn.ghost { background: transparent; border-color: var(--border); }
-  .btn.ghost:hover { background: var(--card-hi); }
-  .btn.danger { color: #fca5a5; border-color: #7f1d1d; background: transparent; }
-  .btn.danger:hover { background: #7f1d1d33; }
-  .btn.icon { padding: 8px; min-width: 34px; }
-  .btn:disabled { opacity: .5; cursor: not-allowed; }
-  .btn.full { width: 100%; }
-  a.btn { text-decoration: none; }
+.app { display: flex; flex-direction: column; height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
 
-  /* ── inputs ── */
-  .input {
-    background: var(--bg); color: var(--fg); border: 1px solid var(--border-hi);
-    padding: 8px 10px; border-radius: 8px; font-size: 13px; width: 100%;
-  }
-  .input:focus { outline: 2px solid var(--ring); outline-offset: 0; border-color: var(--border-hi); }
-  .label { font-size: 12px; color: var(--muted); margin-bottom: 4px; display: block; }
+/* TopAppBar (small) */
+.topbar { flex: none; height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 16px; }
+.topbar img { width: 28px; height: 28px; border-radius: 7px; flex: none; }
+.titles { min-width: 0; flex: 0 1 auto; display: flex; flex-direction: column; align-items: flex-start; border: 0; background: transparent;
+  padding: 4px 8px; margin-left: -6px; border-radius: 12px; text-align: left; cursor: pointer; transition: background .15s; }
+.titles:hover { background: var(--press); }
+.titles .brand { display: flex; align-items: center; gap: 2px; max-width: 100%; }
+.titles .brand span { overflow: hidden; text-overflow: ellipsis; }
+.titles .chev { width: 16px; height: 16px; opacity: .55; flex: none; }
+.brand { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sub { font-size: 12px; color: var(--summary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.sp { flex: 1; }
+.iconbtn { width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent; display: grid; place-items: center;
+  cursor: pointer; color: var(--on-surface); transition: background .15s, transform .25s var(--spring), color .2s; position: relative; }
+.iconbtn:hover { background: var(--press); } .iconbtn:active { transform: scale(.9); }
+.iconbtn.on { color: var(--primary); background: var(--tertiary-container); }
+.iconbtn.rec { color: var(--error); background: var(--error-container); }
+.iconbtn .badge { position: absolute; top: 4px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  background: var(--error); color: #fff; font-size: 10px; font-weight: 600; line-height: 16px; }
+.pill { display: inline-flex; align-items: center; gap: 8px; height: 32px; max-width: 40vw; padding: 0 14px; border: 0; border-radius: 16px;
+  background: var(--card); font-size: 13px; font-weight: 500; color: var(--summary); cursor: default; white-space: nowrap;
+  transition: transform .25s var(--spring), background .2s, color .2s; }
+.pill span { overflow: hidden; text-overflow: ellipsis; }
+.pill .pdot { width: 8px; height: 8px; border-radius: 50%; background: var(--actions); flex: none; }
+.pill.mine { background: var(--tertiary-container); color: var(--on-tertiary-container); } .pill.mine .pdot { background: var(--primary); }
+.pill.other { background: var(--error-container); color: var(--error); } .pill.other .pdot { background: var(--error); }
+.pill { cursor: pointer; flex: none; } .pill:active { transform: scale(.95); }
+.pill .short { display: none; align-items: center; gap: 4px; } .pill .short svg { width: 16px; height: 16px; }
 
-  /* ── status bar (fixed bottom, always visible) ── */
-  #status {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
-    padding: 8px 12px;
-    padding-bottom: calc(8px + env(safe-area-inset-bottom));
-    border-top: 1px solid var(--border);
-    font-size: 12px; color: var(--muted);
-    background: rgba(24,24,27,.92);
-    backdrop-filter: blur(6px);
-    display: flex; align-items: center; gap: 8px;
-    min-height: 30px;
-  }
-  #status .sep { color: var(--border-hi); }
-  #status .toast {
-    padding: 1px 8px; border-radius: 999px;
-    border: 1px solid var(--border);
-    background: var(--card-hi);
-    color: var(--fg);
-    animation: toastIn .18s ease;
-  }
-  #status .toast.ok    { color: #86efac; border-color: #14532d; background: #052e16; }
-  #status .toast.err   { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
-  #status .toast.warn  { color: #fcd34d; border-color: #78350f; background: #451a03; }
-  @keyframes toastIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-  .kbd {
-    background: var(--card-hi); border: 1px solid var(--border-hi);
-    padding: 1px 6px; border-radius: 4px; font-size: 11px; color: var(--muted);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
-  .hint { color: var(--muted-2); font-size: 11px; margin-top: 6px; }
+/* button labels: icons, text or both (Screen settings › Buttons) */
+.lbl { display: none; font-size: 14px; font-weight: 500; white-space: nowrap; }
+.labels-text .labeled svg { display: none; }
+.labels-text .labeled .lbl, .labels-both .labeled .lbl { display: inline; }
+.labels-text .labeled, .labels-both .labeled { width: auto; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: 12px; }
 
-  /* ── drawer mode: on a phone, and in full screen, the sidebar becomes a
-     bottom sheet and a floating ball is the only control left on screen ── */
-  #scrim {
-    display: none;
-    position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 20;
-    backdrop-filter: blur(2px);
-  }
-  .app.drawer { grid-template-columns: minmax(0, 1fr); }
-  .app.drawer > aside {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
-    max-height: 78dvh; overflow-y: auto; overscroll-behavior: contain;
-    background: var(--card);
-    border-top: 1px solid var(--border);
-    border-top-left-radius: 16px; border-top-right-radius: 16px;
-    padding: 8px 12px calc(24px + env(safe-area-inset-bottom));
-    transform: translateY(105%);
-    transition: transform .22s ease;
-  }
-  .app.drawer > aside::before {
-    content: ''; display: block; width: 44px; height: 4px; margin: 6px auto 10px;
-    background: var(--border-hi); border-radius: 999px;
-  }
-  .app.drawer.open > aside { transform: translateY(0); }
-  .app.drawer.open ~ #scrim { display: block; }
+/* body: devices | screen | tools | view tree. Narrower windows fold the
+   device list and the view tree into drawers; a portrait phone puts the
+   tools under the screen. */
+.body { flex: 1; min-height: 0; display: grid; gap: 12px; padding: 0 12px 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto auto; grid-template-areas: "devices stage tools tree"; }
+#devices { grid-area: devices; } .stage { grid-area: stage; } #tools { grid-area: tools; } #tree-panel { grid-area: tree; }
+.card { background: var(--card); border-radius: var(--r-card); }
+.rail { display: flex; flex-direction: column; gap: 4px; padding: 6px; align-self: center; max-height: 100%; overflow-y: auto; scrollbar-width: none; }
+.stage { position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; }
+.screen { position: relative; height: 100%; max-width: 100%; aspect-ratio: var(--ar, 0.46); border-radius: 22px; overflow: hidden;
+  background: #000; box-shadow: 0 0 0 1px var(--screen-edge), 0 12px 40px rgba(0,0,0,.18); touch-action: none; user-select: none; -webkit-user-select: none; }
+.screen > canvas, .screen > video { position: absolute; inset: 0; width: 100%; height: 100%; }
+#video, #mse { object-fit: fill; }
+#overlay { cursor: pointer; }
+.msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; color: rgba(255,255,255,.75);
+  font-size: 15px; line-height: 1.5; pointer-events: none; }
+.msg .box { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 18em; }
+.msg.paused { background: rgba(0,0,0,.72); pointer-events: auto; }
+.msg.paused svg { width: 40px; height: 40px; color: #fff; }
+.tag { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 6px 12px; border-radius: 14px; font-size: 12px; font-weight: 500;
+  background: rgba(0,0,0,.6); color: #fff; white-space: nowrap; pointer-events: none; }
+/* InfiniteProgressIndicator */
+.spin { width: 22px; height: 22px; border-radius: 50%; position: relative; box-shadow: inset 0 0 0 2px rgba(255,255,255,.25);
+  animation: spin 1s linear infinite; flex: none; }
+.spin::after { content: ""; position: absolute; top: 3px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: #fff; }
+.card .spin, .dialog .spin { box-shadow: inset 0 0 0 2px var(--slider-bg); } .card .spin::after, .dialog .spin::after { background: var(--on-surface); }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Translucent, draggable; tap it for the quick controls. It snaps to the
-     nearest side when let go, so it never parks over the middle of the screen. */
-  #ball {
-    display: none;
-    position: fixed; right: 12px; bottom: calc(56px + env(safe-area-inset-bottom)); z-index: 30;
-    width: 48px; height: 48px; border-radius: 999px; padding: 0;
-    background: rgba(250,250,250,.16); color: var(--fg);
-    border: 1px solid rgba(250,250,250,.3);
-    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-    box-shadow: 0 4px 16px rgba(0,0,0,.45);
-    font-size: 20px; cursor: grab;
-    align-items: center; justify-content: center;
-    opacity: .55; transition: opacity .15s, background-color .3s, border-color .3s;
-    touch-action: none; user-select: none; -webkit-user-select: none;
-    -webkit-tap-highlight-color: transparent;
-  }
-  /* Over a light part of the picture the pale glass disappears, so the ball
-     turns dark there (the script samples the frame beneath it). */
-  #ball.on-light {
-    background: rgba(24,24,27,.55); border-color: rgba(0,0,0,.55);
-    box-shadow: 0 4px 16px rgba(0,0,0,.25); opacity: .7;
-  }
-  #ball:hover, #ball.active { opacity: 1; }
-  #ball.dragging { cursor: grabbing; opacity: 1; }
-  .app.drawer ~ #ball { display: inline-flex; }
-  .app.drawer.open ~ #ball { display: none; }   /* the sheet is open: it would sit on its controls */
+/* side panel: view tree */
+.side { width: 340px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.side .head { display: flex; align-items: center; gap: 4px; padding: 12px 8px 8px 16px; }
+.side .head b { font-size: 17px; font-weight: 500; flex: 1; }
+.search { display: flex; align-items: center; gap: 8px; margin: 0 12px 8px; padding: 0 14px; height: 44px; border-radius: 14px; background: var(--secondary-container); color: var(--actions); }
+.search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 15px; color: var(--on-surface); }
+.search svg { width: 18px; height: 18px; }
+#tree { flex: 1; min-height: 0; overflow: auto; padding: 0 0 12px; }
+.node { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 4px 16px 4px 0; cursor: pointer; transition: background .15s; }
+.node:hover, .node.hot { background: var(--press); }
+.node .t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.node b { font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node span { font-size: 12px; color: var(--summary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node.empty b { font-weight: 400; color: var(--summary); }
+.foot { padding: 10px 16px; font-size: 13px; color: var(--small-title); border-top: 1px solid var(--divider); }
 
-  #quick {
-    position: fixed; z-index: 31;
-    display: grid; grid-template-columns: repeat(4, 64px); gap: 6px;
-    padding: 8px; border-radius: 16px;
-    background: rgba(24,24,27,.82); border: 1px solid var(--border-hi);
-    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-    box-shadow: 0 10px 30px rgba(0,0,0,.5);
-  }
-  #quick[hidden] { display: none; }
-  #quick button {
-    appearance: none; border: none; border-radius: 12px;
-    background: rgba(250,250,250,.06); color: var(--fg);
-    height: 60px; padding: 4px 0; cursor: pointer;
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-    font-size: 20px; -webkit-tap-highlight-color: transparent;
-  }
-  #quick button span { font-size: 11px; color: var(--muted); }
-  #quick button:active { background: rgba(250,250,250,.16); }
+/* devices: every phone opened here, to switch between */
+.devices { width: 252px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.devices .head { display: flex; align-items: center; padding: 14px 8px 6px 18px; }
+.devices .head b { flex: 1; font-size: 14px; font-weight: 500; color: var(--small-title); }
+.devlist { flex: 1; min-height: 0; overflow: auto; padding: 2px 8px 8px; display: flex; flex-direction: column; gap: 4px; }
+.dev { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 14px; cursor: pointer; color: inherit; text-decoration: none;
+  transition: background .15s; }
+.dev:hover { background: var(--press); }
+.dev.current { background: var(--tertiary-container); cursor: default; }
+.dev .ic { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; flex: none;
+  background: var(--secondary-container); color: var(--on-secondary-container); }
+.dev.current .ic { background: var(--primary); color: var(--on-primary); }
+.dev .ic svg { width: 20px; height: 20px; }
+.dev .t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dev .title { font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dev.current .title { color: var(--on-tertiary-container); }
+.dev .summary { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--summary); white-space: nowrap; }
+.dev .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--actions); flex: none; }
+.dev .dot.on { background: #34c759; } .dev .dot.off { background: var(--error); }
+.dev .rm { width: 30px; height: 30px; opacity: 0; } .dev:hover .rm, .dev .rm:focus-visible { opacity: 1; }
+@media (hover: none) { .dev .rm { opacity: .7; } }
+.devices .add { margin: 0 8px 8px; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.drawer-scrim { position: fixed; inset: 0; z-index: 14; background: var(--dim); animation: fade .25s both; }
+@keyframes from-left { from { transform: translateX(-100%); } }
+@keyframes from-right { from { transform: translateX(100%); } }
 
-  /* Modal sheets: Add to Home Screen steps, screenshot preview. */
-  .sheet {
-    position: fixed; inset: 0; z-index: 50;
-    display: flex; align-items: center; justify-content: center;
-    background: rgba(0,0,0,.6); padding: 16px;
-  }
-  .sheet[hidden] { display: none; }
-  .sheet .card {
-    background: var(--card); border: 1px solid var(--border-hi); border-radius: 16px;
-    padding: 18px; max-width: 360px; width: 100%;
-  }
-  .sheet h4 { margin: 0 0 10px; font-size: 16px; }
-  .sheet ol { margin: 0 0 12px; padding-left: 20px; line-height: 1.6; }
-  .sheet .hint { margin: 0 0 14px; }
-  #shotImg {
-    display: block; width: 100%; max-height: 62dvh; object-fit: contain;
-    border-radius: 10px; background: #000; margin-bottom: 12px;
-    /* A long-press would otherwise start a Live Text selection. */
-    -webkit-user-select: none; user-select: none;
-  }
+/* people: who is watching and operating, and each one's actions */
+.people { display: flex; flex-direction: column; gap: 8px; padding-bottom: 6px; }
+.person { border-radius: var(--r-card); background: var(--surface); overflow: hidden; }
+.person .top { display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; }
+.avatar { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; flex: none; font-size: 14px; font-weight: 600;
+  background: var(--tertiary-container); color: var(--on-tertiary-container); }
+.avatar.agent { background: var(--secondary-container); color: var(--on-secondary-container); }
+.person .t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.person .title { font-size: 16px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.person .summary { font-size: 13px; color: var(--summary); }
+.chip { font-style: normal; font-size: 11px; font-weight: 500; padding: 2px 8px; margin-left: 6px; border-radius: 8px; vertical-align: 2px;
+  background: var(--secondary-container); color: var(--on-secondary-container); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--actions); flex: none; }
+.status-dot.on { background: var(--primary); }
+.log { max-height: 280px; overflow: auto; padding: 0 16px 10px; }
+.log div { display: flex; align-items: baseline; gap: 10px; padding: 7px 0; border-top: 1px solid var(--divider); font-size: 13px; }
+.log time { flex: none; color: var(--small-title); font-variant-numeric: tabular-nums; }
+.log span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log b { flex: none; font-weight: 500; color: var(--summary); } .log b.bad { color: var(--error); }
+.log .empty { color: var(--summary); }
 
-  .check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); cursor: pointer; }
-  .check + .check { margin-top: 8px; }
+/* guide: a spotlight on one control at a time */
+.coach-block { position: fixed; inset: 0; z-index: 38; }
+.coach { position: fixed; z-index: 39; border-radius: 18px; box-shadow: 0 0 0 200vmax var(--dim); pointer-events: none;
+  transition: left .4s var(--ease), top .4s var(--ease), width .4s var(--ease), height .4s var(--ease); }
+.coach-card { position: fixed; z-index: 40; width: min(340px, calc(100vw - 32px)); padding: 20px; border-radius: 24px; background: var(--card);
+  display: flex; flex-direction: column; gap: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.25);
+  transition: left .4s var(--ease), top .4s var(--ease); animation: dlg .45s var(--spring) both; }
+.coach-card .step { font-size: 12px; font-weight: 500; color: var(--small-title); }
+.coach-card h3 { margin: 0; font-size: 19px; font-weight: 500; }
+.coach-card p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--on-surface-secondary); }
+.coach-card .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; padding: 4px 0; }
+.coach-card .legend div { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.coach-card .legend svg { width: 20px; height: 20px; color: var(--primary); }
+.coach-card .go { display: flex; align-items: center; justify-content: space-between; padding-top: 4px; }
+.coach-card .go .btn.primary { min-height: 40px; padding: 8px 20px; font-size: 15px; margin-left: auto; }
 
-  /* ── display preferences (Display panel) ── */
-  body.hide-hud .hud-row { display: none; }
-  body.hide-sysmon #sysmon { display: none; }
-  /* Without the status bar, a short action result still shows, as a pill at
-     the top. */
-  body.hide-statusbar #status, body.immersive #status {
-    top: calc(10px + env(safe-area-inset-top)); bottom: auto; left: 50%; right: auto;
-    transform: translateX(-50%);
-    background: none; border: none; backdrop-filter: none; -webkit-backdrop-filter: none;
-    padding: 0; min-height: 0; pointer-events: none;
-  }
-  body.hide-statusbar #status > :not(.toast),
-  body.immersive #status > :not(.toast) { display: none; }
-  body.hide-statusbar .app { padding-bottom: 12px; }
+/* buttons, segmented, sheet, dialog, snackbar */
+.btn { border: 0; min-width: 58px; min-height: 48px; padding: 13px 16px; border-radius: var(--r-btn); font-size: 17px; font-weight: 500; cursor: pointer;
+  background: var(--secondary-variant); color: var(--on-secondary-variant); transition: transform .3s var(--spring), filter .15s, opacity .2s; }
+.btn.primary { background: var(--primary); color: var(--on-primary); }
+.btn:active:not(:disabled) { transform: scale(.96); filter: brightness(.94); }
+.btn:disabled { cursor: default; } .btn.primary:disabled { background: var(--disabled-primary); }
+.btn.text { background: transparent; color: var(--primary); font-size: 15px; min-height: 36px; padding: 8px 12px; }
+.btnrow { display: flex; gap: 12px; padding-top: 8px; } .btnrow .btn { flex: 1; }
+.seg { display: flex; gap: 4px; padding: 4px; border-radius: 14px; background: var(--surface); }
+.seg button { flex: 1; border: 0; background: transparent; padding: 8px 10px; border-radius: 10px; font-size: 14px; cursor: pointer; color: var(--summary);
+  transition: background .25s var(--ease), color .25s; white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: var(--card); color: var(--on-tertiary-container); font-weight: 500; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.row { display: flex; flex-direction: column; gap: 8px; padding: 6px 0; }
+.row > b { font-size: 14px; font-weight: 500; color: var(--small-title); padding: 0 4px; }
+.comp { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 14px 16px; border-radius: var(--r-card); background: var(--surface);
+  cursor: pointer; transition: background .15s; }
+.comp:hover { background: var(--press); }
+.comp .t { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.comp .title { font-size: 16px; font-weight: 500; } .comp .summary { font-size: 13px; color: var(--summary); }
+.scrim { position: fixed; inset: 0; z-index: 20; background: var(--dim); display: flex; align-items: center; justify-content: center; padding: 12px; animation: fade .25s both; }
+.scrim.bottom { align-items: flex-end; padding: 0; }
+@keyframes fade { from { opacity: 0; } }
+.dialog { width: 420px; max-width: 100%; max-height: 100%; overflow: auto; background: var(--card); border-radius: var(--r-dialog); padding: 24px;
+  display: flex; flex-direction: column; gap: 12px; animation: dlg .45s var(--spring) both; }
+@keyframes dlg { from { transform: scale(.9); opacity: 0; } to { transform: none; opacity: 1; } }
+.dialog h3 { margin: 4px 0 0; text-align: center; font-size: 20px; font-weight: 500; }
+.dialog p { margin: 0; text-align: center; font-size: 15px; color: var(--on-surface-secondary); line-height: 1.5; }
+.sheet { width: 100%; max-width: 640px; max-height: 88dvh; overflow: auto; background: var(--card); border-radius: 28px 28px 0 0;
+  padding: 0 24px calc(24px + env(safe-area-inset-bottom)); animation: up .45s var(--ease) both; display: flex; flex-direction: column; gap: 6px; }
+@keyframes up { from { transform: translateY(100%); } }
+.sheet .handle { width: 36px; height: 4px; border-radius: 2px; background: var(--handle); margin: 12px auto 6px; flex: none; }
+.sheet h3 { margin: 0 0 6px; text-align: center; font-size: 20px; font-weight: 500; }
+.snack { position: fixed; left: 50%; bottom: calc(28px + env(safe-area-inset-bottom)); z-index: 30; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 4px; max-width: calc(100vw - 32px); background: var(--snack); color: var(--snack-ink);
+  padding: 8px 8px 8px 18px; min-height: 48px; border-radius: 16px; font-size: 14px; animation: snack .4s var(--spring) both; }
+.snack span { padding: 6px 8px 6px 0; }
+.snack .btn.text { color: var(--primary); }
+@keyframes snack { from { transform: translate(-50%, 20px); opacity: 0; } }
 
-  /* Opened from the Home Screen the page runs under the status bar. */
-  body.standalone .app { padding-top: max(8px, env(safe-area-inset-top)); }
+/* pairing */
+/* Pairing takes the screen's place only: the device list, the tools and the
+   settings stay usable around it. */
+.pairpage { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: var(--surface); padding: 8px; overflow: auto; }
+.paircard { width: min(420px, 100%); padding: 32px 24px 24px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.paircard .icon { width: 72px; height: 72px; border-radius: 18px; }
+.paircard h1 { margin: 6px 0 0; font-size: 24px; font-weight: 500; }
+.paircard p { margin: 0; font-size: 15px; color: var(--summary); line-height: 1.55; }
+#pair-start, #pair-wait { align-self: stretch; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+#pair-start .btn { align-self: stretch; margin-top: 8px; }
+.fp { font: 600 28px/1.2 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .12em; padding: 14px 20px; border-radius: 16px;
+  background: var(--tertiary-container); color: var(--on-tertiary-container); }
+.waiting { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; color: var(--summary); }
+.err { color: var(--error); font-size: 14px; min-height: 1.4em; }
+.link { color: var(--primary); cursor: pointer; background: none; border: 0; padding: 0; font-size: 13px; }
+.keyfield { align-self: stretch; height: 48px; padding: 0 14px; border-radius: 14px; border: 0; background: var(--secondary-container);
+  font-family: ui-monospace, Menlo, monospace; font-size: 14px; outline: 0; }
+#kbd { position: fixed; left: -1000px; top: 0; width: 10px; height: 10px; opacity: 0; }
 
-  /* ── full screen: the picture edge to edge, nothing but the ball on top ── */
-  body.immersive { background: #000; }
-  body.immersive .app { padding: 0; gap: 0; }
-  body.immersive .stage { border: none; border-radius: 0; }
-  /* Safari on iPhone (iOS 26 and later) floats its toolbar over the page and
-     shows whatever part of the document lies beneath it. In full screen with
-     the picture filling the window, the page is made as tall as the screen
-     below the status bar (the height is set from script), so the picture runs
-     to the bottom edge behind the toolbar, as it would on the phone itself.
-     Safari paints the colour of anything fixed to the bottom edge across that
-     strip, over the picture, and keeps doing so after the element has moved
-     away; only display:none clears it. So the closed drawer is taken out of
-     the layout there, and so is the status bar except while it shows a
-     message (as a pill at the top). */
-  html.under-bars, html.under-bars body { height: auto; }
-  html.under-bars .app.drawer:not(.open) > aside { display: none; }
-  html.under-bars #status:not(.has-toast) { display: none; }
-  html.under-bars .app.drawer.open > aside { transform: none; animation: sheetIn .22s ease; }
-  @keyframes sheetIn { from { transform: translateY(105%); } to { transform: none; } }
-
-  /* How the picture meets the window in full screen (Display → Picture). */
-  body.immersive[data-fit="cover"] #video { object-fit: cover; }
-  body.immersive[data-fit="fill"] #video { object-fit: fill; }
-  body.immersive .hud { display: none; }
-
-  @media (max-width: 720px) {
-    .app { padding: 8px; padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
-    .stage { border-radius: 12px; }
-    .section { padding: 10px; }
-    .grid-3 { max-width: 240px; }
-    /* iOS Safari zooms the page into any field under 16px when it gains focus. */
-    .input { font-size: 16px; }
-  }
-  /* landscape phones: keep video full width, drawer larger */
-  @media (max-width: 720px) and (orientation: landscape) {
-    #ball { bottom: 12px; }
-    .app.drawer > aside { max-height: 92dvh; }
-  }
+/* Wide: the list folds away by its width, so the screen glides over rather
+   than jumping, and unfolds the same way. Its content keeps its width while
+   the box narrows, so nothing rewraps on the way. */
+@media (min-width: 1100px) {
+  .devices { transition: width .45s var(--ease), margin-right .45s var(--ease), opacity .3s var(--ease), transform .45s var(--ease); }
+  .devices > .head, .devices > .devlist { min-width: 252px; }
+  .devices > .add { min-width: 236px; }   /* 252 less its 8px margins */
+  .devices.collapsed { width: 0; margin-right: -12px; opacity: 0; transform: translateX(-16px); pointer-events: none; visibility: hidden;
+    transition: width .45s var(--ease), margin-right .45s var(--ease), opacity .25s var(--ease), transform .45s var(--ease), visibility 0s .45s; }
+}
+@media (max-width: 1099px) {
+  .devices { position: fixed; left: 0; top: 0; bottom: 0; z-index: 16; width: min(300px, 86vw); border-radius: 0 24px 24px 0;
+    padding-top: env(safe-area-inset-top); box-shadow: 10px 0 40px rgba(0,0,0,.25); animation: from-left .35s var(--ease) both; }
+  .devices:not(.open) { display: none; }
+  .side { position: fixed; right: 0; top: 0; bottom: 0; z-index: 15; width: min(360px, 90vw); border-radius: 24px 0 0 24px;
+    padding-top: env(safe-area-inset-top); box-shadow: -10px 0 40px rgba(0,0,0,.25); animation: from-right .35s var(--ease) both; }
+}
+/* phone-sized either way up: compact top bar, people as icons */
+@media (max-width: 760px), (max-height: 520px) {
+  .topbar { padding: 0 6px 0 12px; gap: 2px; }
+  .pill { max-width: 34vw; padding: 0 10px; gap: 6px; }
+  .pill .long { display: none; } .pill .short { display: inline-flex; }
+  #btn-full { display: none; }
+  /* No room in the top bar for words: icons there whatever the setting. */
+  .topbar .labeled { width: 40px !important; padding: 0 !important; justify-content: center; }
+  .topbar .labeled svg { display: block !important; } .topbar .labeled .lbl { display: none !important; }
+}
+/* landscape phone: every point of height for the screen; tools stay right */
+@media (max-height: 520px) and (orientation: landscape) {
+  .topbar { height: 44px; }
+  .body { gap: 8px; padding: 0 calc(8px + env(safe-area-inset-right)) 8px calc(8px + env(safe-area-inset-left)); }
+  .rail { align-self: stretch; justify-content: flex-start; }
+}
+/* portrait phone: tools under the screen, view tree as a bottom sheet */
+@media (max-width: 760px) and (orientation: portrait) {
+  .body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; grid-template-areas: "stage" "tools";
+    gap: 8px; padding: 0 8px calc(8px + env(safe-area-inset-bottom)); }
+  .rail { flex-direction: row; justify-content: space-around; align-self: stretch; overflow-x: auto; overflow-y: hidden; }
+  .side { left: 0; right: 0; top: auto; bottom: 0; width: auto; height: 60dvh; z-index: 15; border-radius: 28px 28px 0 0; padding-top: 0;
+    box-shadow: 0 -10px 40px rgba(0,0,0,.25); animation: up .45s var(--ease) both; }
+  .side .head::before { content: ""; position: absolute; left: 50%; top: 8px; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--handle); }
+  .side .head { position: relative; padding-top: 22px; }
+  .labels-text .rail .labeled, .labels-both .rail .labeled { flex: 1 0 auto; justify-content: center; }
+  .labels-both .rail .labeled { flex-direction: column; gap: 2px; height: 52px; padding: 4px 6px; }
+  .labels-both .rail .lbl { font-size: 11px; }
+}
+/* ── motion: every control answers a press, every panel arrives and leaves ──
+   A press shrinks a control at once and lets it spring back; a ripple
+   spreads from where it was pressed. Panels slide or scale out as they came
+   in instead of vanishing. Values follow miuix's spring feel. */
+:root { --out: cubic-bezier(.4, 0, .9, .6); }
+.iconbtn, .btn, .pill, .comp, .dev, .person .top, .node, .seg button, .titles, .link {
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.iconbtn, .btn, .pill, .comp, .dev, .titles, .seg button {
+  transition: transform .45s var(--spring), background-color .2s, color .2s, box-shadow .2s, opacity .2s; }
+.iconbtn:active, .btn:active:not(:disabled), .pill:active, .comp:active, .dev:active, .titles:active, .person .top:active, .node:active {
+  transform: scale(.93); transition-duration: .08s, .1s, .1s, .1s, .1s; }
+.btn:active:not(:disabled) { transform: scale(.96); }
+.rippling { position: relative; overflow: hidden; isolation: isolate; }
+.ripple { position: absolute; border-radius: 50%; background: currentColor; opacity: .16; pointer-events: none; z-index: -1;
+  transform: scale(0); animation: ripple .6s var(--ease) forwards; }
+.btn.primary .ripple { background: #fff; opacity: .25; }
+@keyframes ripple { 60% { opacity: .12; } to { transform: scale(1); opacity: 0; } }
+/* the tool's own gesture when it runs */
+.iconbtn.pop svg { animation: pop .5s var(--spring); }
+.iconbtn.pop[data-act="rotate"] svg { animation: turn .55s var(--ease); }
+.iconbtn.pop[data-act="notifications"] svg { animation: swing .7s var(--ease); transform-origin: 50% 15%; }
+.iconbtn.pop[data-act="switcher"] svg, .iconbtn.pop[data-act="home"] svg { animation: hop .5s var(--spring); }
+.iconbtn.pop[data-act="lock"] svg { animation: clamp .45s var(--spring); }
+.iconbtn.pop[data-act="wake"] svg { animation: glow .7s var(--ease); }
+@keyframes pop { 40% { transform: scale(1.22); } }
+@keyframes turn { from { transform: rotate(-90deg); } }
+@keyframes swing { 20% { transform: rotate(14deg); } 40% { transform: rotate(-10deg); } 60% { transform: rotate(6deg); } 80% { transform: rotate(-3deg); } }
+@keyframes hop { 40% { transform: translateY(-4px) scale(1.08); } }
+@keyframes clamp { 40% { transform: scale(.82); } }
+@keyframes glow { 30% { transform: rotate(45deg) scale(1.15); } to { transform: rotate(90deg); } }
+.iconbtn svg, .btn svg { transition: transform .3s var(--spring); }
+/* recording: a ring keeps breathing out of the button */
+.iconbtn.rec::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; border: 2px solid var(--error); pointer-events: none;
+  animation: breathe 1.6s var(--ease) infinite; }
+@keyframes breathe { from { transform: scale(.7); opacity: .7; } to { transform: scale(1.25); opacity: 0; } }
+.badge.bump, .pill.bump .pdot { animation: pop .45s var(--spring); }
+.pill .pdot { transition: background-color .3s; }
+.titles .chev { transition: transform .35s var(--spring); }
+.titles[aria-expanded="true"] .chev { transform: rotate(180deg); }
+/* segmented: the highlight slides to the choice */
+.seg { position: relative; }
+.seg::before { content: ""; position: absolute; top: 4px; bottom: 4px; border-radius: 10px; background: var(--card);
+  box-shadow: 0 1px 3px rgba(0,0,0,.08); --w: calc((100% - 8px - (var(--n, 1) - 1) * 4px) / var(--n, 1));
+  width: var(--w); left: calc(4px + var(--i, 0) * (var(--w) + 4px)); transition: left .45s var(--spring); }
+.seg button { position: relative; z-index: 1; }
+.seg button[aria-pressed="true"] { background: transparent; box-shadow: none; }
+/* arrivals */
+.msg:not([hidden]), .tag:not([hidden]) { animation: fade .3s var(--ease) both; }
+.msg .box { animation: rise .45s var(--spring) both; }
+.paircard { animation: dlg .5s var(--spring) both; }
+.fp { animation: pop .5s var(--spring) both; }
+/* "backwards": only until they finish. Held afterwards ("both"), they would
+   pin opacity and transform, and the device list's fold couldn't fade. */
+.topbar, #tools, #devices:not(.open) { animation: rise .5s var(--ease) backwards; }
+#tools { animation-delay: .06s; }
+@keyframes rise { from { transform: translateY(8px); opacity: 0; } }
+.devlist.entering .dev { animation: rise .4s var(--ease) both; animation-delay: calc(var(--k, 0) * 35ms); }
+.people .person { animation: rise .35s var(--ease) both; }
+.log div { animation: fade .25s both; }
+.node { transition: background-color .15s; }
+/* departures */
+.scrim.closing, .drawer-scrim.closing { animation: fadeout .24s var(--out) forwards; pointer-events: none; }
+.scrim.closing .dialog { animation: dlgout .22s var(--out) forwards; }
+.scrim.closing .sheet { animation: down .28s var(--out) forwards; }
+.snack.leaving { animation: snackout .25s var(--out) forwards; }
+.devices.closing { animation: to-left .28s var(--out) forwards !important; }
+.side.closing { animation: to-right .28s var(--out) forwards !important; }
+@keyframes fadeout { to { opacity: 0; } }
+@keyframes dlgout { to { transform: scale(.94); opacity: 0; } }
+@keyframes down { to { transform: translateY(100%); } }
+@keyframes snackout { to { transform: translate(-50%, 16px); opacity: 0; } }
+@keyframes to-left { to { transform: translateX(-100%); } }
+@keyframes to-right { to { transform: translateX(100%); } }
+@media (max-width: 760px) and (orientation: portrait) { .side.closing { animation: down .28s var(--out) forwards !important; } }
+/* the theme changes as a cross-fade, not a flash */
+.theming, .theming * { transition: background-color .35s var(--ease), color .35s var(--ease), border-color .35s, fill .35s !important; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
 </style>
 </head>
 <body>
 <div class="app" id="app">
-  <!-- ── LEFT: video stage ── -->
-  <section class="panel stage" id="stage">
-    <video id="video" autoplay muted playsinline></video>
-    <div class="hud">
-      <div class="hud-row">
-        <span class="badge" id="hudDevice">—</span>
-        <span class="hud-end">
-          <span class="badge"><span id="statusDot" class="dot off"></span><span id="hudState">Disconnected</span></span>
-          <button class="hud-btn" data-fs title="Full screen">⛶</button>
-        </span>
+  <header class="topbar">
+    <img src="remote/icon.png" alt="">
+    <button class="titles" id="title-btn" data-tip="devices"><span class="brand"><span id="name">LoopCtrl</span><svg class="chev" viewBox="0 0 24 24"><path d="M8 10l4 4 4-4"/></svg></span><span class="sub" id="sub"></span></button>
+    <span class="sp"></span>
+    <button class="pill" id="people" hidden><i class="pdot"></i><span class="long"></span><span class="short"></span></button>
+    <button class="iconbtn" id="btn-rec" data-tip="record"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg><i class="badge" hidden></i></button>
+    <button class="iconbtn" id="btn-tree" data-tip="tree"><svg viewBox="0 0 24 24"><path d="M4 5h6M4 12h4M10 12h10M4 19h4M10 19h10M14 5h6"/><path d="M7 5v14"/></svg></button>
+    <button class="iconbtn" id="btn-settings" data-tip="settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
+    <button class="iconbtn" id="btn-full" data-tip="full"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+  </header>
+  <main class="body">
+    <aside class="devices card" id="devices">
+      <div class="head"><b data-t="devicesTitle"></b>
+        <button class="iconbtn" id="devices-close" data-tip="close"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button></div>
+      <div class="devlist" id="devlist"></div>
+      <button class="btn add" id="dev-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span data-t="addDevice"></span></button>
+    </aside>
+    <section class="stage">
+      <div class="screen" id="screen">
+        <canvas id="video"></canvas>
+        <video id="mse" muted playsinline autoplay disablepictureinpicture hidden></video>
+        <canvas id="overlay"></canvas>
+        <div class="tag" id="hidden-tag" hidden></div>
+        <div class="msg" id="screen-msg"><div class="box"><div class="spin"></div><span></span></div></div>
+        <div class="msg paused" id="paused-msg" hidden><div class="box">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/></svg><span></span></div></div>
       </div>
-      <!-- Device health, directly under the device badge: same top-left
-           cluster, so identity and live state read as one block. The stage
-           letterboxes the video, so this sits in the margin rather than over
-           the picture. -->
-      <div class="sysmon" id="sysmon" hidden>
-        <button class="sysmon-toggle" id="sysmonToggle" title="Hide">▾</button>
-        <div class="sysmon-body" id="sysmonBody"></div>
-      </div>
-    </div>
-    <!-- overlay catches pointer + keyboard events -->
-    <div class="overlay" id="overlay" tabindex="0"></div>
-    <div id="connectCta">
-      <button class="btn primary" id="ctaBtn">Connect</button>
-      <span id="ctaNote">Not connected — streaming starts when you connect.</span>
-    </div>
-  </section>
-
-  <!-- ── RIGHT: control panel ── -->
-  <aside>
-    <div class="panel section">
-      <h3>Connection</h3>
-      <label class="label">Pairing key <span style="opacity:.6">(optional)</span></label>
-      <input class="input" id="tokenInput" type="password" placeholder="leave empty to pair now" autocomplete="off">
-      <div class="row" style="margin-top: 8px">
-        <button class="btn primary" id="connectBtn">Connect</button>
-        <button class="btn ghost" id="stopBtn" disabled>Stop</button>
-      </div>
-      <div class="hint">Leave it empty and hit Connect — the device will ask you to approve,
-      then the key is saved in this browser. Paste an existing key only to reuse one.
-      The key never leaves this browser; every request is encrypted locally.</div>
-    </div>
-
-    <div class="panel section">
-      <h3>Stream</h3>
-      <div class="grid-2">
-        <div>
-          <label class="label">FPS</label>
-          <select class="input" id="fpsSel"
-                  title="Requested rate. Capture sets the real limit: up to 30 on a cool device, less when it is hot.">
-            <option value="2">2</option>
-            <option value="5">5</option>
-            <option value="10">10</option>
-            <option value="15" selected>15</option>
-            <option value="20">20</option>
-            <option value="24">24</option>
-            <option value="30">30</option>
-          </select>
-        </div>
-        <div>
-          <label class="label">Quality</label>
-          <select class="input" id="qSel" title="Bitrate + resolution preset — auto lets VideoToolbox pick.">
-            <option value="auto" selected>auto</option>
-            <option value="low">low</option>
-            <option value="medium">medium</option>
-            <option value="high">high</option>
-          </select>
+      <div class="pairpage" id="pair" hidden>
+        <div class="paircard card">
+          <img class="icon" src="remote/icon.png" alt="">
+          <h1 id="pair-name">LoopCtrl</h1>
+          <div id="pair-start" class="paircard-body">
+            <p data-t="pairHint"></p>
+            <button class="btn primary" id="pair-btn" data-t="pair"></button>
+          </div>
+          <div id="pair-wait" hidden>
+            <p data-t="approve"></p>
+            <div class="fp" id="pair-fp"></div>
+            <div class="waiting"><div class="spin"></div><span data-t="waiting"></span></div>
+          </div>
+          <div class="err" id="pair-err"></div>
+          <button class="link" id="key-toggle" data-t="haveKey"></button>
+          <input class="keyfield" id="key-input" type="password" autocomplete="off" spellcheck="false" placeholder="64 hex" hidden>
         </div>
       </div>
-      <label class="hint" style="display:flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer">
-        <input type="checkbox" id="verboseChk">
-        Verbose encoder log <span class="kbd">/logs</span>
-      </label>
-    </div>
-
-    <div class="panel section">
-      <h3>Display</h3>
-      <label class="check"><input type="checkbox" data-pref="hud" checked> Device and connection badges</label>
-      <label class="check"><input type="checkbox" data-pref="sysmon" checked> Device health (thermal, CPU, memory)</label>
-      <label class="check"><input type="checkbox" data-pref="statusbar" checked> Status bar</label>
-      <label class="label" style="margin-top:10px">Picture in full screen</label>
-      <select class="input" id="fitSel">
-        <option value="cover">Fill the screen (crops the edges)</option>
-        <option value="contain">Whole picture (black bars)</option>
-        <option value="fill">Stretch to the window</option>
-      </select>
-      <button class="btn full" style="margin-top:10px" data-fs>⛶ Full screen</button>
-      <button class="btn full" style="margin-top:8px" id="installBtn">📲 Add to Home Screen</button>
-      <div class="hint">Full screen leaves only the floating ball: drag it anywhere, tap it
-      for quick controls. In a Safari tab on iPhone the picture runs behind the
-      browser's toolbar, and what lies under the toolbar can't be tapped there; added
-      to the Home Screen it opens with no browser bars at all.</div>
-    </div>
-
-    <div class="panel section">
-      <h3>Device</h3>
-      <div class="grid-2">
-        <button class="btn" data-act="home">🏠 Home</button>
-        <button class="btn" data-act="lock-confirm">🔒 Lock</button>
-        <button class="btn" data-act="unlock">🔓 Unlock</button>
-        <button class="btn" data-act="screenshot">📷 Shot</button>
+    </section>
+    <nav class="rail card" id="tools">
+      <button class="iconbtn" data-act="home" data-tip="home"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></svg></button>
+      <button class="iconbtn" data-act="switcher" data-tip="switcher"><svg viewBox="0 0 24 24"><rect x="8" y="3" width="12" height="14" rx="2.5"/><path d="M4 7v11a3 3 0 0 0 3 3h9"/></svg></button>
+      <button class="iconbtn" data-act="notifications" data-tip="notifications"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg></button>
+      <button class="iconbtn" data-act="controls" data-tip="controls"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="8" rx="4"/><rect x="13" y="4" width="8" height="8" rx="2.5"/><rect x="3" y="14" width="8" height="6" rx="2.5"/><rect x="13" y="14" width="8" height="6" rx="3"/></svg></button>
+      <button class="iconbtn" data-act="rotate" data-tip="rotate"><svg viewBox="0 0 24 24"><rect x="3" y="10" width="14" height="10" rx="2.5"/><path d="M11 3.5a8 8 0 0 1 9 7.5"/><path d="M21 7.5l-1 3.5-3.4-1.3"/></svg></button>
+      <button class="iconbtn" data-act="app" data-tip="app"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1.8"/><rect x="14" y="4" width="6" height="6" rx="1.8"/><rect x="4" y="14" width="6" height="6" rx="1.8"/><path d="M17 14v6M14 17h6"/></svg></button>
+      <button class="iconbtn" data-act="keyboard" data-tip="keyboard"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg></button>
+      <button class="iconbtn" data-act="wire" data-tip="wire"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M4 9h16M10 9v12"/></svg></button>
+      <button class="iconbtn" data-act="lock" data-tip="lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
+      <button class="iconbtn" data-act="wake" data-tip="wake"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+    </nav>
+    <aside class="side card" id="tree-panel" hidden>
+      <div class="head"><b data-t="tree"></b>
+        <button class="iconbtn" id="tree-refresh" data-tip="refresh"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
+        <button class="iconbtn" id="tree-close" data-tip="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </div>
-      <button class="btn full" style="margin-top:8px" data-act="open-app">📱 Open App…</button>
-    </div>
-
-    <div class="panel section">
-      <h3>Navigate</h3>
-      <div class="grid-3" style="max-width: 200px; margin: 0 auto">
-        <div></div>
-        <button class="btn icon" data-nav="up">↑</button>
-        <div></div>
-        <button class="btn icon" data-nav="left">←</button>
-        <button class="btn icon" data-nav="center">•</button>
-        <button class="btn icon" data-nav="right">→</button>
-        <div></div>
-        <button class="btn icon" data-nav="down">↓</button>
-        <div></div>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button class="btn full" data-page="up">⇞ PgUp</button>
-        <button class="btn full" data-page="down">⇟ PgDn</button>
-      </div>
-    </div>
-
-    <div class="panel section">
-      <h3>Text</h3>
-      <button class="btn full" data-act="type-text">⌨️ Type text…</button>
-      <div class="row" style="margin-top:8px">
-        <button class="btn full" data-act="clear-text">⌫ Clear field</button>
-        <button class="btn full" data-act="submit">⏎ Submit</button>
-      </div>
-      <div class="hint">Click the video, then type — keys go to the focused field on the device. Enter = submit.</div>
-    </div>
-  </aside>
+      <label class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
+        <input id="tree-filter" type="search" autocomplete="off" spellcheck="false"></label>
+      <div id="tree"></div>
+      <div class="foot" id="tree-foot"></div>
+    </aside>
+  </main>
 </div>
 
-<div id="scrim"></div>
-<button id="ball" aria-label="Controls" title="Controls — drag to move">◎</button>
-<div id="quick" hidden>
-  <button data-act="home">🏠<span>Home</span></button>
-  <button data-act="type-text">⌨️<span>Type</span></button>
-  <button data-act="screenshot">📷<span>Shot</span></button>
-  <button data-act="open-app">📱<span>Open app</span></button>
-  <button id="quickConn">⏻<span>Connect</span></button>
-  <button data-fs>⛶<span>Full screen</span></button>
-  <button id="quickMore">⚙︎<span>More</span></button>
-</div>
-
-<div id="installSheet" class="sheet" hidden>
-  <div class="card">
-    <h4>Add to Home Screen</h4>
-    <ol id="installSteps">
-      <li>Open Safari's Share menu (on iOS 26: the menu button in the address bar, then Share).</li>
-      <li>Choose <b>Add to Home Screen</b>.</li>
-      <li>Keep <b>Open as Web App</b> on and tap <b>Add</b>.</li>
-    </ol>
-    <div class="hint">The icon opens this page full screen, with no browser bars.
-    It keeps its own storage, so pair once more the first time.</div>
-    <button class="btn primary full" id="installClose">OK</button>
-  </div>
-</div>
-
-<div id="shotSheet" class="sheet" hidden>
-  <div class="card">
-    <img id="shotImg" alt="Screenshot">
-    <div class="hint" id="shotHint">On iPhone, Download saves it to Files › Downloads (the ↓ in Safari's address bar).</div>
-    <div class="row">
-      <a class="btn primary full" id="shotSave" download>Download</a>
-      <button class="btn full" id="shotClose">Close</button>
-    </div>
-  </div>
-</div>
-
-<div id="status">
-  <span class="dot off" id="statusDotBar"></span>
-  <span id="statusText">Idle</span>
-  <span class="sep">•</span>
-  <span id="lastAction" class="toast" style="display:none"></span>
-</div>
-
+<textarea id="kbd" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+<input type="file" id="flow-file" accept="application/json,.json" hidden>
 <script>
+"use strict";
 (() => {
-  // ── DOM ──
-  const $ = s => document.querySelector(s);
-  const video = $('#video'), stage = $('#stage'), overlay = $('#overlay');
-  const tokenInput = $('#tokenInput'), fpsSel = $('#fpsSel'), qSel = $('#qSel'), verboseChk = $('#verboseChk');
-  const connectBtn = $('#connectBtn'), stopBtn = $('#stopBtn');
-  const statusText = $('#statusText'), statusDot = $('#statusDotBar');
-  const lastAction = $('#lastAction');
-  const hudState = $('#hudState'), hudDevice = $('#hudDevice'), hudDot = $('#statusDot');
-  let toastTimer = null;
+// ───────────────────────────── text ─────────────────────────────
+const zh = /^zh/i.test(navigator.language || "");
+const T = {
+  pair: ["Pair this browser", "配对此浏览器"],
+  pairHint: ["The phone will ask its owner to allow this browser.", "手机上会请机主确认是否允许此浏览器。"],
+  approve: ["Tap Allow on the phone if it shows this code", "手机上显示同样的代码时，请点“允许”"],
+  waiting: ["Waiting for the phone…", "正在等待手机确认…"],
+  haveKey: ["Use an existing key", "使用已有密钥"],
+  denied: ["Declined on the phone.", "手机上拒绝了配对。"],
+  busy: ["The phone is answering another request. Try again in %s s.", "手机正在处理另一个配对请求，%s 秒后再试。"],
+  failed: ["Could not pair: %s", "配对失败：%s"],
+  connecting: ["Connecting…", "正在连接…"],
+  noVideo: ["The screen is unavailable: %s", "画面不可用：%s"],
+  waitingFrame: ["Waiting for the screen…", "正在等待画面…"],
+  relay: ["Relay", "中继"], direct: ["Direct", "直连"], offline: ["Offline", "未连接"],
+  home: ["Home", "主屏幕"], app: ["Open app", "打开 App"], keyboard: ["Type", "键盘输入"], wire: ["Outlines", "元素轮廓"],
+  lock: ["Lock", "锁屏"], wake: ["Wake", "唤醒"], tree: ["View tree", "视图树"], full: ["Full screen", "全屏"],
+  settings: ["Screen settings", "画面设置"], record: ["Record", "录制操作"], refresh: ["Refresh", "刷新"], close: ["Close", "关闭"],
+  appPrompt: ["App name", "App 名称"], notFound: ["No app matches “%s”.", "没有找到“%s”。"],
+  filter: ["Filter", "筛选元素"], nodes: ["%s elements", "%s 个元素"], treeErr: ["Could not read the view tree: %s", "无法读取视图树：%s"],
+  quality: ["Quality", "画质"], codec: ["Codec", "编码"], theme: ["Appearance", "外观"],
+  auto: ["Auto", "自动"], system: ["System", "跟随系统"], light: ["Light", "浅色"], dark: ["Dark", "深色"],
+  replay: ["Replay a recording…", "回放录制…"], replayHint: ["Run the steps of a saved recording on this phone", "在这台手机上依次执行保存的录制步骤"],
+  done: ["Done", "完成"],
+  paused: ["The phone's owner paused remote control.\nNothing is visible or sent until they resume it on the phone.",
+           "机主已在手机上暂停远程控制。\n在机主继续之前，看不到画面，也无法操作。"],
+  hiddenTag: ["This screen blocks capture · showing outlines", "此画面禁止截屏 · 显示元素轮廓"],
+  pausedPill: ["Paused by owner", "机主已暂停"],
+  switcher: ["App switcher", "多任务"], rotate: ["Rotate", "旋转屏幕"],
+  notifications: ["Notification Center", "通知中心"], controls: ["Control Center", "控制中心"],
+  operatingN: ["%s operating", "%s 人在操控"], watchingN: ["%s watching", "%s 人在查看"],
+  people: ["Watching and operating", "查看与操控"], you: ["You", "你"], agent: ["Agent", "智能体"],
+  operatingNow: ["Operating · %s actions", "正在操控 · %s 次操作"], watchingNow: ["Watching · %s actions", "在查看 · %s 次操作"],
+  gone: ["Left · %s actions", "已离开 · %s 次操作"], noActions: ["No actions yet", "还没有操作"],
+  o_failed: ["failed", "失败"], o_unknown: ["unknown", "结果未知"], o_queued: ["timed out", "排队超时"], o_sent: ["sending", "发送中"],
+  labels: ["Buttons", "按钮样式"], icons: ["Icons", "图标"], words: ["Text", "文字"], both: ["Icons and text", "图标+文字"],
+  guideAgain: ["Show the guide again", "重新查看引导"], guideHint: ["A short tour of the controls", "快速了解各个按钮的作用"],
+  next: ["Next", "下一步"], skip: ["Skip", "跳过"], gotIt: ["Start", "开始使用"],
+  g1t: ["Drive the phone here", "在这里操作手机"],
+  g1d: ["Click to tap, drag to swipe, hold to long-press. Scroll with the wheel; hold Option (Alt) while dragging to pinch. Typing goes straight to the phone.",
+        "单击是点按，拖动是滑动，按住不放是长按。滚轮可以滚动；按住 Option（Alt）拖动是双指缩放。直接打字就会输入到手机上。"],
+  g1m: ["Tap, swipe and hold as on the phone itself; pinch with two fingers.", "像在手机上一样点按、滑动和长按，双指捏合可以缩放。"],
+  g2t: ["Buttons", "常用按键"], g2: ["The phone's buttons and a few tools:", "手机的按键和几个常用工具："],
+  g3t: ["Connection", "连接状态"],
+  g3: ["How you're connected, the codec, frame rate and delay. On the right: how many are watching and operating — open it for everyone's actions.",
+       "这里是连接方式、编码、帧率和延迟。右侧显示有几人在查看和操控，点开可以看每个人的操作记录。"],
+  g4t: ["Record and replay", "录制与回放"], g4: ["Record what you do, then replay it or download it as a file.", "录下你的操作，之后可以回放，或者下载成文件。"],
+  g5t: ["View tree", "视图树"], g5: ["Lists the elements on screen. Point at one to find it on the screen; choose it to tap it.", "列出屏幕上的元素。指向一个元素会在画面上标出它，点一下就会点按它。"],
+  g6t: ["Settings", "画面设置"], g6: ["Quality, codec, appearance and button style. The guide is here too.", "画质、编码、外观和按钮样式都在这里，也可以在这里重新查看引导。"],
+  unknownOutcome: ["%s may or may not have happened. It wasn't sent again.", "%s 的结果未知，已停止，未重复发送。"],
+  failedAction: ["%s failed: %s", "%s 失败：%s"],
+  recSaved: ["Recorded %s steps", "已录制 %s 步"], recEmpty: ["Nothing was recorded.", "没有录到任何操作。"],
+  download: ["Download", "下载"], discard: ["Discard", "丢弃"], play: ["Replay", "回放"],
+  replaying: ["Replaying %s/%s", "正在回放 %s/%s"], replayDone: ["Replay finished", "回放完成"], stop: ["Stop", "停止"],
+  badFlow: ["That file isn't a LoopCtrl recording.", "这不是 LoopCtrl 的录制文件。"],
+  devices: ["Devices", "切换设备"], devicesTitle: ["Devices", "设备"], addDevice: ["Add a device", "添加设备"],
+  addHint: ["Paste the address of another phone's control page.", "粘贴另一台手机控制页的地址。"],
+  badUrl: ["That isn't a web address.", "这不是一个网址。"], devOn: ["Online", "在线"], devOff: ["Offline", "离线"],
+  devOpen: ["Open to check", "打开后可查看"], devThis: ["This phone", "当前"], remove: ["Remove", "移除"], add: ["Add", "添加"],
+  g7t: ["Your phones", "多台手机"],
+  g7: ["Every phone you've opened here is listed, with whether it's online: choose one to switch to it. In a narrow window, tap the phone's name.",
+       "在这里打开过的手机都会列出来，并显示是否在线，点一下就能切换。窗口较窄时，点左上角的手机名称打开列表。"],
+  phoneOffline: ["The phone isn't connected. Waiting for it…", "手机未连接，正在等待它上线…"],
+  pageUpdated: ["A newer control page is ready.", "控制页已更新。"], reload: ["Reload", "刷新"],
+  hevcGeometry: ["H.265 is drawn wrong in this browser: switched to H.264.", "此浏览器的 H.265 画面显示不正确，已改用 H.264。"],
+  copyDiag: ["Copy diagnostics", "复制诊断信息"], copyDiagHint: ["What this page saw of the stream, to send to the developer", "本页的画面与连接情况，可发给开发者排查问题"],
+  copied: ["Copied", "已复制"],
+  hevcFallback: ["H.265 keeps stalling in this browser: switched to H.264.", "此浏览器的 H.265 解码多次卡住，已改用 H.264。"],
+};
+const t = (k, ...a) => { let s = (T[k] || [k])[zh ? 1 : 0] || (T[k] || [k])[0]; for (const v of a) s = s.replace("%s", v); return s; };
+document.documentElement.lang = zh ? "zh" : "en";
+for (const el of document.querySelectorAll("[data-t]")) el.textContent = t(el.dataset.t);
+for (const el of document.querySelectorAll("[data-tip]")) { el.title = t(el.dataset.tip); el.setAttribute("aria-label", el.title); }
+const $ = (id) => document.getElementById(id);
+$("tree-filter").placeholder = t("filter");
 
-  // ── state ──
-  let player = null;
-  // The page holds the 32-byte pairing key K (hex) and its derived id `tok`.
-  // localStorage is scoped per (host, port), so switching between devices is
-  // safe; we only persist after a successful connect. There is no plaintext
-  // bearer token anywhere — K signs and encrypts every request locally and is
-  // never transmitted.
-  const STORE_KEY = 'loopctrl.key';
-  let key = null, tok = '';
-  function useKeyHex(hexKey) {
-    if (!/^[0-9a-f]{64}$/i.test(hexKey || '')) return false;
-    key = unhex(hexKey.toLowerCase());
-    return true;   // `tok` is derived in connect(), where we can await SHA-256
-  }
-  const savedKey = localStorage.getItem(STORE_KEY) || '';
-  if (savedKey) tokenInput.value = savedKey;
-  let deviceInfo = null;   // {point_width, point_height}
-  let dragStart = null;
-
-  // ── status ──
-  // Two channels:
-  //   setConn(msg, kind)  → the LEFT half of the status bar + video HUD,
-  //                         a sticky connection state ("connected", "streaming …").
-  //   setToast(msg, kind) → a transient badge on the RIGHT of the status bar,
-  //                         auto-clears after ~2.4s. Used for per-action feedback
-  //                         (tap ok, swipe ok, rpc failed, …).
-  function setConn(msg, kind = 'idle') {
-    statusText.textContent = msg;
-    hudState.textContent = msg;
-    const cls = 'dot ' + (kind === 'ok' ? 'on' : kind === 'err' ? 'err' : 'off');
-    statusDot.className = cls; hudDot.className = cls;
-  }
-  // In full screen the page should look like the phone itself, so only
-  // failures (and the few hints passed with force) are shown.
-  function setToast(msg, kind = 'ok', ttl = 2400, force = false) {
-    if (document.body.classList.contains('immersive') && kind !== 'err' && !force) return;
-    lastAction.textContent = msg;
-    lastAction.className = 'toast ' + (kind || '');
-    lastAction.style.display = '';
-    lastAction.parentElement.classList.add('has-toast');
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => {
-      lastAction.style.display = 'none';
-      lastAction.parentElement.classList.remove('has-toast');
-    }, ttl);
-  }
-  // Legacy shim: existing call sites use setStatus(msg, kind). Route lifecycle
-  // words to the sticky connection line, everything else to the toast.
-  const CONN_WORDS = ['idle','connecting','stopped','connected','streaming','switching','waiting'];
-  function setStatus(msg, kind = 'idle') {
-    const isConn = CONN_WORDS.some(w => msg.toLowerCase().startsWith(w));
-    if (isConn) setConn(msg, kind);
-    else setToast(msg, kind === 'err' ? 'err' : kind === 'ok' ? 'ok' : 'warn');
-  }
-
-  // ── crypto (protocol v1) ──
-  // Every /rpc body is sealed: HMAC-CTR stream cipher + encrypt-then-MAC, a
-  // fresh 16-byte nonce per request, and a timestamp the server bounds to
-  // ±120s. Identical construction to the Python/Swift clients, so all three
-  // interoperate.
-  //
-  // IMPORTANT: `crypto.subtle` only exists in a SECURE CONTEXT (https, or
-  // localhost). This page is normally opened as http://<lan-ip>:8300/remote,
-  // which is NOT secure context — there `crypto.subtle` is undefined outright,
-  // not merely missing an algorithm. So every primitive has a pure-JS fallback
-  // and we never touch `crypto.subtle` without checking. (`getRandomValues` is
-  // not part of subtle and is always available.)
-  const enc = new TextEncoder(), dec = new TextDecoder();
-  const hex = (buf) => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
-  const unhex = (s) => new Uint8Array(s.match(/../g).map(h => parseInt(h, 16)));
-  const b64 = (u8) => btoa(String.fromCharCode(...u8));
-  const unb64 = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
-  const SUBTLE = (typeof crypto !== 'undefined' && crypto.subtle) ? crypto.subtle : null;
-
-  // ── SHA-256 / HMAC-SHA256 fallback (FIPS 180-4, RFC 2104) ──
-  // Validated against the FIPS 180-4 and RFC 4231 vectors and cross-checked
-  // against WebCrypto. Only used when SUBTLE is null.
-  const SHAJS = (() => {
-    const K = new Uint32Array([
-      0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-      0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-      0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-      0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-      0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-      0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-      0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-      0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
-    const rotr = (x, n) => (x >>> n) | (x << (32 - n));
-    const cat = (...a) => { const o = new Uint8Array(a.reduce((n,x)=>n+x.length,0));
-      let p = 0; for (const x of a) { o.set(x,p); p += x.length; } return o; };
-    function sha256(msg) {
-      const len = msg.length, bitLen = len * 8;
-      // Message + 0x80 + 8-byte length, rounded UP to a whole 64-byte block.
-      // Getting this wrong by one block silently corrupts every digest whose
-      // length lands in [56,63] mod 64, which is exactly the case that broke
-      // the response MAC on longer replies.
-      const padded = new Uint8Array(Math.ceil((len + 9) / 64) * 64);
-      padded.set(msg); padded[len] = 0x80;
-      const dv = new DataView(padded.buffer);
-      dv.setUint32(padded.length - 4, bitLen >>> 0);
-      dv.setUint32(padded.length - 8, Math.floor(bitLen / 0x100000000));
-      const H = new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
-                                 0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]);
-      const w = new Uint32Array(64);
-      for (let off = 0; off < padded.length; off += 64) {
-        for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + i * 4);
-        for (let i = 16; i < 64; i++) {
-          const s0 = rotr(w[i-15],7) ^ rotr(w[i-15],18) ^ (w[i-15] >>> 3);
-          const s1 = rotr(w[i-2],17) ^ rotr(w[i-2],19) ^ (w[i-2] >>> 10);
-          w[i] = (w[i-16] + s0 + w[i-7] + s1) >>> 0;
-        }
-        let [a,b,c,d,e,f,g,h] = H;
-        for (let i = 0; i < 64; i++) {
-          const S1 = rotr(e,6) ^ rotr(e,11) ^ rotr(e,25), ch = (e & f) ^ (~e & g);
-          const t1 = (h + S1 + ch + K[i] + w[i]) >>> 0;
-          const S0 = rotr(a,2) ^ rotr(a,13) ^ rotr(a,22);
-          const maj = (a & b) ^ (a & c) ^ (b & c), t2 = (S0 + maj) >>> 0;
-          h=g; g=f; f=e; e=(d+t1)>>>0; d=c; c=b; b=a; a=(t1+t2)>>>0;
-        }
-        H[0]=(H[0]+a)>>>0; H[1]=(H[1]+b)>>>0; H[2]=(H[2]+c)>>>0; H[3]=(H[3]+d)>>>0;
-        H[4]=(H[4]+e)>>>0; H[5]=(H[5]+f)>>>0; H[6]=(H[6]+g)>>>0; H[7]=(H[7]+h)>>>0;
-      }
-      const out = new Uint8Array(32), odv = new DataView(out.buffer);
-      for (let i = 0; i < 8; i++) odv.setUint32(i*4, H[i]);
-      return out;
-    }
-    function hmacSha256(key, msg) {
-      const B = 64, k = key.length > B ? sha256(key) : key;
-      const pad = new Uint8Array(B); pad.set(k);
-      const ip = new Uint8Array(B), op = new Uint8Array(B);
-      for (let i = 0; i < B; i++) { ip[i] = pad[i] ^ 0x36; op[i] = pad[i] ^ 0x5c; }
-      return sha256(cat(op, sha256(cat(ip, msg))));
-    }
-    return { sha256, hmacSha256 };
-  })();
-
-  async function sha256(bytes) {
-    if (SUBTLE) return new Uint8Array(await SUBTLE.digest('SHA-256', bytes));
-    return SHAJS.sha256(new Uint8Array(bytes));
-  }
-
-  async function hmac(keyBytes, msg) {
-    if (!SUBTLE) return SHAJS.hmacSha256(new Uint8Array(keyBytes), new Uint8Array(msg));
-    const k = await SUBTLE.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-    return new Uint8Array(await SUBTLE.sign('HMAC', k, msg));
-  }
-  const concat = (...arrs) => {
-    const out = new Uint8Array(arrs.reduce((n, a) => n + a.length, 0));
-    let off = 0; for (const a of arrs) { out.set(a, off); off += a.length; }
-    return out;
-  };
-  /// keystream_i = HMAC(key, nonce || be32(i)), truncated to len.
-  async function keystreamXor(key, nonce, data) {
-    const out = new Uint8Array(data.length);
-    for (let off = 0, ctr = 0; off < data.length; off += 32, ctr++) {
-      const be = new Uint8Array(4); new DataView(be.buffer).setUint32(0, ctr);
-      const block = await hmac(key, concat(nonce, be));
-      for (let i = 0; i < 32 && off + i < data.length; i++) out[off + i] = data[off + i] ^ block[i];
-    }
-    return out;
-  }
-  const be64 = (n) => {
-    const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(n)); return b;
-  };
-
-  // ── X25519 fallback (RFC 7748) ──
-  // Used only when WebCrypto lacks X25519 (Chrome <133, Safari <17, Firefox
-  // <132). ~40 lines of BigInt instead of a WASM blob: it runs exactly once per
-  // pairing, so speed is irrelevant and auditability is worth more. Validated
-  // against the RFC 7748 §5.2/§6.1 vectors and cross-checked against WebCrypto.
-  //
-  // The ladder is branch-free over the scalar bits, but BigInt arithmetic is not
-  // constant-time — acceptable here: the key is ephemeral, used once, for a
-  // pairing the user is actively watching. Everything after pairing is HMAC.
-  const X25519JS = (() => {
-    const P = (1n << 255n) - 19n, A24 = 121665n;
-    const fe = (x) => ((x % P) + P) % P;
-    const powm = (b, e) => { let r = 1n; b = fe(b);
-      while (e > 0n) { if (e & 1n) r = fe(r * b); b = fe(b * b); e >>= 1n; } return r; };
-    const inv = (x) => powm(x, P - 2n);
-    const toBig = (b) => { let n = 0n; for (let i = b.length - 1; i >= 0; i--) n = (n << 8n) | BigInt(b[i]); return n; };
-    const toBytes = (n) => { const o = new Uint8Array(32);
-      for (let i = 0; i < 32; i++) { o[i] = Number(n & 255n); n >>= 8n; } return o; };
-    function scalarMult(scalar, uBytes) {
-      const e = Uint8Array.from(scalar);
-      e[0] &= 248; e[31] &= 127; e[31] |= 64;                 // clamp
-      const k = toBig(e), u = fe(toBig(uBytes) & ((1n << 255n) - 1n));
-      let x1 = u, x2 = 1n, z2 = 0n, x3 = u, z3 = 1n, swap = 0n;
-      for (let t = 254; t >= 0; t--) {
-        const kt = (k >> BigInt(t)) & 1n;
-        swap ^= kt;
-        if (swap) { [x2, x3] = [x3, x2]; [z2, z3] = [z3, z2]; }
-        swap = kt;
-        const a = fe(x2 + z2), aa = fe(a * a), b = fe(x2 - z2), bb = fe(b * b);
-        const ee = fe(aa - bb), c = fe(x3 + z3), d = fe(x3 - z3);
-        const da = fe(d * a), cb = fe(c * b);
-        x3 = fe((da + cb) * (da + cb));
-        z3 = fe(x1 * fe((da - cb) * (da - cb)));
-        x2 = fe(aa * bb);
-        z2 = fe(ee * (aa + fe(A24 * ee)));
-      }
-      if (swap) { [x2, x3] = [x3, x2]; [z2, z3] = [z3, z2]; }
-      return toBytes(fe(x2 * inv(z2)));
-    }
-    const BASE = (() => { const b = new Uint8Array(32); b[0] = 9; return b; })();
-    return { scalarMult, publicKey: (priv) => scalarMult(priv, BASE) };
-  })();
-
-  // ── pairing ──
-  // Do the whole handshake in-page so the user never has to run curl. Over the
-  // LAN the device only grants a key wrapped against an ephemeral X25519 key
-  // (a plaintext grant is refused off 127.0.0.1), so this needs X25519 — from
-  // WebCrypto where available, else the bundled BigInt implementation. Either
-  // way pairing works in every browser, with no terminal step.
-  //
-  // Two backends, same shape: WebCrypto where available, otherwise the BigInt
-  // implementation below. Only pairing needs X25519 — every request afterwards
-  // uses HMAC-SHA256, which every browser has had for a decade.
-  async function makeEphemeralKey() {
-    try {
-      if (!SUBTLE) throw new Error('no subtle');
-      const kp = await SUBTLE.generateKey({ name: 'X25519' }, true, ['deriveBits']);
-      return {
-        pub: new Uint8Array(await SUBTLE.exportKey('raw', kp.publicKey)),
-        deriveShared: async (peer) => new Uint8Array(await SUBTLE.deriveBits(
-          { name: 'X25519', public: await SUBTLE.importKey('raw', peer, { name: 'X25519' }, false, []) },
-          kp.privateKey, 256)),
-      };
-    } catch (_) {
-      const priv = crypto.getRandomValues(new Uint8Array(32));
-      return {
-        pub: X25519JS.publicKey(priv),
-        deriveShared: async (peer) => X25519JS.scalarMult(priv, peer),
-      };
-    }
-  }
-
-  async function pairInPage(clientName) {
-    const eph = await makeEphemeralKey();
-    // Shown so the user can match it against the on-device prompt.
-    const fp = hex(await sha256(eph.pub)).slice(0, 8);
-    setConn('waiting for approval on the device… (key ' + fp + ')');
-
-    const r = await fetch('/pair', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_name: clientName, pub: b64(eph.pub) }),
-    });
-    const j = await r.json();
-    if (!r.ok) throw new Error((j.error && j.error.message) || ('pair failed (' + r.status + ')'));
-
-    // K = token_ct XOR HMAC(HMAC(shared,"loopctrl-pair"||c_pub||d_pub), "loopctrl-wrap")
-    const devPub = unb64(j.pub);
-    const shared = await eph.deriveShared(devPub);
-    const kWrap = await hmac(shared, concat(enc.encode('loopctrl-pair'), eph.pub, devPub));
-    const pad = await hmac(kWrap, enc.encode('loopctrl-wrap'));
-    const ctk = unhex(j.token_ct);
-    return hex(ctk.map((b, i) => b ^ pad[i]));
-  }
-
-  // ── RPC ──
-  // A person watching the live stream is the settle check: waiting for the
-  // screen to stop changing would only hold the reply (and the device's UI
-  // thread, which the stream's capture also needs) for up to seconds.
-  const NO_SETTLE = new Set(['tap', 'double_tap', 'long_press', 'swipe', 'scroll', 'drag',
-                             'page', 'page_down', 'page_up', 'type', 'clear_text']);
-  async function rpc(method, params = {}) {
-    if (!key) throw new Error('not paired');
-    if (NO_SETTLE.has(method) && params.settle === undefined) params = { ...params, settle: false };
-    const body = enc.encode(JSON.stringify({ jsonrpc: '2.0', method, params, id: Date.now() }));
-    const nonce = crypto.getRandomValues(new Uint8Array(16));
-    const ts = Math.floor(Date.now() / 1000);
-
-    const kEnc = await hmac(key, concat(enc.encode('loopctrl-v1|enc-req'), nonce));
-    const kMac = await hmac(key, concat(enc.encode('loopctrl-v1|mac'), nonce));
-    const ct = await keystreamXor(kEnc, nonce, body);
-    const tag = await hmac(kMac, concat(enc.encode('v1'), unhex(tok), be64(ts), nonce, ct));
-
-    const r = await fetch('/rpc', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ v: 1, tok, ts, nonce: hex(nonce), ct: b64(ct), tag: hex(tag) }),
-    });
-    if (r.status === 401 || r.status === 403) {
-      // Key rejected/expired — drop it so the next visit prompts to re-pair.
-      try { localStorage.removeItem(STORE_KEY); } catch (_) {}
-      key = null;
-      throw new Error('key rejected (' + r.status + ') — re-pair');
-    }
-
-    // Reply is sealed under the same nonce with the response-direction key.
-    const env = await r.json();
-    const respCt = unb64(env.ct);
-    const expect = await hmac(kMac, concat(enc.encode('resp'), nonce, respCt));
-    if (hex(expect) !== env.tag) throw new Error('response MAC mismatch');
-    const kEncResp = await hmac(key, concat(enc.encode('loopctrl-v1|enc-resp'), nonce));
-    const j = JSON.parse(dec.decode(await keystreamXor(kEncResp, nonce, respCt)));
-    if (j.error) throw new Error(j.error.message || 'rpc failed');
-    return j.result || {};
-  }
-
-  // ── HUD device badge (short label + full details on hover) ──
-  // ── device health overlay ──
-  // Polls device_info on a slow cadence: it is a real RPC on a device we are
-  // also streaming from, so asking often would itself cost frames.
-  const sysmon = $('#sysmon'), sysmonBody = $('#sysmonBody'), sysmonToggle = $('#sysmonToggle');
-  let sysmonTimer = null;
-  const SYSMON_INTERVAL_MS = 5000;
-
-  try {
-    if (localStorage.getItem('loopctrl.sysmon.collapsed') === '1') sysmon.classList.add('collapsed');
-  } catch (_) {}
-  sysmonToggle.addEventListener('click', () => {
-    const collapsed = sysmon.classList.toggle('collapsed');
-    sysmonToggle.textContent = collapsed ? '▸' : '▾';
-    sysmonToggle.title = collapsed ? 'Show' : 'Hide';
-    try { localStorage.setItem('loopctrl.sysmon.collapsed', collapsed ? '1' : '0'); } catch (_) {}
-  });
-
-  function renderSysmon(sys) {
-    if (!sys) { sysmon.hidden = true; return; }
-    sysmon.hidden = false;
-    const rows = [];
-    const row = (k, v, cls) => rows.push(
-      `<div class="sysmon-row"><span class="k">${k}</span><span class="v ${cls || ''}">${v}</span></div>`);
-
-    // Thermal first: it is the one that explains a stream slowing down.
-    if (sys.thermal_state) {
-      const t = sys.thermal_state;
-      row('Thermal', t, t === 'critical' ? 'bad' : (t === 'serious' || t === 'fair') ? 'warn' : '');
-    }
-    if (sys.process_cpu_percent != null) {
-      const c = sys.process_cpu_percent;
-      row('CPU', c.toFixed(0) + '%', c > 150 ? 'bad' : c > 80 ? 'warn' : '');
-    }
-    if (sys.process_memory_mb != null) {
-      const total = sys.total_memory_mb;
-      row('Memory', sys.process_memory_mb + ' MB' + (total ? ` / ${total}` : ''));
-    }
-    if (sys.system_free_memory_mb != null) row('Free', sys.system_free_memory_mb + ' MB');
-
-    // Disk: show free space in the unit that stays readable, and colour by how
-    // full the volume is — a nearly-full device fails installs and screenshots
-    // in confusing ways, so it is worth seeing before it bites.
-    if (sys.disk_free_mb != null) {
-      const gb = sys.disk_free_mb / 1024;
-      const free = gb >= 1 ? gb.toFixed(1) + ' GB' : sys.disk_free_mb + ' MB';
-      const pct = sys.disk_used_percent;
-      row('Disk', free + ' free', pct != null && pct > 95 ? 'bad' : pct != null && pct > 85 ? 'warn' : '');
-    }
-
-    if (sys.battery_percent != null) {
-      const b = sys.battery_percent;
-      const charging = sys.battery_state === 'charging' || sys.battery_state === 'full';
-      row('Battery', b + '%' + (charging ? ' ⚡' : ''),
-          !charging && b <= 10 ? 'bad' : !charging && b <= 20 ? 'warn' : '');
-    }
-
-    if (sys.low_power_mode) row('Power', 'low-power', 'warn');
-    sysmonBody.innerHTML = rows.join('');
-  }
-
-  async function pollSysmon() {
-    try {
-      const info = await rpc('device_info');
-      renderSysmon(info.system);
-    } catch (_) {
-      // A failed poll is not worth surfacing — the status bar already reports
-      // connection trouble, and the last-known values stay on screen.
-    }
-  }
-
-  function startSysmon() {
-    stopSysmon();
-    pollSysmon();
-    sysmonTimer = setInterval(pollSysmon, SYSMON_INTERVAL_MS);
-  }
-  function stopSysmon() {
-    if (sysmonTimer) { clearInterval(sysmonTimer); sysmonTimer = null; }
-    sysmon.hidden = true;
-  }
-
-  function updateHudDevice(info) {
-    if (!info) { hudDevice.textContent = '—'; hudDevice.title = ''; return; }
-    const name = info.device_name || info.model || 'iPhone';
-    const os = info.system_version ? ` · iOS ${info.system_version}` : '';
-    hudDevice.textContent = name + os;
-    const lines = [
-      `Name:    ${info.device_name || '—'}`,
-      `Model:   ${info.model || '—'}`,
-      `iOS:     ${info.system_version || '—'}`,
-      `Screen:  ${info.point_width}×${info.point_height} pt (${info.pixel_width}×${info.pixel_height} px, ${info.scale}x)`,
-      `Server:  ${info.server_version || '—'}${info.protocol_version != null ? ' (proto ' + info.protocol_version + ')' : ''}`,
-    ];
-    hudDevice.title = lines.join('\n');
-  }
-
-  // ── coordinate conversion ──
-  // The video element shows the encoded frame; we map a click on it to device
-  // POINTS via device_info's point_width/point_height. video.videoWidth/Height
-  // is the encoded pixel size; the letterboxed layout inside the element uses
-  // getBoundingClientRect for the visible box.
-  //
-  // In full screen the picture can also fill the window (object-fit: cover,
-  // edges cropped) or be stretched to it (fill); the box below follows
-  // whichever is in effect, so a touch still lands where it is drawn.
-  function videoBox() {
-    const rect = video.getBoundingClientRect();
-    const vw = video.videoWidth || rect.width;
-    const vh = video.videoHeight || rect.height;
-    if (!vw || !vh) return null;
-    const fit = getComputedStyle(video).objectFit;
-    let sx = Math.min(rect.width / vw, rect.height / vh), sy = sx;
-    if (fit === 'cover') sx = sy = Math.max(rect.width / vw, rect.height / vh);
-    else if (fit === 'fill') { sx = rect.width / vw; sy = rect.height / vh; }
-    const w = vw * sx, h = vh * sy;
-    const x0 = rect.left + (rect.width - w) / 2;
-    const y0 = rect.top + (rect.height - h) / 2;
-    return { x0, y0, w, h, vw, vh };
-  }
-  function clientToPoint(cx, cy) {
-    if (!deviceInfo) return null;
-    const b = videoBox(); if (!b) return null;
-    if (cx < b.x0 || cx > b.x0 + b.w || cy < b.y0 || cy > b.y0 + b.h) return null;
-    // fraction inside the image → device points
-    const fx = (cx - b.x0) / b.w, fy = (cy - b.y0) / b.h;
-    return { x: fx * deviceInfo.point_width, y: fy * deviceInfo.point_height };
-  }
-
-  // ── input handling on the video ──
-  // Every touch on the picture belongs to the phone being controlled. Without
-  // this the browser also reads a sideways drag as its own back/forward swipe
-  // and leaves the page mid-gesture; touch-action doesn't cover navigation
-  // gestures, cancelling the touch events does. Input itself comes from the
-  // pointer events below, which still fire.
-  for (const type of ['touchstart', 'touchmove']) {
-    overlay.addEventListener(type, e => { if (e.cancelable) e.preventDefault(); }, { passive: false });
-  }
-  overlay.addEventListener('pointerdown', e => {
-    // Left button (or a touch) only: the right button is Home.
-    lastPointerType = e.pointerType;
-    if (e.button !== 0) return;
-    overlay.setPointerCapture(e.pointerId);
-    dragStart = { x: e.clientX, y: e.clientY, t: Date.now() };
-    overlay.focus();
-  });
-  overlay.addEventListener('pointerup', async e => {
-    if (!dragStart) return;
-    const s = dragStart; dragStart = null;
-    const dx = e.clientX - s.x, dy = e.clientY - s.y;
-    const dist = Math.hypot(dx, dy);
-    try {
-      if (dist < 6) {
-        const p = clientToPoint(e.clientX, e.clientY); if (!p) return;
-        // Held in place → long press, for as long as it was held.
-        const held = (Date.now() - s.t) / 1000;
-        if (held >= 0.5) {
-          await rpc('long_press', { x: Math.round(p.x), y: Math.round(p.y),
-                                    duration: Math.min(3, Math.max(0.6, held)) });
-          setStatus(`long_press (${Math.round(p.x)},${Math.round(p.y)})`, 'ok');
-          return;
-        }
-        await rpc('tap', { x: Math.round(p.x), y: Math.round(p.y) });
-        setStatus(`tap (${Math.round(p.x)},${Math.round(p.y)})`, 'ok');
-      } else {
-        // The server distinguishes the two arbitrary-A→B gesture APIs:
-        //   swipe(x, y, direction, distance)          fixed axes, from a point
-        //   drag (from_x, from_y, to_x, to_y)         truly arbitrary two-point
-        // Browser pointer drag is the second — send drag, not swipe.
-        const p1 = clientToPoint(s.x, s.y), p2 = clientToPoint(e.clientX, e.clientY);
-        if (!p1 || !p2) return;
-        // Duration proportional to gesture time makes flicks feel like flicks
-        // and slow drags feel deliberate — capped for sanity.
-        const dur = Math.max(0.15, Math.min(0.8, (Date.now() - s.t) / 1000));
-        await rpc('drag', {
-          from_x: Math.round(p1.x), from_y: Math.round(p1.y),
-          to_x:   Math.round(p2.x), to_y:   Math.round(p2.y),
-          duration: dur,
-        });
-        setStatus(`drag → (${Math.round(p2.x)},${Math.round(p2.y)})`, 'ok');
-      }
-    } catch (err) { setStatus(err.message, 'err'); }
-  });
-  // Double-click → double_tap
-  overlay.addEventListener('dblclick', async e => {
-    const p = clientToPoint(e.clientX, e.clientY); if (!p) return;
-    try { await rpc('double_tap', { x: Math.round(p.x), y: Math.round(p.y) }); setStatus(`double_tap`, 'ok'); }
-    catch (err) { setStatus(err.message, 'err'); }
-  });
-  // Right-click → Home (long press is a left press held in place). A held
-  // finger on a touch screen also raises contextmenu; that one is the long
-  // press already handled on pointerup, not Home.
-  let lastPointerType = 'mouse';
-  overlay.addEventListener('contextmenu', async e => {
-    e.preventDefault();
-    if (lastPointerType !== 'mouse') return;
-    try { await rpc('home'); setStatus('home', 'ok'); }
-    catch (err) { setStatus(err.message, 'err'); }
-  });
-  // Wheel → page (vertical) or a horizontal swipe. Trackpad up = feed moves
-  // down = swipe up gesture. Sideways (trackpad, tilt wheel, shift+wheel) is
-  // a swipe from under the pointer: carousels, pagers, back gestures.
-  // deltaX > 0 means "scroll right", i.e. the finger moves left.
-  let wheelAcc = 0, wheelTimer = null;
-  let sideAcc = 0, sideLock = null, sidePoint = null;
-  overlay.addEventListener('wheel', e => {
-    e.preventDefault();
-    const dx = e.deltaX || (e.shiftKey ? e.deltaY : 0);
-    const sideways = Math.abs(dx) > Math.abs(e.deltaY) || (e.shiftKey && !e.deltaX);
-    if (sideways || sideLock) {
-      // One swipe per gesture: a trackpad keeps sending (momentum) events
-      // after the fingers lift; they extend the lock instead of swiping again.
-      if (sideLock) {
-        clearTimeout(sideLock);
-        sideLock = setTimeout(() => { sideLock = null; sideAcc = 0; }, 350);
-        return;
-      }
-      if (!sidePoint) sidePoint = clientToPoint(e.clientX, e.clientY);
-      sideAcc += dx;
-      if (Math.abs(sideAcc) < 30 || !sidePoint || !deviceInfo) return;
-      const w = deviceInfo.point_width;
-      const dist = w * 0.45;
-      const dir = sideAcc > 0 ? -1 : 1;
-      // Keep both ends on the screen.
-      const fromX = Math.max(8 + (dir < 0 ? dist : 0), Math.min(w - 8 - (dir > 0 ? dist : 0), sidePoint.x));
-      const y = Math.round(sidePoint.y);
-      sidePoint = null; sideAcc = 0;
-      sideLock = setTimeout(() => { sideLock = null; }, 350);
-      rpc('drag', { from_x: Math.round(fromX), from_y: y, to_x: Math.round(fromX + dir * dist), to_y: y, duration: 0.2 })
-        .then(() => setStatus(`swipe ${dir < 0 ? 'left' : 'right'}`, 'ok'))
-        .catch(err => setStatus(err.message, 'err'));
-      return;
-    }
-    sidePoint = null; sideAcc = 0;
-    wheelAcc += e.deltaY;
-    if (wheelTimer) clearTimeout(wheelTimer);
-    wheelTimer = setTimeout(async () => {
-      const acc = wheelAcc; wheelAcc = 0;
-      if (Math.abs(acc) < 40) return;
-      try {
-        const dir = acc > 0 ? 'down' : 'up';
-        await rpc('page', { direction: dir });
-        setStatus(`page ${dir}`, 'ok');
-      } catch (err) { setStatus(err.message, 'err'); }
-    }, 100);
-  }, { passive: false });
-  // Keyboard → type. Enter → submit; printable char → type; Backspace → clear one char via clear_text is heavy — send a delete via type of \b? LoopCtrl clear_text empties the whole field; skip that on Backspace and let user use the Clear button.
-  overlay.addEventListener('keydown', async e => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      try { await rpc('type', { text: '', submit: true }); setStatus('submit', 'ok'); } catch (err) { setStatus(err.message, 'err'); }
-      return;
-    }
-    if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      e.preventDefault();
-      try { await rpc('type', { text: e.key }); setStatus(`type '${e.key}'`, 'ok'); } catch (err) { setStatus(err.message, 'err'); }
-    }
-  });
-
-  // ── screenshot ──
-  // Shown in a sheet rather than downloaded straight away, so the result is
-  // visible: on iPhone a download only asks once and then lands silently in
-  // Files › Downloads.
-  const shotSheet = $('#shotSheet'), shotImg = $('#shotImg'), shotSave = $('#shotSave');
-  let shotURL = null;
-  async function showScreenshot() {
-    const scale = Math.min(3, deviceInfo?.screen_scale || 2);
-    const s = await rpc('screenshot', { scale, quality: 0.92 });
-    const mime = s.format === 'png' ? 'image/png' : 'image/jpeg';
-    const bytes = Uint8Array.from(atob(s.data), c => c.charCodeAt(0));
-    if (shotURL) URL.revokeObjectURL(shotURL);
-    shotURL = URL.createObjectURL(new Blob([bytes], { type: mime }));
-    shotImg.src = shotURL;
-    shotSave.href = shotURL;
-    shotSave.download = `loopctrl-shot-${Date.now()}.${s.format === 'png' ? 'png' : 'jpg'}`;
-    $('#shotHint').hidden = !/iPhone|iPad|iPod/.test(navigator.userAgent);
-    closeDrawer(); hideQuick();
-    shotSheet.hidden = false;
-  }
-  $('#shotClose').addEventListener('click', () => { shotSheet.hidden = true; });
-  shotSheet.addEventListener('click', e => { if (e.target === shotSheet) shotSheet.hidden = true; });
-
-  // ── side-panel buttons ──
-  document.querySelectorAll('[data-act]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const act = btn.dataset.act;
-      try {
-        if (act === 'home') { await rpc('home'); setStatus('home', 'ok'); }
-        else if (act === 'unlock') { await rpc('unlock'); setStatus('unlock', 'ok'); }
-        else if (act === 'lock-confirm') {
-          if (!confirm('Lock the phone?\nUnlocking may need the passcode entered on the device.')) return;
-          await rpc('lock'); setStatus('lock', 'ok');
-        }
-        else if (act === 'screenshot') { await showScreenshot(); }
-        else if (act === 'open-app') {
-          const name = prompt('App name to open:'); if (!name) return;
-          setStatus(`resolving "${name}"…`);
-          const r = await rpc('resolve_app', { text: name });
-          const app = (r.apps || [])[0];
-          if (!app) { setStatus(`no app "${name}"`, 'err'); return; }
-          await rpc('launch_app', { bundle_id: app.bundle_id });
-          setStatus(`opened ${app.name}`, 'ok');
-        }
-        else if (act === 'type-text') {
-          const text = prompt('Text to type into the focused field:'); if (!text) return;
-          const submit = confirm('Submit (press Return) after typing?');
-          await rpc('type', { text, submit });
-          setStatus(`type "${text}"` + (submit ? ' + submit' : ''), 'ok');
-        }
-        else if (act === 'clear-text') { await rpc('clear_text'); setStatus('clear_text', 'ok'); }
-        else if (act === 'submit') { await rpc('type', { text: '', submit: true }); setStatus('submit', 'ok'); }
-      } catch (err) { setStatus(err.message, 'err'); }
-    });
-  });
-  // Direction pad: swipe from center of the video image.
-  document.querySelectorAll('[data-nav]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const dir = btn.dataset.nav;
-      if (!deviceInfo) return setStatus('not connected', 'err');
-      const w = deviceInfo.point_width, h = deviceInfo.point_height;
-      const cx = w/2, cy = h/2, d = Math.min(w, h) * 0.35;
-      const vec = { up: [0,-d], down: [0,d], left: [-d,0], right: [d,0], center: [0,0] }[dir];
-      try {
-        if (dir === 'center') {
-          await rpc('tap', { x: Math.round(cx), y: Math.round(cy) });
-          setStatus('tap center', 'ok');
-        } else {
-          await rpc('swipe', {
-            from_x: Math.round(cx), from_y: Math.round(cy),
-            to_x:   Math.round(cx + vec[0]), to_y: Math.round(cy + vec[1]),
-            velocity: 'normal',
-          });
-          setStatus(`swipe ${dir}`, 'ok');
-        }
-      } catch (err) { setStatus(err.message, 'err'); }
-    });
-  });
-  document.querySelectorAll('[data-page]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      try { await rpc('page', { direction: btn.dataset.page }); setStatus(`page ${btn.dataset.page}`, 'ok'); }
-      catch (err) { setStatus(err.message, 'err'); }
-    });
-  });
-
-  // ── connection lifecycle ──
-  async function connect() {
-    let hexKey = tokenInput.value.trim();
-    // No key yet (or a malformed one) → pair right here rather than telling the
-    // user to go run curl. The device will prompt for approval on its screen.
-    if (!/^[0-9a-f]{64}$/i.test(hexKey)) {
-      if (hexKey) { setStatus('that is not a 64-hex key — pairing instead…', 'warn'); }
-      try {
-        hexKey = await pairInPage('browser @ ' + (navigator.platform || 'web'));
-        tokenInput.value = hexKey;
-      } catch (err) { setConn('pair: ' + err.message, 'err'); return; }
-    }
-    if (!useKeyHex(hexKey)) { setStatus('invalid pairing key', 'err'); return; }
-    // tok = first 4 bytes of SHA-256(K) — the public lookup id sent on the wire.
-    tok = hex(await sha256(key)).slice(0, 8);
-    setStatus('connecting…');
-    // Prime device_info for coord conversion + title.
-    try {
-      deviceInfo = await rpc('device_info');
-      updateHudDevice(deviceInfo);
-      renderSysmon(deviceInfo.system);
-      startSysmon();
-      // Auth confirmed by a successful RPC — remember the key for next visit.
-      try { localStorage.setItem(STORE_KEY, hexKey.toLowerCase()); } catch (_) {}
-    } catch (err) { setStatus('rpc: ' + err.message, 'err'); return; }
-
-    // Native MSE — Chrome / Firefox / Edge / desktop Safari support fMP4 via
-    // MediaSource. No JS decoder library needed. Safari on iPhone has no
-    // MediaSource, only ManagedMediaSource (iOS 17.1+).
-    if (!MSE) {
-      setStatus('this browser can\'t play the stream (on iPhone it needs iOS 17.1 or later)', 'err');
-      return;
-    }
-
-    const fps = fpsSel.value;
-    const quality = qSel?.value || 'auto';
-    const verbose = verboseChk?.checked ? '&verbose=1' : '';
-    // The stream is a long-lived byte pipe, so it can't carry a per-request
-    // envelope. Mint a single-use, ~60s ticket over the encrypted channel and
-    // spend it on the URL: nothing long-lived is ever exposed there.
-    let ticket;
-    try {
-      ticket = (await rpc('stream_ticket')).ticket;
-    } catch (err) { setStatus('ticket: ' + err.message, 'err'); return; }
-    const src = `/stream?ticket=${encodeURIComponent(ticket)}&fps=${fps}&quality=${quality}${verbose}`;
-
-    // Tear any previous MSE + fetch down before starting a new one.
-    if (player) { try { player.stop(); } catch(_){} player = null; }
-    // "streaming" is shown once the first frame is decoded, not when the
-    // SourceBuffer opens: the stream headers can arrive before play() resolves,
-    // and the later "waiting" status would otherwise stick.
-    let mime = '';
-    player = mseFragmentPlayer(video, src, {
-      onOpen: (info) => { mime = info?.mime || ''; },
-      onError: (msg) => setStatus('stream: ' + msg, 'err'),
-    });
-    const current = player;
-    video.addEventListener('loadeddata', () => {
-      // The codec string is long and wraps on a phone; it goes in the tooltip.
-      if (player === current) { setStatus('streaming', 'ok'); hudState.title = mime; }
-    }, { once: true });
-    setStatus('connected — waiting for first frame…', 'ok');
-    connectBtn.disabled = true; stopBtn.disabled = false;
-    connectCta.hidden = true;
-    try { await video.play(); } catch (_) {
-      setStatus('autoplay blocked — click the video', 'err');
-    }
-    overlay.focus();
-  }
-  function stop() {
-    if (player) { try { player.stop(); } catch(_){} player = null; }
-    stopSysmon();
-    connectBtn.disabled = false; stopBtn.disabled = true;
-    connectCta.hidden = false;
-    setStatus('stopped');
-    hudDot.className = 'dot off';
-  }
-
-  // --- Minimal fMP4-over-HTTP MSE player -------------------------------
-  // Streams /stream via fetch, pumps chunks into a SourceBuffer.
-  //
-  // Design notes (learned the hard way — see git log):
-  //
-  //  1) `sb.updating` covers BOTH appendBuffer and remove. Doing them
-  //     back-to-back in the same updateend handler would set `updating`
-  //     again and the next pump() sees updating=true → nothing appends.
-  //     If the following updateend also fires remove, pump is starved
-  //     forever. Fix: a single state machine drives one op at a time
-  //     (append preferred over cleanup) and every updateend re-enters
-  //     it.
-  //
-  //  2) Setting `videoEl.currentTime` while `sb.updating === true` is
-  //     illegal → InvalidStateError. Do the seek only from tick(), not
-  //     from updateend.
-  //
-  //  3) The server's X-Codec header carries the REAL profile/level
-  //     from the SPS. Guessing (avc1.42E01F) makes MSE silently
-  //     reject appends and the picture stays black.
-  //
-  //  4) Safari on iPhone only has ManagedMediaSource. It never opens unless
-  //     remote playback (AirPlay) is disabled or given an alternative source,
-  //     and it may evict buffered data on its own, which a live stream that
-  //     keeps only the last few seconds doesn't mind.
-  const MSE = window.MediaSource || window.ManagedMediaSource || null;
-  function mseFragmentPlayer(videoEl, url, { onOpen, onError }) {
-    const ms = new MSE();
-    if (window.ManagedMediaSource && ms instanceof window.ManagedMediaSource) {
-      videoEl.disableRemotePlayback = true;
-    }
-    videoEl.src = URL.createObjectURL(ms);
-    const ac = new AbortController();
-    let sb = null;
-    const queue = [];              // pending Uint8Arrays
-    let running = true;
-    let sourceOpen = false;
-    let pendingCodec = null;
-    let removePending = false;     // set by maintenance, cleared in tick
-
-    function reportError(where, err) {
-      const msg = (err && err.name === 'QuotaExceededError')
-        ? 'MSE buffer full' : (err?.message || where);
-      onError?.(where + ': ' + msg);
-    }
-
-    // Single serialized state machine. Called after every updateend, after
-    // every new chunk, and from a rescue watchdog. It picks the next legal
-    // action and does exactly one of them.
-    function tick() {
-      if (!running || !sb || sb.updating) return;
-      // 1) Drain the append queue first — never let bytes stall.
-      if (queue.length) {
-        try { sb.appendBuffer(queue.shift()); }
-        catch (err) { reportError('append', err); running = false; ac.abort(); }
-        return;
-      }
-      // 2) Trim old data when the window grows past ~4 s behind currentTime.
-      if (removePending) {
-        removePending = false;
-        try {
-          if (videoEl.buffered.length) {
-            const start = videoEl.buffered.start(0);
-            const cutoff = Math.max(start, videoEl.currentTime - 2);
-            if (cutoff - start > 0.5) sb.remove(start, cutoff);
-          }
-        } catch (_) {}
-        return;
-      }
-    }
-
-    function attachSourceBuffer(codec) {
-      const mime = `video/mp4; codecs="${codec}"`;
-      if (!MSE.isTypeSupported(mime)) {
-        onError?.(`browser doesn't support ${mime}`);
-        return false;
-      }
-      sb = ms.addSourceBuffer(mime);
-      sb.mode = 'segments';
-      sb.addEventListener('updateend', tick);
-      sb.addEventListener('error', (e) => reportError('sourceBuffer', e));
-      onOpen?.({ mime });
-      return true;
-    }
-
-    function maybeStart() {
-      if (sourceOpen && pendingCodec && !sb) {
-        if (!attachSourceBuffer(pendingCodec)) return;
-        tick();
-      }
-    }
-
-    ms.addEventListener('sourceopen', () => { sourceOpen = true; maybeStart(); });
-    ms.addEventListener('sourceclose', () => { running = false; });
-
-    // Live edge: every 100 ms. Frame timestamps follow the device clock, so
-    // after the stream stalls (capture blocked, network hiccup) the player is
-    // behind by exactly the stall. A small lag is caught up by playing faster
-    // — no visible jump; a large one (a long stall, a hidden tab) by a seek,
-    // only when sb is idle (seeking during an update throws).
-    const live = setInterval(() => {
-      if (!running || !sb) return;
-      try {
-        const bl = videoEl.buffered.length;
-        if (!bl) return;
-        const lag = videoEl.buffered.end(bl - 1) - videoEl.currentTime;
-        if (lag > 1.0 && !sb.updating) {
-          videoEl.currentTime = videoEl.buffered.end(bl - 1) - 0.05;
-          videoEl.playbackRate = 1;
-        } else {
-          const rate = lag > 0.35 ? Math.min(2, 1 + lag) : 1;
-          if (videoEl.playbackRate !== rate) videoEl.playbackRate = rate;
-        }
-        if (videoEl.paused && running) videoEl.play().catch(() => {});
-      } catch (_) {}
-    }, 100);
-
-    // Watchdog: every 500 ms, mark old data for removal. Done OUTSIDE
-    // updateend so it can't compete with the append pipeline.
-    const watchdog = setInterval(() => {
-      if (!running || !sb) return;
-      // Ask tick to remove a chunk next time it's idle.
-      try {
-        if (videoEl.buffered.length &&
-            videoEl.currentTime - videoEl.buffered.start(0) > 4) {
-          removePending = true;
-        }
-      } catch (_) {}
-      // If updateend was somehow missed (shouldn't happen, but observed on
-      // Chrome after long uptime) — force-progress the state machine.
-      tick();
-    }, 500);
-
-    (async () => {
-      let resp;
-      try {
-        resp = await fetch(url, { signal: ac.signal });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      } catch (err) {
-        if (err.name !== 'AbortError') onError?.(err.message);
-        return;
-      }
-      // Codec string from the server (real profile+level from SPS).
-      pendingCodec = resp.headers.get('X-Codec') || 'avc1.42E01F';
-      maybeStart();
-
-      const reader = resp.body.getReader();
-      while (running) {
-        let value, done;
-        try { ({ value, done } = await reader.read()); }
-        catch (err) {
-          if (err.name !== 'AbortError') onError?.('read: ' + err.message);
-          break;
-        }
-        if (done) { onError?.('stream ended'); break; }
-        queue.push(value); tick();
-      }
-    })();
-
-    return {
-      stop() {
-        running = false;
-        clearInterval(watchdog);
-        clearInterval(live);
-        try { ac.abort(); } catch (_) {}
-        try { if (ms.readyState === 'open') ms.endOfStream(); } catch (_) {}
-        try { URL.revokeObjectURL(videoEl.src); } catch (_) {}
-      },
-    };
-  }
-  connectBtn.addEventListener('click', connect);
-  stopBtn.addEventListener('click', stop);
-  // Changing FPS mid-stream: reconnect so the server sees the new ?fps=…
-  // (broadcaster restarts the encoder at the new rate).
-  fpsSel.addEventListener('change', () => {
-    if (player) { setStatus(`switching to ${fpsSel.value} fps…`); connect(); }
-  });
-  qSel?.addEventListener('change', () => {
-    if (player) { setStatus(`switching to quality ${qSel.value}…`); connect(); }
-  });
-  verboseChk?.addEventListener('change', () => {
-    if (player) { setStatus(`verbose ${verboseChk.checked ? 'on' : 'off'}…`); connect(); }
-  });
-
-  // ── preferences ──
-  // Per-browser display choices; storage can be unavailable (private mode),
-  // in which case the defaults simply apply.
-  const pref = {
-    get(k, d) { try { const v = localStorage.getItem('loopctrl.' + k); return v === null ? d : v; } catch (_) { return d; } },
-    set(k, v) { try { localStorage.setItem('loopctrl.' + k, v); } catch (_) {} },
-  };
-  document.querySelectorAll('[data-pref]').forEach(chk => {
-    const name = chk.dataset.pref;
-    const apply = () => document.body.classList.toggle('hide-' + name, !chk.checked);
-    chk.checked = pref.get('show.' + name, '1') === '1';
-    apply();
-    chk.addEventListener('change', () => { apply(); pref.set('show.' + name, chk.checked ? '1' : '0'); });
-  });
-
-  // How the picture meets the window in full screen. Filling it crops the
-  // edges when the window's shape differs from the phone's (a Safari tab);
-  // from the Home Screen the shapes match and nothing visible is lost.
-  const fitSel = document.getElementById('fitSel');
-  fitSel.value = pref.get('fit', 'cover');
-  document.body.dataset.fit = fitSel.value;
-  fitSel.addEventListener('change', () => {
-    document.body.dataset.fit = fitSel.value;
-    pref.set('fit', fitSel.value);
-    updateUnderBars();
-  });
-
-  // ── drawer (a bottom sheet on a phone and in full screen) ──
-  const app = document.getElementById('app');
-  const ball = document.getElementById('ball');
-  const quick = document.getElementById('quick');
-  const scrim = document.getElementById('scrim');
-  const narrow = window.matchMedia('(max-width: 720px)');
-  let immersive = false;
-  const drawerMode = () => app.classList.contains('drawer');
-  function updateDrawerMode() {
-    const on = narrow.matches || immersive;
-    app.classList.toggle('drawer', on);
-    if (!on) { app.classList.remove('open'); hideQuick(); }
-    updateUnderBars();
-    placeBall();
-  }
-  function openDrawer() { hideQuick(); app.classList.add('open'); }
-  function closeDrawer() { app.classList.remove('open'); }
-  scrim.addEventListener('click', closeDrawer);
-  // Close the sheet after a control is used, so the picture is visible again.
-  document.querySelectorAll('aside [data-act], aside [data-nav], aside [data-page]').forEach(el => {
-    el.addEventListener('click', () => { if (drawerMode()) setTimeout(closeDrawer, 120); });
-  });
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { closeDrawer(); hideQuick(); }
-  });
-
-  // ── floating ball ──
-  // Its spot is kept as a side plus a fraction of the height, so it survives
-  // rotation and window resizes.
-  const BALL_MARGIN = 10;
-  let ballSpot = (() => {
-    try { return JSON.parse(pref.get('ball', '')) || null; } catch (_) { return null; }
-  })();
-  function placeBall() {
-    if (!ballSpot) { ball.style.left = ball.style.top = ''; return; }
-    const size = ball.offsetWidth || 48;
-    const top = Math.min(Math.max(ballSpot.y * innerHeight, BALL_MARGIN), innerHeight - size - BALL_MARGIN);
-    ball.style.left = (ballSpot.side === 'left' ? BALL_MARGIN : innerWidth - size - BALL_MARGIN) + 'px';
-    ball.style.top = top + 'px';
-    ball.style.right = ball.style.bottom = 'auto';
-  }
-  let ballDrag = null;
-  // Dragging the ball sideways must not start the browser's back swipe either.
-  for (const type of ['touchstart', 'touchmove']) {
-    ball.addEventListener(type, e => { if (e.cancelable) e.preventDefault(); }, { passive: false });
-  }
-  ball.addEventListener('pointerdown', e => {
-    const r = ball.getBoundingClientRect();
-    ballDrag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false };
-    ball.setPointerCapture(e.pointerId);
-    e.preventDefault();
-  });
-  ball.addEventListener('pointermove', e => {
-    if (!ballDrag || e.pointerId !== ballDrag.id) return;
-    if (!ballDrag.moved && Math.hypot(e.clientX - ballDrag.sx, e.clientY - ballDrag.sy) < 6) return;
-    if (!ballDrag.moved) { ballDrag.moved = true; ball.classList.add('dragging'); hideQuick(); }
-    const size = ball.offsetWidth;
-    ball.style.left = Math.min(Math.max(e.clientX - ballDrag.dx, 0), innerWidth - size) + 'px';
-    ball.style.top = Math.min(Math.max(e.clientY - ballDrag.dy, 0), innerHeight - size) + 'px';
-    ball.style.right = ball.style.bottom = 'auto';
-  });
-  function endBallDrag(e) {
-    if (!ballDrag || e.pointerId !== ballDrag.id) return;
-    const moved = ballDrag.moved;
-    ballDrag = null;
-    ball.classList.remove('dragging');
-    if (!moved) { quick.hidden ? showQuick() : hideQuick(); return; }
-    const r = ball.getBoundingClientRect();
-    ballSpot = { side: r.left + r.width / 2 < innerWidth / 2 ? 'left' : 'right', y: r.top / innerHeight };
-    pref.set('ball', JSON.stringify(ballSpot));
-    placeBall();
-  }
-  ball.addEventListener('pointerup', endBallDrag);
-  ball.addEventListener('pointercancel', endBallDrag);
-  window.addEventListener('resize', () => { updateUnderBars(); placeBall(); if (!quick.hidden) positionQuick(); });
-
-  // The ball is pale glass, which vanishes over a white screen. Twice a
-  // second, read the patch of the frame under it and switch to the dark
-  // style when that patch is light. Without a picture it stays pale.
-  const ballProbe = document.createElement('canvas');
-  ballProbe.width = ballProbe.height = 8;
-  const ballProbeCtx = ballProbe.getContext('2d', { willReadFrequently: true });
-  setInterval(() => {
-    let light = false;
-    try {
-      const b = player && drawerMode() && !ballDrag ? videoBox() : null;
-      if (b && video.readyState >= 2) {
-        const r = ball.getBoundingClientRect();
-        const kx = b.vw / b.w, ky = b.vh / b.h;
-        ballProbeCtx.drawImage(video, (r.left - b.x0) * kx, (r.top - b.y0) * ky,
-                               r.width * kx, r.height * ky, 0, 0, 8, 8);
-        const d = ballProbeCtx.getImageData(0, 0, 8, 8).data;
-        let sum = 0;
-        for (let i = 0; i < d.length; i += 4) sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        light = sum / 64 > 150;
-      }
-    } catch (_) {}
-    ball.classList.toggle('on-light', light);
-  }, 500);
-
-  // ── quick controls, opened from the ball ──
-  function positionQuick() {
-    const b = ball.getBoundingClientRect();
-    const q = quick.getBoundingClientRect();
-    const gap = 8;
-    let left = b.left + b.width / 2 < innerWidth / 2 ? b.left : b.right - q.width;
-    let top = b.top - q.height - gap;
-    if (top < gap) top = b.bottom + gap;
-    left = Math.min(Math.max(left, gap), innerWidth - q.width - gap);
-    top = Math.min(Math.max(top, gap), innerHeight - q.height - gap);
-    quick.style.left = left + 'px';
-    quick.style.top = top + 'px';
-  }
-  // Connect and Stop live in the drawer, out of reach while the picture is
-  // in use; the quick menu carries whichever one applies now.
-  const quickConn = document.getElementById('quickConn');
-  function showQuick() {
-    quickConn.querySelector('span').textContent = player ? 'Stop' : 'Connect';
-    quick.hidden = false; ball.classList.add('active'); positionQuick();
-  }
-  quickConn.addEventListener('click', () => {
-    hideQuick();
-    if (player) stop(); else connect();
-  });
-  function hideQuick() { quick.hidden = true; ball.classList.remove('active'); }
-  quick.querySelectorAll('[data-act]').forEach(el => el.addEventListener('click', () => setTimeout(hideQuick, 120)));
-  document.getElementById('quickMore').addEventListener('click', openDrawer);
-  document.addEventListener('pointerdown', e => {
-    if (!quick.hidden && !quick.contains(e.target) && e.target !== ball) hideQuick();
-  }, true);
-
-  // ── full screen ──
-  // The page's own full screen where the browser has one (desktop, iPad,
-  // Android); iPhone Safari only offers it for a bare <video>, which would take
-  // the controls away, so there it is the same layout without the browser's
-  // full screen.
+// ───────────────────────────── settings ─────────────────────────────
+const prefs = {
+  get(k) { try { return localStorage.getItem("loopctrl." + k); } catch (_) { return null; } },
+  set(k, v) { try { localStorage.setItem("loopctrl." + k, v); } catch (_) {} },
+};
+const settings = {
+  quality: prefs.get("quality") || "",   // filled in at start, once we know relay or direct
+  codec: prefs.get("codec") || "auto",
+  theme: prefs.get("theme") || "system",
+  // Words beside the icons where there is room for them.
+  labels: prefs.get("labels") || (matchMedia("(pointer: fine) and (min-width: 900px)").matches ? "both" : "icon"),
+};
+function applyTheme() {
   const root = document.documentElement;
-  const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
-  const standalone = navigator.standalone === true ||
-    window.matchMedia('(display-mode: standalone)').matches;
-  document.body.classList.toggle('standalone', standalone);
-  // A Safari tab on iPhone can't hide the browser's bars. From iOS 26 the
-  // toolbar floats over the page, so the picture can run underneath it to the
-  // bottom of the screen (updateUnderBars). On older versions the space
-  // between the bars is all there is, and it is shorter than the phone's
-  // screen: say how to get the whole screen, once per page load.
-  const barsStay = !standalone && !(root.requestFullscreen || root.webkitRequestFullscreen);
-  let barsHintShown = false;
-  const ua = navigator.userAgent;
-  const floatingBar = barsStay && /iPhone/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua) &&
-    Number((ua.match(/Version\/(\d+)/) || [])[1]) >= 26;
-  // Where the page starts on the screen (the status bar's height), which the
-  // browser doesn't expose: by screen size, in points.
-  function statusBarHeight() {
-    return ({ '375x812': 44, '414x896': 48, '390x844': 47, '428x926': 47,
-              '393x852': 59, '430x932': 59, '402x874': 62, '440x956': 62,
-              '420x912': 68 })[screen.width + 'x' + screen.height] || 54;
+  if (document.body) {
+    root.classList.add("theming");
+    clearTimeout(applyTheme.timer);
+    applyTheme.timer = setTimeout(() => root.classList.remove("theming"), 450);
   }
-  function updateUnderBars() {
-    const portrait = window.matchMedia('(orientation: portrait)').matches;
-    // In a Safari tab: under the floating toolbar, when the picture is set to
-    // fill the screen. From the Home Screen: the page starts at the top of
-    // the screen, but on some iOS versions its viewport is the status bar's
-    // height too short, which leaves a black band along the bottom; the same
-    // taller page covers it, with no scrolling needed.
-    const inTab = floatingBar && fitSel.value === 'cover';
-    const on = immersive && portrait && (inTab || standalone) && screen.height > innerHeight;
-    // Entering: the status bar must pass through display:none, even with a
-    // message up, or its strip stays painted over the bottom of the picture.
-    if (on && !root.classList.contains('under-bars')) {
-      document.getElementById('status').classList.remove('has-toast');
-    }
-    root.classList.toggle('under-bars', on);
-    // The page is made exactly as tall as the screen and scrolled up by the
-    // status bar's height, which puts its top edge at the top of the screen:
-    // Safari shows a scrolled page beneath the status bar as well.
-    app.style.height = on ? screen.height + 'px' : '';
-    underBarsScroll = on && !standalone ? statusBarHeight() : 0;
-    if (scrollY !== underBarsScroll) scrollTo(0, underBarsScroll);
-  }
-  let underBarsScroll = 0;
-  // Nothing else should move the page from that position.
-  window.addEventListener('scroll', () => {
-    if (root.classList.contains('under-bars') && Math.abs(scrollY - underBarsScroll) > 0.5) scrollTo(0, underBarsScroll);
-  });
-  let inBrowserFs = false;
-  function setImmersive(on, restoring = false) {
-    immersive = on;
-    document.body.classList.toggle('immersive', on);
-    document.querySelectorAll('[data-fs]').forEach(el => {
-      const label = el.querySelector('span');
-      if (label) label.textContent = on ? 'Exit' : 'Full screen';
-      else if (el.classList.contains('btn')) el.textContent = on ? '⛶ Exit full screen' : '⛶ Full screen';
-      el.title = on ? 'Exit full screen' : 'Full screen';
-    });
-    pref.set('immersive', on ? '1' : '0');
-    if (on && barsStay && !floatingBar && !barsHintShown && !restoring) {
-      barsHintShown = true;
-      setToast('Safari keeps its bars here. Add to Home Screen to fill the screen.', 'warn', 6000, true);
-    }
-    closeDrawer(); hideQuick();
-    updateDrawerMode();
-    try {
-      if (on && !fsElement()) {
-        const req = root.requestFullscreen || root.webkitRequestFullscreen;
-        const r = req && req.call(root);
-        if (r && r.catch) r.catch(() => {});
-      } else if (!on && fsElement()) {
-        const exit = document.exitFullscreen || document.webkitExitFullscreen;
-        const r = exit && exit.call(document);
-        if (r && r.catch) r.catch(() => {});
-      }
-    } catch (_) {}
-  }
-  // Leaving the browser's full screen (Esc, a system gesture) leaves ours too.
-  ['fullscreenchange', 'webkitfullscreenchange'].forEach(ev => document.addEventListener(ev, () => {
-    if (fsElement()) inBrowserFs = true;
-    else if (inBrowserFs) { inBrowserFs = false; if (immersive) setImmersive(false); }
-  }));
-  document.querySelectorAll('[data-fs]').forEach(el => el.addEventListener('click', () => setImmersive(!immersive)));
-  narrow.addEventListener?.('change', updateDrawerMode);
-  // A reload can't re-enter the browser's full screen (it needs a tap), but
-  // the layout comes back as it was.
-  // ?fullscreen=1 (the Home Screen app's start URL) always opens full screen;
-  // otherwise the last choice in this browser, and full screen by default when
-  // running as a Home Screen app.
-  const params = new URLSearchParams(location.search);
-  const startImmersive = params.get('fullscreen') === '1' ||
-    pref.get('immersive', standalone ? '1' : '0') === '1';
-  if (startImmersive) setImmersive(true, true); else updateDrawerMode();
+  if (settings.theme === "light" || settings.theme === "dark") root.dataset.theme = settings.theme;
+  else delete root.dataset.theme;
+}
+applyTheme();
 
-  // ── add to Home Screen ──
-  // Chrome and Edge offer an install prompt; Safari has no API for it, so
-  // there the page puts the full-screen URL in the address bar (what Add to
-  // Home Screen saves) and explains the steps.
-  const installBtn = document.getElementById('installBtn');
-  const installSheet = document.getElementById('installSheet');
-  let installPrompt = null;
-  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; });
-  installBtn.hidden = standalone;
-  installBtn.addEventListener('click', async () => {
-    if (installPrompt) {
-      const p = installPrompt; installPrompt = null;
-      try { await p.prompt(); } catch (_) {}
+// ───────────────────────────── bytes ─────────────────────────────
+const enc = new TextEncoder(), dec = new TextDecoder();
+const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+const unhex = (s) => { const o = new Uint8Array(s.length >> 1); for (let i = 0; i < o.length; i++) o[i] = parseInt(s.substr(i * 2, 2), 16); return o; };
+const cat = (...parts) => { let n = 0; for (const p of parts) n += p.length; const o = new Uint8Array(n); let i = 0; for (const p of parts) { o.set(p, i); i += p.length; } return o; };
+const b64 = (b) => { let s = ""; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); };
+const unb64 = (s) => { const r = atob(s), o = new Uint8Array(r.length); for (let i = 0; i < r.length; i++) o[i] = r.charCodeAt(i); return o; };
+const random = (n) => crypto.getRandomValues(new Uint8Array(n));
+const be64 = (v) => { const o = new Uint8Array(8), d = new DataView(o.buffer); d.setUint32(0, Math.floor(v / 4294967296)); d.setUint32(4, v >>> 0); return o; };
+const be32 = (v) => { const o = new Uint8Array(4); new DataView(o.buffer).setUint32(0, v); return o; };
+const SUBTLE = (window.isSecureContext && crypto.subtle) ? crypto.subtle : null;
+
+// ───────────────────────────── SHA-256 / HMAC ─────────────────────────────
+// Plain JavaScript on purpose: it works on http:// pages, and the request
+// cipher is one HMAC per 32 bytes, far cheaper here than an async WebCrypto
+// call each time.
+const K256 = new Int32Array([
+  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,
+  0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+  0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,
+  0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,
+  0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+const W = new Int32Array(64);
+function compress(h, b, o) {
+  for (let i = 0; i < 16; i++) W[i] = (b[o + i * 4] << 24) | (b[o + i * 4 + 1] << 16) | (b[o + i * 4 + 2] << 8) | b[o + i * 4 + 3];
+  for (let i = 16; i < 64; i++) {
+    const x = W[i - 15], y = W[i - 2];
+    W[i] = (((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3)) + W[i - 7] +
+           (((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10)) + W[i - 16] | 0;
+  }
+  let a = h[0], c1 = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], k = h[7];
+  for (let i = 0; i < 64; i++) {
+    const t1 = k + (((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7))) + ((e & f) ^ (~e & g)) + K256[i] + W[i] | 0;
+    const t2 = (((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10))) + ((a & c1) ^ (a & c) ^ (c1 & c)) | 0;
+    k = g; g = f; f = e; e = d + t1 | 0; d = c; c = c1; c1 = a; a = t1 + t2 | 0;
+  }
+  h[0] = h[0] + a | 0; h[1] = h[1] + c1 | 0; h[2] = h[2] + c | 0; h[3] = h[3] + d | 0;
+  h[4] = h[4] + e | 0; h[5] = h[5] + f | 0; h[6] = h[6] + g | 0; h[7] = h[7] + k | 0;
+}
+const IV = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+// state after `prefix` (whole 64-byte blocks), then the rest of `msg`
+function shaFrom(state, done, msg) {
+  const h = Int32Array.from(state);
+  const total = done + msg.length, full = msg.length & ~63;
+  for (let o = 0; o < full; o += 64) compress(h, msg, o);
+  const tail = new Uint8Array(((msg.length - full + 9 + 63) >> 6) << 6);
+  tail.set(msg.subarray(full)); tail[msg.length - full] = 0x80;
+  const dv = new DataView(tail.buffer), bits = total * 8;
+  dv.setUint32(tail.length - 8, Math.floor(bits / 4294967296)); dv.setUint32(tail.length - 4, bits >>> 0);
+  for (let o = 0; o < tail.length; o += 64) compress(h, tail, o);
+  const out = new Uint8Array(32), ov = new DataView(out.buffer);
+  for (let i = 0; i < 8; i++) ov.setInt32(i * 4, h[i]);
+  return out;
+}
+const sha256 = (m) => shaFrom(IV, 0, m);
+// HMAC with the key's pads absorbed once, for the many blocks of a keystream
+function hmacKey(key) {
+  if (key.length > 64) key = sha256(key);
+  const ip = new Uint8Array(64).fill(0x36), op = new Uint8Array(64).fill(0x5c);
+  for (let i = 0; i < key.length; i++) { ip[i] ^= key[i]; op[i] ^= key[i]; }
+  const hi = Int32Array.from(IV), ho = Int32Array.from(IV);
+  compress(hi, ip, 0); compress(ho, op, 0);
+  return (msg) => shaFrom(ho, 64, shaFrom(hi, 64, msg));
+}
+const hmac = (key, msg) => hmacKey(key)(msg);
+function keystreamXor(key, nonce, data) {
+  const mac = hmacKey(key), out = new Uint8Array(data.length);
+  for (let i = 0, n = 0; i < data.length; i += 32, n++) {
+    const block = mac(cat(nonce, be32(n)));
+    for (let j = 0; j < 32 && i + j < data.length; j++) out[i + j] = data[i + j] ^ block[j];
+  }
+  return out;
+}
+
+// ───────────────────────────── X25519 ─────────────────────────────
+// RFC 7748, with BigInt, for browsers without WebCrypto X25519. Only used
+// once, while pairing.
+const P = 2n ** 255n - 19n;
+const mod = (a) => { a %= P; return a < 0n ? a + P : a; };
+const pow = (b, e) => { let r = 1n; b = mod(b); while (e > 0n) { if (e & 1n) r = mod(r * b); b = mod(b * b); e >>= 1n; } return r; };
+const leToInt = (b) => { let r = 0n; for (let i = b.length - 1; i >= 0; i--) r = (r << 8n) | BigInt(b[i]); return r; };
+const intToLe = (n) => { const o = new Uint8Array(32); for (let i = 0; i < 32; i++) { o[i] = Number(n & 255n); n >>= 8n; } return o; };
+function x25519(k, u) {
+  const s = k.slice(); s[0] &= 248; s[31] &= 127; s[31] |= 64;
+  const kn = leToInt(s), x1 = leToInt(u) & ((1n << 255n) - 1n);
+  let x2 = 1n, z2 = 0n, x3 = x1, z3 = 1n, swap = 0n;
+  for (let i = 254n; i >= 0n; i--) {
+    const bit = (kn >> i) & 1n;
+    if (swap ^ bit) { [x2, x3] = [x3, x2]; [z2, z3] = [z3, z2]; }
+    swap = bit;
+    const A = mod(x2 + z2), AA = mod(A * A), B = mod(x2 - z2), BB = mod(B * B), E = mod(AA - BB);
+    const C = mod(x3 + z3), D = mod(x3 - z3), DA = mod(D * A), CB = mod(C * B);
+    x3 = mod((DA + CB) ** 2n); z3 = mod(x1 * mod((DA - CB) ** 2n));
+    x2 = mod(AA * BB); z2 = mod(E * (AA + 121665n * E));
+  }
+  if (swap) { [x2, x3] = [x3, x2]; [z2, z3] = [z3, z2]; }
+  return intToLe(mod(x2 * pow(z2, P - 2n)));
+}
+async function ephemeralKey() {
+  if (SUBTLE) {
+    try {
+      const kp = await SUBTLE.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+      return {
+        pub: new Uint8Array(await SUBTLE.exportKey("raw", kp.publicKey)),
+        shared: async (peer) => new Uint8Array(await SUBTLE.deriveBits(
+          { name: "X25519", public: await SUBTLE.importKey("raw", peer, { name: "X25519" }, false, []) }, kp.privateKey, 256)),
+      };
+    } catch (_) { /* no X25519 in this browser */ }
+  }
+  const priv = random(32), base = new Uint8Array(32); base[0] = 9;
+  return { pub: x25519(priv, base), shared: async (peer) => x25519(priv, peer) };
+}
+
+// ───────────────────────────── device and key ─────────────────────────────
+let device = { id: "", name: "" };
+let key = null, tok = "";        // the 32-byte pairing key and its id
+let clockSkew = 0;               // server minus local, seconds
+const storeName = () => "loopctrl.key." + (device.id || location.host);
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (_) {} },
+};
+function useKey(hexKey) {
+  key = unhex(hexKey);
+  tok = hex(sha256(key).subarray(0, 4));
+}
+
+class AuthError extends Error {}
+
+// One sealed JSON-RPC call (protocol v1, see /skill).
+let lastRTT = 0;
+// A request on a connection that died quietly would wait forever, and with
+// it everything queued behind it (acknowledgements, the next stream ticket).
+// Give up after a while: the retry gets a fresh connection.
+const RPC_TIMEOUT = { stream_ack: 4000, stream_ticket: 8000 };
+async function rpc(method, params = {}, retry = true) {
+  if (!key) throw new AuthError("not paired");
+  const nonce = random(16), ts = Math.floor(Date.now() / 1000 + clockSkew);
+  const body = enc.encode(JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }));
+  const ct = keystreamXor(hmac(key, cat(enc.encode("loopctrl-v1|enc-req"), nonce)), nonce, body);
+  const kMac = hmac(key, cat(enc.encode("loopctrl-v1|mac"), nonce));
+  const tag = hmac(kMac, cat(enc.encode("v1"), unhex(tok), be64(ts), nonce, ct));
+  const started = performance.now();
+  const limit = RPC_TIMEOUT[method] || (method === "wait" ? 1000 * Number(params.timeout || params.duration || 10) + 20000 : 20000);
+  const abort = new AbortController(), timer = setTimeout(() => abort.abort(), limit);
+  let r, j;
+  try {
+    r = await fetch("rpc", { method: "POST", headers: { "Content-Type": "application/json" }, signal: abort.signal,
+      body: JSON.stringify({ v: 1, tok, ts, nonce: hex(nonce), ct: b64(ct), tag: hex(tag) }) });
+    j = await r.json().catch(() => ({}));
+  } catch (e) {
+    throw new Error(abort.signal.aborted ? "no answer from the phone" : (e.message || String(e)));
+  } finally { clearTimeout(timer); }
+  lastRTT = performance.now() - started;
+  if (r.status === 401) {
+    const e = j.error || {};
+    if (e.code === "ts_skew" && e.server_ts && retry) {
+      clockSkew = e.server_ts - Date.now() / 1000;
+      return rpc(method, params, false);
+    }
+    throw new AuthError(e.message || "key rejected");
+  }
+  if (!j.ct || !j.tag) throw new Error((j.error && j.error.message) || ("HTTP " + r.status));
+  const rct = unb64(j.ct);
+  const want = hex(hmac(kMac, cat(enc.encode("resp"), nonce, rct)));
+  if (want !== j.tag) throw new Error("reply failed verification");
+  const out = JSON.parse(dec.decode(keystreamXor(hmac(key, cat(enc.encode("loopctrl-v1|enc-resp"), nonce)), nonce, rct)));
+  if (out.error) {
+    const e = new Error(out.error.message || "error " + out.error.code);
+    e.code = out.error.code; e.data = out.error.data || {};
+    throw e;
+  }
+  return out.result || {};
+}
+
+async function pair() {
+  const eph = await ephemeralKey();
+  $("pair-fp").textContent = hex(sha256(eph.pub)).slice(0, 8).toUpperCase().replace(/(.{4})/, "$1 ");
+  show("pair-wait");
+  const ua = navigator.userAgent;
+  const browser = /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "Browser";
+  const os = /iPhone|iPad/.test(ua) ? "iOS" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "";
+  const r = await fetch("pair", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_name: browser + (os ? " · " + os : ""), pub: b64(eph.pub) }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = j.error || {};
+    if (e.code === "pair_denied") throw new Error(t("denied"));
+    if (r.status === 429) throw new Error(t("busy", e.retry_after || 30));
+    throw new Error(t("failed", e.message || e.code || r.status));
+  }
+  const devPub = unb64(j.pub);
+  const kWrap = hmac(await eph.shared(devPub), cat(enc.encode("loopctrl-pair"), eph.pub, devPub));
+  const pad = hmac(kWrap, enc.encode("loopctrl-wrap"));
+  const k = unhex(j.token_ct).map((b, i) => b ^ pad[i]);
+  store.set(storeName(), hex(k));
+  useKey(hex(k));
+}
+
+// ───────────────────────────── screen ─────────────────────────────
+const screenEl = $("screen"), videoCanvas = $("video"), mse = $("mse"), overlay = $("overlay");
+const octx = overlay.getContext("2d");
+let points = { w: 0, h: 0 };               // tap space of the current frame
+let decoded = 0, shownAt = 0;
+
+function setMessage(text, spinning = true) {
+  const m = $("screen-msg");
+  m.hidden = !text;
+  if (text) { m.querySelector("span").textContent = text; m.querySelector(".spin").hidden = !spinning; }
+}
+
+// WebCodecs: lowest latency; only in secure contexts.
+class CodecPlayer {
+  static ok() { return typeof VideoDecoder === "function" && window.isSecureContext; }
+  constructor() { this.ctx = videoCanvas.getContext("2d"); this.decoder = null; this.needKey = true; this.conf = null; this.waiting = 0; }
+  async configure(cfg) {
+    this.close();
+    const conf = { codec: cfg.codec, description: unb64(cfg.description), optimizeForLatency: true };
+    const support = await VideoDecoder.isConfigSupported(conf).catch(() => ({ supported: false }));
+    if (!support.supported) throw new Error("unsupported codec " + cfg.codec);
+    videoCanvas.width = cfg.width; videoCanvas.height = cfg.height;
+    videoCanvas.hidden = false; mse.hidden = true;
+    this.conf = conf;
+    this.size = { w: cfg.width, h: cfg.height };
+    this.start();
+  }
+  // A decoder that fails is closed for good: start a new one, from a keyframe.
+  start() {
+    this.waiting = 0;
+    this.decoder = new VideoDecoder({
+      output: (f) => {
+        this.waiting = 0;
+        checkGeometry(f, this.size, this.conf.codec);
+        this.ctx.drawImage(f, 0, 0, videoCanvas.width, videoCanvas.height);
+        f.close();
+        frameShown();
+      },
+      error: (e) => { note("decoder error", (e && e.message) || ""); this.decoder = null; this.needKey = true; askKeyframe(); },
+    });
+    this.decoder.configure(this.conf);
+    this.needKey = true;
+  }
+  // Fed for 2 s with nothing out and no error either: a decoder that hung
+  // (seen with hardware H.265). Start over from a keyframe.
+  check() {
+    if (!this.decoder || !this.waiting || performance.now() - this.waiting < 2000) return;
+    try { this.decoder.close(); } catch (_) {}
+    this.decoder = null; this.needKey = true; this.waiting = 0;
+    askKeyframe();
+    decoderStalled(this.conf && this.conf.codec);
+  }
+  frame(keyframe, ts, data) {
+    this.check();
+    if (!this.decoder && this.conf) this.start();
+    const d = this.decoder;
+    if (!d || d.state !== "configured") return;
+    if (!keyframe && (this.needKey || d.decodeQueueSize > 3)) {
+      if (!this.needKey) askKeyframe();
+      this.needKey = true;
       return;
     }
-    try { history.replaceState(null, '', '/remote?fullscreen=1'); } catch (_) {}
-    if (!/iPhone|iPad|iPod/.test(navigator.userAgent) && !(navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent))) {
-      document.getElementById('installSteps').innerHTML =
-        '<li>Open the browser menu.</li><li>Choose <b>Install</b> or <b>Add to Home screen</b>.</li>';
-    }
-    closeDrawer(); hideQuick();
-    installSheet.hidden = false;
-  });
-  document.getElementById('installClose').addEventListener('click', () => { installSheet.hidden = true; });
-
-  // Never connect on load: a connection streams video and polls the device,
-  // and a forgotten tab (or every reload) would keep doing that. A saved key
-  // just makes Connect one tap.
-  const connectCta = document.getElementById('connectCta');
-  document.getElementById('ctaBtn').addEventListener('click', connect);
-  if (savedKey) {
-    document.getElementById('ctaNote').textContent = 'Saved key found — tap Connect to start streaming.';
+    this.needKey = false;
+    if (!this.waiting) this.waiting = performance.now();
+    try { d.decode(new EncodedVideoChunk({ type: keyframe ? "key" : "delta", timestamp: ts, data })); }
+    catch (_) { this.decoder = null; this.needKey = true; askKeyframe(); }
   }
-  // Leaving the tab (or locking the phone) ends the session for the same
-  // reason; coming back shows Connect again.
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && player) { stop(); setStatus('stopped while the page was hidden — tap Connect'); }
+  close() { if (this.decoder && this.decoder.state !== "closed") this.decoder.close(); this.decoder = null; }
+}
+
+// Media Source Extensions, for http:// pages: each frame wrapped in
+// fragmented MP4, played at a fixed pace and kept at the live edge.
+class MsePlayer {
+  static ok() { return !!(window.ManagedMediaSource || window.MediaSource); }
+  constructor() { this.queue = []; this.sb = null; this.seq = 1; this.time = 0; this.needKey = true; }
+  configure(cfg) {
+    this.close();
+    const MS = window.ManagedMediaSource || window.MediaSource;
+    const type = 'video/mp4; codecs="' + cfg.codec + '"';
+    if (!MS.isTypeSupported(type)) throw new Error("unsupported codec " + cfg.codec);
+    this.ms = new MS();
+    mse.disableRemotePlayback = true;
+    mse.src = URL.createObjectURL(this.ms);
+    this.queue = [mp4Init(cfg)]; this.seq = 1; this.time = 0; this.needKey = true;
+    this.ms.addEventListener("sourceopen", () => {
+      this.sb = this.ms.addSourceBuffer(type);
+      this.sb.mode = "segments";
+      this.sb.addEventListener("updateend", () => this.pump());
+      this.pump();
+    }, { once: true });
+    mse.hidden = false; videoCanvas.hidden = true;
+    mse.play().catch(() => {});
+  }
+  frame(keyframe, ts, data) {
+    if (!keyframe && (this.needKey || this.queue.length > 4)) {
+      if (!this.needKey) askKeyframe();
+      this.needKey = true;
+      return;
+    }
+    this.needKey = false;
+    this.queue.push(mp4Fragment(this.seq++, this.time, keyframe, data));
+    this.time += 1500;   // 1/60 s at 90 kHz
+    this.pump();
+    frameShown();
+  }
+  pump() {
+    const sb = this.sb;
+    if (!sb || sb.updating || !this.queue.length) return;
+    try { sb.appendBuffer(this.queue.shift()); } catch (_) { this.needKey = true; askKeyframe(); return; }
+    const b = mse.buffered;
+    if (b.length) {
+      const end = b.end(b.length - 1);
+      if (end - mse.currentTime > 0.2) mse.currentTime = Math.max(b.start(b.length - 1), end - 0.04);
+      if (mse.currentTime - b.start(0) > 20 && !sb.updating) { try { sb.remove(0, mse.currentTime - 10); } catch (_) {} }
+    }
+    if (mse.paused) mse.play().catch(() => {});
+  }
+  close() {
+    this.sb = null; this.queue = [];
+    if (this.ms) { try { URL.revokeObjectURL(mse.src); } catch (_) {} this.ms = null; }
+  }
+}
+
+function box(type, ...parts) {
+  const body = cat(...parts), o = new Uint8Array(8 + body.length), d = new DataView(o.buffer);
+  d.setUint32(0, o.length); o.set(enc.encode(type), 4); o.set(body, 8); return o;
+}
+const u8 = (...v) => new Uint8Array(v);
+const u16 = (v) => u8(v >> 8 & 255, v & 255);
+const u32 = (v) => be32(v >>> 0);
+const zeros = (n) => new Uint8Array(n);
+const MATRIX = cat(u32(0x10000), u32(0), u32(0), u32(0), u32(0x10000), u32(0), u32(0), u32(0), u32(0x40000000));
+function mp4Init(cfg) {
+  const desc = unb64(cfg.description), w = cfg.width, h = cfg.height, hevc = /^(hvc1|hev1)/.test(cfg.codec);
+  const avc1 = box(hevc ? "hvc1" : "avc1", zeros(6), u16(1), zeros(16), u16(w), u16(h), u32(0x480000), u32(0x480000), u32(0), u16(1),
+    zeros(32), u16(0x18), u16(0xffff), box(hevc ? "hvcC" : "avcC", desc));
+  const stbl = box("stbl", box("stsd", u32(0), u32(1), avc1), box("stts", u32(0), u32(0)), box("stsc", u32(0), u32(0)),
+    box("stsz", u32(0), u32(0), u32(0)), box("stco", u32(0), u32(0)));
+  const minf = box("minf", box("vmhd", u32(1), zeros(8)), box("dinf", box("dref", u32(0), u32(1), box("url ", u32(1)))), stbl);
+  const mdia = box("mdia", box("mdhd", u32(0), u32(0), u32(0), u32(90000), u32(0), u16(0x55c4), u16(0)),
+    box("hdlr", u32(0), u32(0), enc.encode("vide"), zeros(12), enc.encode("LoopCtrl\0")), minf);
+  const trak = box("trak", box("tkhd", u32(3), u32(0), u32(0), u32(1), u32(0), u32(0), zeros(8), u16(0), u16(0), u16(0), u16(0),
+    MATRIX, u32(w << 16), u32(h << 16)), mdia);
+  const moov = box("moov", box("mvhd", u32(0), u32(0), u32(0), u32(1000), u32(0), u32(0x10000), u16(0x100), zeros(10), MATRIX, zeros(24), u32(2)),
+    trak, box("mvex", box("trex", u32(0), u32(1), u32(1), u32(0), u32(0), u32(0))));
+  return cat(box("ftyp", enc.encode("isom"), u32(0x200), enc.encode("isomiso6avc1mp41")), moov);
+}
+function mp4Fragment(seq, time, keyframe, data) {
+  const trun = (offset) => box("trun", u32(0x000701), u32(1), u32(offset), u32(1500), u32(data.length), u32(keyframe ? 0x02000000 : 0x01010000));
+  const traf = (offset) => box("traf", box("tfhd", u32(0x020000), u32(1)), box("tfdt", u32(0x01000000), be64(time)), trun(offset));
+  const size = box("moof", box("mfhd", u32(0), u32(seq)), traf(0)).length;
+  return cat(box("moof", box("mfhd", u32(0), u32(seq)), traf(size + 8)), box("mdat", data));
+}
+
+function frameShown() {
+  decoded++;
+  if (!shownAt) { shownAt = performance.now(); setMessage(""); }
+}
+
+// The stream: framed messages, sealed when the page has WebCrypto.
+let streamAbort = null, player = null, streamGen = 0;
+// H.265 when this browser decodes it (and the user left the choice on Auto).
+const HEVC_PROBE = "hvc1.1.6.L123.B0";
+let hevcOK = null;
+async function canHevc() {
+  if (hevcOK !== null) return hevcOK;
+  hevcOK = false;
+  // Edge on Windows decoded the stream's H.265 into a wrong picture (see
+  // checkGeometry). Auto stays on H.264 there; H.265 can still be chosen.
+  if (/Windows/.test(navigator.userAgent)) return false;
+  if (Date.now() - Number(prefs.get("hevcStalled") || 0) < 86400000) return false;
+  try {
+    if (CodecPlayer.ok()) hevcOK = (await VideoDecoder.isConfigSupported({ codec: HEVC_PROBE })).supported === true;
+    if (!hevcOK && MsePlayer.ok()) hevcOK = (window.ManagedMediaSource || window.MediaSource).isTypeSupported('video/mp4; codecs="' + HEVC_PROBE + '"');
+  } catch (_) {}
+  return hevcOK;
+}
+async function wantedCodec() {
+  const c = settings.codec;
+  if (c === "h264") return "h264";
+  if (c === "hevc") return "hevc";
+  return (await canHevc()) ? "hevc" : "h264";
+}
+// What the page saw of the stream, for "Copy diagnostics" in the settings.
+const diag = { events: [] };
+function note(what, detail) {
+  diag.events.push([new Date().toISOString().slice(11, 19), what, detail]);
+  if (diag.events.length > 80) diag.events.shift();
+}
+// A decoder that hangs again and again on H.265 (some browsers' hardware
+// decoders do): with the codec on Auto, use H.264 in this browser for a day.
+let stalls = [];
+function decoderStalled(codec) {
+  const now = performance.now();
+  note("decoder stalled", codec);
+  stalls = stalls.filter((at) => now - at < 60000).concat(now);
+  if (stalls.length < 2) return;
+  stalls = [];
+  dropHevc(codec, "hevcFallback");
+}
+function dropHevc(codec, message) {
+  if (!/^(hvc1|hev1)/.test(codec || "") || settings.codec !== "auto") return;
+  hevcOK = false;
+  prefs.set("hevcStalled", String(Date.now()));
+  note("switched to H.264", message);
+  snack(t(message));
+  if (player) player.close();
+  player = null;
+  runStream();
+}
+// A decoded frame whose size isn't what the phone sent: the decoder read the
+// stream wrong (seen with H.265 in Edge on Windows: the top half of the
+// screen stretched over all of it). Three in a row on H.265: use H.264.
+let geometryOff = 0;
+function checkGeometry(f, size, codec) {
+  const vr = f.visibleRect || { x: 0, y: 0, width: f.displayWidth, height: f.displayHeight };
+  const near = (a, b) => Math.abs(a - b) <= 16;
+  const ok = near(vr.width, size.w) && near(vr.height, size.h) && near(f.displayWidth, size.w) && near(f.displayHeight, size.h);
+  diag.frame = { codec, sent: [size.w, size.h], coded: [f.codedWidth, f.codedHeight],
+                 visible: [vr.x, vr.y, vr.width, vr.height], display: [f.displayWidth, f.displayHeight] };
+  if (ok) { geometryOff = 0; return; }
+  if (geometryOff++ === 0) note("frame size differs", JSON.stringify(diag.frame));
+  if (geometryOff === 3) dropHevc(codec, "hevcGeometry");
+}
+// Acknowledgements: the newest frame received, a few times a second, with
+// how much later than the quickest frame lately it arrived. That difference
+// is the queue on the way here, whatever the clocks say and however slow the
+// acknowledgement's own trip, so the phone can keep it short.
+let viewerId = "", newestTs = 0, ackedTs = 0, acksInFlight = 0, queueMs = 0, keyWanted = false;
+let arrivals = [];   // [local ms, arrival minus frame ts]
+function noteArrival(ts) {
+  const now = performance.timeOrigin + performance.now(), lag = now - ts / 1000;
+  arrivals.push([now, lag]);
+  while (arrivals.length && now - arrivals[0][0] > 10000) arrivals.shift();
+  let base = lag;
+  for (const a of arrivals) if (a[1] < base) base = a[1];
+  queueMs = lag - base;
+  newestTs = ts;
+}
+// Not waiting for the answer: it comes back up the same link as the video,
+// so on a congested link it would arrive late exactly when it matters most.
+async function sendAck() {
+  if (!viewerId || acksInFlight >= 4 || (newestTs <= ackedTs && !keyWanted) || !key) return;
+  const ts = newestTs, params = { viewer: viewerId, ts, queue_ms: Math.round(queueMs) };
+  if (keyWanted) params.key = true;
+  ackedTs = ts; keyWanted = false;
+  acksInFlight++;
+  try { await rpc("stream_ack", params); } catch (_) { if (params.key) keyWanted = true; }
+  acksInFlight--;
+}
+setInterval(sendAck, 150);
+// The decoder dropped frames or failed and shows nothing new until a
+// keyframe: say so now. The phone makes keyframes only when asked or when the
+// screen changes, so on a still screen nobody else would.
+function askKeyframe() { keyWanted = true; sendAck(); }
+// The phone sends at least its state every few seconds, even on a still
+// screen: a stream silent for longer (or one that never got going) died
+// quietly, in a relay or network drop the browser didn't notice. Start anew.
+let lastMessageAt = 0;
+setInterval(() => {
+  if (streamAbort && lastMessageAt && performance.now() - lastMessageAt > 10000 && !document.hidden) {
+    lastMessageAt = 0;
+    note("watchdog", "nothing for 10 s: reconnecting");
+    runStream();
+  }
+}, 2000);
+async function runStream() {
+  const gen = ++streamGen;
+  if (streamAbort) streamAbort.abort();
+  const abort = new AbortController();
+  streamAbort = abort;
+  let backoff = 1000;
+  while (gen === streamGen) {
+    try {
+      lastMessageAt = performance.now();   // the watchdog covers getting started, too
+      note("stream connecting", settings.quality);
+      const ticket = (await rpc("stream_ticket")).ticket;
+      if (gen !== streamGen) return;   // a newer attempt started while this one waited
+      const quality = settings.quality;
+      const encrypted = !!SUBTLE;
+      const codec = await wantedCodec();
+      const r = await fetch("stream?ticket=" + encodeURIComponent(ticket) + "&quality=" + quality + "&codec=" + codec + "&ack=1" +
+        (encrypted ? "&enc=1" : ""), { signal: abort.signal, cache: "no-store" });
+      if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
+      lastMessageAt = performance.now();
+      setLink(true);
+      note("stream open", codec + (encrypted ? ", encrypted" : ""));
+      await readStream(r.body.getReader(), gen);
+      note("stream ended", "");
+      backoff = 1000;
+    } catch (e) {
+      if (gen !== streamGen) return;
+      if (e instanceof AuthError) return needPair();
+      note("stream error", (e && e.message) || String(e));
+      setLink(false);
+      setMessage(t("noVideo", e.message || e), false);
+    }
+    if (gen !== streamGen) return;
+    await new Promise((res) => setTimeout(res, backoff));
+    backoff = Math.min(backoff * 2, 8000);
+  }
+}
+
+async function readStream(reader, gen) {
+  let buf = new Uint8Array(0), aes = null, counter = 0;
+  shownAt = 0;
+  setMessage(t("waitingFrame"));
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done || gen !== streamGen) return;
+    lastMessageAt = performance.now();
+    buf = buf.length ? cat(buf, value) : value;
+    let off = 0;
+    while (buf.length - off >= 5) {
+      const len = new DataView(buf.buffer, buf.byteOffset + off, 4).getUint32(0);
+      if (buf.length - off < 4 + len) break;
+      const type = buf[off + 4];
+      let payload = buf.slice(off + 5, off + 4 + len);
+      off += 4 + len;
+      if (type === 0) {
+        const hello = JSON.parse(dec.decode(payload));
+        viewerId = hello.viewer || ""; newestTs = 0; ackedTs = 0; arrivals = []; queueMs = 0;
+        if (hello.enc === "aes-256-gcm") {
+          const k = hmac(key, cat(enc.encode("loopctrl-stream-v1"), unhex(hello.salt)));
+          aes = await SUBTLE.importKey("raw", k, "AES-GCM", false, ["decrypt"]);
+        }
+        continue;
+      }
+      if (aes) {
+        const iv = cat(zeros(4), be64(counter++));
+        payload = new Uint8Array(await SUBTLE.decrypt({ name: "AES-GCM", iv, additionalData: u8(type) }, aes, payload));
+      }
+      if (type === 1) await onConfig(JSON.parse(dec.decode(payload)));
+      else if (type === 3) onState(JSON.parse(dec.decode(payload)));
+      else if (type === 2 && player) {
+        const view = new DataView(payload.buffer, payload.byteOffset);
+        const ts = view.getUint32(1) * 4294967296 + view.getUint32(5);
+        noteArrival(ts);
+        player.frame((payload[0] & 1) === 1, ts, payload.subarray(9));
+      }
+    }
+    buf = off ? buf.slice(off) : buf;
+  }
+}
+
+async function onConfig(cfg) {
+  note("config", cfg.codec + " " + cfg.width + "x" + cfg.height);
+  if (cfg.point_width) points = { w: cfg.point_width, h: cfg.point_height };
+  codecName = /^(hvc1|hev1)/.test(cfg.codec || "") ? "H.265" : "H.264";
+  screenEl.style.setProperty("--ar", cfg.width / cfg.height);
+  if (!player) player = CodecPlayer.ok() ? new CodecPlayer() : MsePlayer.ok() ? new MsePlayer() : null;
+  if (!player) throw new Error("this browser can't play the stream");
+  try { await player.configure(cfg); }
+  catch (e) {
+    if (player instanceof CodecPlayer && MsePlayer.ok()) { player = new MsePlayer(); await player.configure(cfg); }
+    else throw e;
+  }
+  sizeOverlay();
+}
+
+function stopStream() {
+  streamGen++;
+  if (streamAbort) streamAbort.abort();
+  streamAbort = null;
+}
+
+
+// ───────────────────────────── ui helpers ─────────────────────────────
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v; else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v);
+  }
+  for (const k of kids) if (k) e.append(k);
+  return e;
+}
+let snackTimer = 0;
+// One snackbar at a time; an action button when there is something to do.
+function snack(text, action, sticky = false) {
+  document.querySelector(".snack:not(.leaving)")?.remove();
+  clearTimeout(snackTimer);
+  const s = el("div", { class: "snack", role: "status" }, el("span", { text }));
+  if (action) s.append(el("button", { class: "btn text", text: action[0], onclick: () => { leave(s, "leaving"); action[1](); } }));
+  document.body.append(s);
+  if (!sticky) snackTimer = setTimeout(() => leave(s, "leaving"), 4000);
+  return s;
+}
+// Play an element's way out (a class with an animation), then remove it —
+// or just hide it, for panels that stay in the page.
+function leave(node, cls, hideOnly = false) {
+  if (!node || !node.isConnected || node.classList.contains(cls)) return;
+  node.classList.add(cls);
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    node.classList.remove(cls);
+    if (hideOnly) hideOnly(); else node.remove();
+  };
+  node.addEventListener("animationend", (e) => { if (e.target === node) finish(); });
+  setTimeout(finish, 400);   // no animation (reduced motion, hidden): still go
+}
+// A miuix dialog (centred) or bottom sheet; resolves with the button's value.
+function modal({ title, body = [], buttons = [], sheet = false }) {
+  return new Promise((resolve) => {
+    const box = el("div", { class: sheet ? "sheet" : "dialog" });
+    const scrim = el("div", { class: "scrim" + (sheet ? " bottom" : "") }, box);
+    let closed = false;
+    const close = (v) => {
+      if (closed) return;
+      closed = true;
+      resolve(v);
+      leave(scrim, "closing");
+    };
+    scrim.addEventListener("click", (e) => { if (e.target === scrim) close(null); });
+    if (sheet) box.append(el("div", { class: "handle" }));
+    if (title) box.append(el("h3", { text: title }));
+    for (const b of body) box.append(typeof b === "function" ? b(close) : b);
+    if (buttons.length) box.append(el("div", { class: "btnrow" }, ...buttons.map(([label, value, primary]) =>
+      el("button", { class: "btn" + (primary ? " primary" : ""), text: label, onclick: () => close(value) }))));
+    document.body.append(scrim);
+    box.querySelector("input")?.focus();
   });
+}
+function segmented(options, current, onPick) {
+  const seg = el("div", { class: "seg" });
+  seg.style.setProperty("--n", options.length);
+  seg.style.setProperty("--i", Math.max(0, options.findIndex(([v]) => v === current)));
+  options.forEach(([value, label], i) => {
+    const b = el("button", { text: label, "aria-pressed": String(value === current) });
+    b.addEventListener("click", () => {
+      for (const o of seg.children) o.setAttribute("aria-pressed", String(o === b));
+      seg.style.setProperty("--i", i);   // the highlight slides over
+      onPick(value);
+    });
+    seg.append(b);
+  });
+  return seg;
+}
+
+// ───────────────────────────── motion ─────────────────────────────
+// A ripple from the press point on every control, and the tool's own
+// gesture on its icon when it runs.
+const RIPPLED = ".iconbtn, .btn, .pill, .comp, .dev, .person .top, .node, .seg button, .titles";
+document.addEventListener("pointerdown", (ev) => {
+  const target = ev.target.closest && ev.target.closest(RIPPLED);
+  if (!target || target.disabled || (ev.pointerType === "mouse" && ev.button !== 0)) return;
+  const r = target.getBoundingClientRect(), size = Math.hypot(r.width, r.height) * 2;
+  target.classList.add("rippling");
+  const dot = el("span", { class: "ripple" });
+  Object.assign(dot.style, { width: size + "px", height: size + "px",
+    left: (ev.clientX - r.left - size / 2) + "px", top: (ev.clientY - r.top - size / 2) + "px" });
+  dot.addEventListener("animationend", () => dot.remove());
+  target.append(dot);
+}, true);
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest && ev.target.closest(".iconbtn");
+  if (!b) return;
+  b.classList.remove("pop");
+  void b.offsetWidth;   // restart the animation on a quick second press
+  b.classList.add("pop");
+}, true);
+document.addEventListener("animationend", (ev) => {
+  const b = ev.target.closest && ev.target.closest(".iconbtn.pop");
+  if (b && ev.target.tagName.toLowerCase() === "svg") b.classList.remove("pop");
+});
+function bump(node) {
+  if (!node) return;
+  node.classList.remove("bump");
+  void node.offsetWidth;
+  node.classList.add("bump");
+}
+
+// ───────────────────────────── overlay ─────────────────────────────
+let trails = [], ripple = null, hot = null, wireManual = false, hiddenScreen = false, nodes = [], trailFade = 0;
+const easeOut = (x) => 1 - Math.pow(1 - Math.min(Math.max(x, 0), 1), 3);
+const wireOn = () => wireManual || hiddenScreen;
+function sizeOverlay() {
+  const r = overlay.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+  overlay.width = Math.round(r.width * dpr); overlay.height = Math.round(r.height * dpr);
+  draw();
+}
+// One frame at a time. A frame asked for while the tab was hidden may never
+// come; after half a second without it, ask again rather than stay stuck.
+let drawQueued = 0;
+function draw() {
+  if (drawQueued && performance.now() - drawQueued < 500) return;
+  drawQueued = performance.now();
+  requestAnimationFrame(() => {
+    drawQueued = 0;
+    const W2 = overlay.width, H2 = overlay.height;
+    octx.clearRect(0, 0, W2, H2);
+    if (!points.w) return;
+    const sx = W2 / points.w, sy = H2 / points.h, dpr = devicePixelRatio || 1;
+    if (wireOn()) {
+      octx.lineWidth = dpr; octx.font = (10 * dpr) + "px -apple-system, system-ui, sans-serif";
+      for (const n of nodes) {
+        if (n.w <= 0 || n.h <= 0) continue;
+        octx.strokeStyle = n.label ? "rgba(52,130,255,.9)" : "rgba(255,255,255,.22)";
+        octx.strokeRect(n.x * sx, n.y * sy, n.w * sx, n.h * sy);
+        if (n.label && n.h * sy > 12 * dpr) {
+          octx.fillStyle = "rgba(255,255,255,.92)";
+          octx.fillText(n.label.slice(0, 40), n.x * sx + 3 * dpr, n.y * sy + 11 * dpr, Math.max(0, n.w * sx - 6 * dpr));
+        }
+      }
+    }
+    if (hot) {
+      octx.fillStyle = "rgba(52,130,255,.18)"; octx.strokeStyle = "#3482ff"; octx.lineWidth = 2 * dpr;
+      octx.fillRect(hot.x * sx, hot.y * sy, hot.w * sx, hot.h * sy);
+      octx.strokeRect(hot.x * sx, hot.y * sy, hot.w * sx, hot.h * sy);
+    }
+    const now = performance.now();
+    let again = false;
+    octx.lineCap = "round"; octx.lineJoin = "round";
+    // Drag paths, fading out once the fingers lift.
+    const trailAlpha = trailFade ? 1 - (now - trailFade) / 300 : 1;
+    if (trailFade && trailAlpha <= 0) { trails = []; trailFade = 0; }
+    for (const trail of trails) {
+      if (trail.length < 2) continue;
+      octx.strokeStyle = "rgba(255,255,255," + (0.7 * trailAlpha) + ")"; octx.lineWidth = 6 * dpr;
+      octx.beginPath(); octx.moveTo(trail[0].x * sx, trail[0].y * sy);
+      for (const p of trail) octx.lineTo(p.x * sx, p.y * sy);
+      octx.stroke();
+      const end = trail[trail.length - 1];
+      octx.fillStyle = "rgba(255,255,255," + (0.85 * trailAlpha) + ")";
+      octx.beginPath(); octx.arc(end.x * sx, end.y * sy, 5 * dpr, 0, Math.PI * 2); octx.fill();
+    }
+    if (trailFade) again = true;
+    // A finger on the screen: a soft spot at once, and for one that stays
+    // put a ring that fills toward the long press (full at 0.5 s).
+    for (const f of fingers.values()) {
+      if (f.up) continue;
+      const p = f.path[f.path.length - 1], held = (now - f.down) / 1000;
+      const grow = easeOut(held / 0.12);
+      octx.fillStyle = "rgba(255,255,255," + (0.28 * grow) + ")";
+      octx.beginPath(); octx.arc(p.x * sx, p.y * sy, (8 + 8 * grow) * dpr, 0, Math.PI * 2); octx.fill();
+      if (!f.moved && fingers.size === 1 && held > 0.15) {
+        const k = Math.min((held - 0.15) / 0.35, 1);
+        octx.strokeStyle = k >= 1 ? "rgba(52,130,255,.95)" : "rgba(255,255,255,.85)";
+        octx.lineWidth = 3 * dpr;
+        octx.beginPath();
+        octx.arc(p.x * sx, p.y * sy, 22 * dpr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * easeOut(k));
+        octx.stroke();
+      }
+      again = true;
+    }
+    // The tap itself: a filled circle and a ring spreading out, fading.
+    if (ripple) {
+      const age = (now - ripple.at) / 450;
+      if (age < 1) {
+        const e = easeOut(age);
+        octx.fillStyle = "rgba(255,255,255," + (0.3 * (1 - age)) + ")";
+        octx.beginPath(); octx.arc(ripple.x * sx, ripple.y * sy, (12 + 14 * e) * dpr, 0, Math.PI * 2); octx.fill();
+        octx.strokeStyle = "rgba(255,255,255," + (0.85 * (1 - age)) + ")"; octx.lineWidth = 2.5 * dpr;
+        octx.beginPath(); octx.arc(ripple.x * sx, ripple.y * sy, (12 + 30 * e) * dpr, 0, Math.PI * 2); octx.stroke();
+        again = true;
+      } else ripple = null;
+    }
+    if (again) draw();
+  });
+}
+
+// ───────────────────────────── actions ─────────────────────────────
+// Actions run one after another; a backlog is dropped rather than replayed
+// late. A touch whose outcome is unknown is never sent again.
+const actions = [];
+let acting = false;
+const LABELS = { tap: ["Tap", "点按"], long_press: ["Long press", "长按"], gesture: ["Gesture", "手势"], drag: ["Swipe", "滑动"],
+  type: ["Typing", "输入"], home: ["Home", "主屏幕"], lock: ["Lock", "锁屏"], unlock: ["Wake", "唤醒"], launch_app: ["Opening the app", "打开 App"],
+  rotate: ["Rotate", "旋转屏幕"], app_switcher: ["App switcher", "多任务"],
+  notification_center: ["Notification Center", "通知中心"], control_center: ["Control Center", "控制中心"], double_tap: ["Double tap", "双击"], swipe: ["Swipe", "滑动"],
+  scroll: ["Scroll", "滚动"], clear_text: ["Clear text", "清空文本"], activate_app: ["Switching app", "切换 App"],
+  terminate_app: ["Closing the app", "关闭 App"], open_url: ["Opening a link", "打开链接"], tap_element: ["Tap", "点按"], find_and_tap: ["Tap", "点按"] };
+const label = (m) => (LABELS[m] || [m, m])[zh ? 1 : 0];
+function act(method, params = {}) {
+  if (actions.length > 6) actions.length = 0;
+  actions.push([method, params]);
+  record(method, params);
+  pumpActions();
+}
+async function pumpActions() {
+  if (acting) return;
+  acting = true;
+  while (actions.length) {
+    const [method, params] = actions.shift();
+    try { await rpc(method, params); }
+    catch (e) { if (!actionFailed(method, e)) break; }
+    if (treeOpen() || wireOn()) scheduleTree(500);
+  }
+  acting = false;
+}
+// What to tell the person, and whether the queue may go on.
+function actionFailed(method, e) {
+  if (e instanceof AuthError) { actions.length = 0; needPair(); return false; }
+  const d = (e && e.data) || {};
+  if (d.code === "paused_by_owner") { actions.length = 0; onState({ ...state, paused: true }); return false; }
+  if (d.outcome === "unknown" || d.outcome === "queued" || !e.code) {
+    // A dropped connection or a late reply: it may have landed. Stop, don't resend.
+    actions.length = 0;
+    snack(t("unknownOutcome", label(method)));
+    return false;
+  }
+  snack(t("failedAction", label(method), (e.message || "").slice(0, 120)));
+  return true;
+}
+
+// ───────────────────────────── control ─────────────────────────────
+// Anyone paired may operate; the pill says how many watch and operate, and
+// opens everyone's own log of actions.
+let state = { paused: false, people: [], hidden: false };
+let pageVersion = 0;
+function onState(s) {
+  const was = state;
+  // A newer page was pushed to the phone (page_update): offer it.
+  if (s.page) {
+    if (!pageVersion) pageVersion = s.page;
+    else if (s.page !== pageVersion) { pageVersion = s.page; snack(t("pageUpdated"), [t("reload"), () => location.reload()], true); }
+  }
+  state = { paused: !!s.paused, people: Array.isArray(s.people) ? s.people : [], hidden: !!s.hidden };
+  hiddenScreen = state.hidden && !state.paused;
+  $("paused-msg").hidden = !state.paused;
+  $("paused-msg").querySelector("span").textContent = t("paused");
+  $("paused-msg").querySelector("span").style.whiteSpace = "pre-line";
+  $("hidden-tag").hidden = !hiddenScreen;
+  $("hidden-tag").textContent = t("hiddenTag");
+  renderPeople();
+  if (peopleView) peopleView();
+  // The phone repeats its state every few seconds: read the tree again only
+  // when the outlines just came on or the pause just ended.
+  if (wireOn() && !state.paused && (was.paused || was.hidden !== state.hidden)) loadTree();
+  draw();
+}
+function renderPeople() {
+  const pill = $("people"), long = pill.querySelector(".long"), short = pill.querySelector(".short");
+  pill.className = "pill";
+  if (state.paused) {
+    pill.hidden = false; pill.classList.add("other");
+    long.textContent = t("pausedPill"); short.replaceChildren(PAUSE_ICON.cloneNode(true));
+    return;
+  }
+  const ops = state.people.filter((p) => p.operating), watching = state.people.filter((p) => p.watching).length;
+  pill.hidden = !state.people.length;
+  const text = [ops.length && t("operatingN", ops.length), watching && t("watchingN", watching)].filter(Boolean).join(" · ");
+  if (text !== long.textContent && long.textContent) bump(pill);
+  pill.title = long.textContent = text;
+  // Narrow screens: an icon and a count each.
+  short.replaceChildren(...(ops.length ? [HAND_ICON.cloneNode(true), String(ops.length)] : []),
+                        ...(watching ? [EYE_ICON.cloneNode(true), String(watching)] : []));
+  if (ops.some((p) => p.tok !== tok)) pill.classList.add("other");
+  else if (ops.length) pill.classList.add("mine");
+}
+const icon = (d) => { const e = document.createElementNS("http://www.w3.org/2000/svg", "svg"); e.setAttribute("viewBox", "0 0 24 24"); e.innerHTML = d; return e; };
+const EYE_ICON = icon('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>');
+const HAND_ICON = icon('<path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11M12 10V4.5a1.5 1.5 0 0 1 3 0V11M15 10.5V6.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-.5a6 6 0 0 1-4.8-2.4L4 14.5a1.5 1.5 0 0 1 2.3-1.9L9 15V8.5a1.5 1.5 0 0 0-3 0"/>');
+const PAUSE_ICON = icon('<circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/>');
+let peopleView = null;
+$("people").addEventListener("click", async () => {
+  const list = el("div", { class: "people" }), open = new Set();
+  let logs = [];
+  const clock = (at) => new Date(at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const render = () => {
+    const byTok = new Map(logs.map((l) => [l.tok, l.actions || []]));
+    const rows = state.people.map((p) => ({ ...p }));
+    for (const l of logs) if (!rows.some((p) => p.tok === l.tok)) rows.push({ tok: l.tok, name: l.name, kind: l.kind, gone: true });
+    list.replaceChildren(...rows.map((p) => {
+      const entries = byTok.get(p.tok) || [], name = p.tok === tok ? t("you") : p.name || p.tok;
+      const box = el("div", { class: "person" }, el("div", { class: "top", onclick: () => {
+        if (!open.delete(p.tok)) open.add(p.tok);
+        render();
+      } },
+        el("div", { class: "avatar" + (p.kind === "agent" ? " agent" : ""), text: p.kind === "agent" ? "AI" : [...name][0].toUpperCase() }),
+        el("div", { class: "t" },
+          el("div", { class: "title" }, name, p.kind === "agent" && el("i", { class: "chip", text: t("agent") })),
+          el("div", { class: "summary", text: t(p.gone ? "gone" : p.operating ? "operatingNow" : "watchingNow", Math.max(p.actions || 0, entries.length)) })),
+        el("i", { class: "status-dot" + (p.operating ? " on" : "") })));
+      if (open.has(p.tok)) box.append(el("div", { class: "log" }, ...(entries.length ? entries.slice().reverse().map((a) =>
+        el("div", {}, el("time", { text: clock(a.at) }), el("span", { text: label(a.method) + (a.detail ? " " + a.detail : "") }),
+           a.outcome !== "applied" && el("b", { class: a.outcome === "sent" ? "" : "bad", text: t("o_" + a.outcome) })))
+        : [el("div", { class: "empty", text: t("noActions") })])));
+      return box;
+    }));
+  };
+  const load = async () => {
+    try { logs = (await rpc("control", { action: "log", limit: 200 })).logs || []; render(); }
+    catch (e) { if (e instanceof AuthError) needPair(); }
+  };
+  peopleView = render;
+  render(); load();
+  const timer = setInterval(load, 3000);
+  await modal({ title: t("people"), sheet: true, body: [list], buttons: [[t("done"), null, true]] });
+  clearInterval(timer);
+  peopleView = null;
+});
+
+// ───────────────────────────── input ─────────────────────────────
+function toPoint(ev) {
+  const r = overlay.getBoundingClientRect();
+  const x = Math.min(Math.max((ev.clientX - r.left) / r.width, 0), 1) * points.w;
+  const y = Math.min(Math.max((ev.clientY - r.top) / r.height, 0), 1) * points.h;
+  return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
+}
+// Every finger on the screen, with its path. When the last one lifts: a tap
+// or long press for one finger that stayed put, otherwise one gesture with
+// each finger's real path (a curved drag, a pinch, a two-finger hold).
+// Alt/Option while dragging with a mouse mirrors a second finger: a pinch.
+const fingers = new Map();
+let gestureStart = 0, pinch = false;
+const since = () => Math.round((performance.now() - gestureStart)) / 1000;
+overlay.addEventListener("pointerdown", (ev) => {
+  if (!points.w || state.paused || (ev.button !== 0 && ev.pointerType === "mouse")) return;
+  try { overlay.setPointerCapture(ev.pointerId); } catch (_) { /* a pointer the browser no longer tracks */ }
+  if (!fingers.size) { gestureStart = performance.now(); pinch = ev.altKey && ev.pointerType === "mouse"; }
+  const p = toPoint(ev);
+  fingers.set(ev.pointerId, { path: [{ x: p.x, y: p.y, t: since() }], moved: false, px: ev.clientX, py: ev.clientY, down: performance.now(), up: false });
+  trails = [...fingers.values()].map((f) => f.path);
+  trailFade = 0;
+  draw();
+});
+overlay.addEventListener("pointermove", (ev) => {
+  const f = fingers.get(ev.pointerId);
+  if (!f) { if (treeOpen() || wireOn()) hover(toPoint(ev)); return; }
+  if (!f.moved && Math.hypot(ev.clientX - f.px, ev.clientY - f.py) > 6) f.moved = true;
+  if (!f.moved) return;
+  const p = toPoint(ev), tt = since(), last = f.path[f.path.length - 1];
+  if (tt - last.t >= 0.012) f.path.push({ x: p.x, y: p.y, t: tt });
+  if (pinch) trails = [f.path, mirror(f.path)];
+  draw();
+});
+function lift(ev, cancelled) {
+  const f = fingers.get(ev.pointerId);
+  if (!f) return;
+  if (cancelled) { fingers.clear(); trails = []; draw(); return; }
+  const p = toPoint(ev);
+  f.path.push({ x: p.x, y: p.y, t: Math.max(since(), f.path[f.path.length - 1].t + 0.01) });
+  f.up = true;
+  if ([...fingers.values()].every((g) => g.up)) finishGesture();
+  if (ev.pointerType === "mouse") focusKeyboard();
+}
+overlay.addEventListener("pointerup", (ev) => lift(ev, false));
+overlay.addEventListener("pointercancel", (ev) => lift(ev, true));
+function mirror(path) {
+  const o = path[0];
+  return path.map((q) => ({ x: Math.min(Math.max(2 * o.x - q.x, 1), points.w - 1),
+                           y: Math.min(Math.max(2 * o.y - q.y, 1), points.h - 1), t: q.t }));
+}
+function thin(path) {
+  if (path.length <= 120) return path;
+  const step = path.length / 119, out = [];
+  for (let i = 0; i < 119; i++) out.push(path[Math.floor(i * step)]);
+  out.push(path[path.length - 1]);
+  return out;
+}
+function finishGesture() {
+  const list = [...fingers.values()];
+  fingers.clear();
+  const single = list.length === 1 && !list[0].moved && !pinch;
+  if (single) {
+    const p = list[0].path[0], held = (performance.now() - list[0].down) / 1000;
+    trails = [];
+    ripple = { x: p.x, y: p.y, at: performance.now() };
+    if (held >= 0.5) act("long_press", { x: p.x, y: p.y, duration: Math.min(held, 5), settle: false, manual: true });
+    else act("tap", { x: p.x, y: p.y, settle: false, manual: true });
+    draw();
+    return;
+  }
+  let paths = list.map((f) => f.path);
+  if (pinch && paths.length === 1) paths.push(mirror(paths[0]));
+  act("gesture", { fingers: paths.map(thin), manual: true });
+  trailFade = performance.now();
+  draw();
+}
+overlay.addEventListener("contextmenu", (ev) => {
+  ev.preventDefault();
+  if (state.paused) return;
+  const p = toPoint(ev);
+  act("long_press", { x: p.x, y: p.y, duration: 1, settle: false, manual: true });
+});
+// Wheel and trackpad: gathered briefly, then one drag of that distance.
+let wheel = null;
+overlay.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  if (!points.w || state.paused) return;
+  const r = overlay.getBoundingClientRect(), scale = points.h / r.height;
+  if (!wheel) {
+    wheel = { at: toPoint(ev), dx: 0, dy: 0 };
+    setTimeout(() => {
+      const w = wheel; wheel = null;
+      const dy = Math.max(-points.h * 0.6, Math.min(points.h * 0.6, -w.dy * scale));
+      const dx = Math.max(-points.w * 0.6, Math.min(points.w * 0.6, -w.dx * scale));
+      if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+      const fx = Math.min(Math.max(w.at.x, 10), points.w - 10), fy = Math.min(Math.max(w.at.y - dy / 2, 10), points.h - 10);
+      act("drag", { from_x: fx, from_y: fy, to_x: Math.min(Math.max(fx + dx, 1), points.w - 1),
+                    to_y: Math.min(Math.max(fy + dy, 1), points.h - 1), duration: 0.25, settle: false, manual: true });
+    }, 120);
+  }
+  wheel.dx += ev.deltaX; wheel.dy += ev.deltaY * (ev.deltaMode === 1 ? 16 : 1);
+}, { passive: false });
+
+// Typing: a hidden field takes the keys (and the input method's composed
+// text), and they go to the phone in short batches.
+const kbd = $("kbd");
+let composing = false, typed = "", typeTimer = 0, keyboardOn = false;
+const desktop = matchMedia("(pointer: fine)").matches;
+function focusKeyboard() { if (desktop || keyboardOn) kbd.focus({ preventScroll: true }); }
+function flushTyping() {
+  clearTimeout(typeTimer);
+  if (!typed) return;
+  const text = typed; typed = "";
+  act("type", { text, fast: true, settle: false, manual: true });
+}
+function typeText(s) { typed += s; clearTimeout(typeTimer); typeTimer = setTimeout(flushTyping, 90); }
+kbd.addEventListener("compositionstart", () => { composing = true; });
+kbd.addEventListener("compositionend", (ev) => { composing = false; if (ev.data) typeText(ev.data); kbd.value = ""; });
+kbd.addEventListener("input", (ev) => {
+  if (composing || ev.isComposing) return;
+  if (ev.inputType === "insertText" && ev.data) typeText(ev.data);
+  else if (ev.inputType === "insertLineBreak") typeText("\n");
+  kbd.value = "";
+});
+kbd.addEventListener("keydown", (ev) => {
+  if (composing || ev.isComposing || ev.keyCode === 229) return;
+  if (ev.key === "Backspace") { ev.preventDefault(); typeText("\b"); }
+  else if (ev.key === "Enter") { ev.preventDefault(); typeText("\n"); }
+  else if (ev.key === "Tab") { ev.preventDefault(); typeText("\t"); }
+});
+kbd.addEventListener("paste", (ev) => {
+  const s = ev.clipboardData && ev.clipboardData.getData("text");
+  if (s) { ev.preventDefault(); typeText(s); }
+});
+
+async function openApp() {
+  const input = el("input", { class: "keyfield", type: "text", placeholder: t("appPrompt"), autocomplete: "off", spellcheck: "false" });
+  input.style.fontFamily = "var(--font)";
+  const name = await modal({ title: t("app"), body: [(close) => {
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") close(input.value); });
+    return input;
+  }], buttons: [[t("close"), null], [t("app"), "go", true]] }).then((v) => v === "go" ? input.value : v);
+  if (!name || !name.trim()) return;
+  try {
+    const found = await rpc("resolve_app", { text: name.trim(), distance: 3 });
+    const app = (found.apps || []).find((a) => a.installed_here !== false) || (found.apps || [])[0];
+    if (!app) return snack(t("notFound", name));
+    act("launch_app", { bundle_id: app.bundle_id });
+  } catch (e) { if (e instanceof AuthError) needPair(); else snack(e.message); }
+}
+for (const b of document.querySelectorAll("[data-act]")) {
+  b.addEventListener("click", () => {
+    switch (b.dataset.act) {
+      case "home": act("home", { manual: true }); break;
+      case "switcher": act("app_switcher", { manual: true }); break;
+      case "rotate": act("rotate", { manual: true }); break;
+      case "notifications": act("notification_center", { manual: true }); break;
+      case "controls": act("control_center", { manual: true }); break;
+      case "lock": act("lock", { manual: true }); break;
+      case "wake": act("unlock", { manual: true }); break;
+      case "app": openApp(); break;
+      case "keyboard":
+        keyboardOn = !keyboardOn; b.classList.toggle("on", keyboardOn);
+        if (keyboardOn) kbd.focus({ preventScroll: true }); else kbd.blur();
+        break;
+      case "wire":
+        wireManual = !wireManual; b.classList.toggle("on", wireManual);
+        if (wireOn()) loadTree(); else draw();
+        break;
+    }
+  });
+}
+
+// ───────────────────────────── view tree ─────────────────────────────
+const LINE = /^( *)([A-Za-z0-9]+)(?:, label: '(.*?)')?(?:, value: '(.*?)')?(?:, id: '(.*?)')?, \{\{(-?\d+), (-?\d+)\}, \{(-?\d+), (-?\d+)\}\}/;
+function parseTree(src) {
+  const out = [];
+  for (const line of src.split("\n")) {
+    const m = LINE.exec(line);
+    if (!m) continue;
+    out.push({ depth: m[1].length / 2, type: m[2], label: m[3] || "", value: m[4] || "", id: m[5] || "",
+               x: +m[6], y: +m[7], w: +m[8], h: +m[9] });
+  }
+  return out;
+}
+const treeOpen = () => !$("tree-panel").hidden;
+let treeTimer = 0, treeBusy = false;
+function scheduleTree(ms) { clearTimeout(treeTimer); treeTimer = setTimeout(loadTree, ms); }
+async function loadTree() {
+  if (state.paused) return;
+  if (treeBusy) return scheduleTree(400);
+  treeBusy = true;
+  try {
+    const r = await rpc("page_source", { visible_only: true });
+    nodes = parseTree(r.source || "");
+    renderTree();
+    $("tree-foot").textContent = t("nodes", nodes.length);
+  } catch (e) {
+    if (e instanceof AuthError) { treeBusy = false; return needPair(); }
+    $("tree-foot").textContent = t("treeErr", e.message);
+  }
+  treeBusy = false;
+  draw();
+  if (wireOn()) scheduleTree(hiddenScreen ? 1500 : 2500);
+}
+function renderTree() {
+  const list = $("tree"), q = $("tree-filter").value.trim().toLowerCase();
+  list.textContent = "";
+  const frag = document.createDocumentFragment();
+  nodes.forEach((n, i) => {
+    const text = n.label || n.value || n.id;
+    if (q && !(text + " " + n.type).toLowerCase().includes(q)) return;
+    const row = el("div", { class: "node" + (text ? "" : " empty") },
+      el("div", { class: "t" }, el("b", { text: text || n.type }), el("span", { text: text ? n.type : n.w + "×" + n.h })));
+    row.style.paddingLeft = (16 + Math.min(n.depth, 24) * 10) + "px";
+    row.dataset.i = i;
+    frag.append(row);
+  });
+  list.append(frag);
+}
+$("tree").addEventListener("mouseover", (ev) => {
+  const row = ev.target.closest(".node");
+  hot = row ? nodes[+row.dataset.i] : null; draw();
+});
+$("tree").addEventListener("mouseleave", () => { hot = null; draw(); });
+$("tree").addEventListener("click", (ev) => {
+  const row = ev.target.closest(".node");
+  if (!row) return;
+  const n = nodes[+row.dataset.i];
+  if (n.w <= 0 || n.h <= 0) return;
+  const x = n.x + n.w / 2, y = n.y + n.h / 2;
+  ripple = { x, y, at: performance.now() }; draw();
+  act("tap", { x, y, settle: false, manual: true });
+});
+$("tree-filter").addEventListener("input", renderTree);
+$("tree-refresh").addEventListener("click", loadTree);
+// Under the pointer: the smallest element containing it.
+function hover(p) {
+  let best = null;
+  for (const n of nodes) {
+    if (n.w <= 0 || n.h <= 0 || p.x < n.x || p.y < n.y || p.x > n.x + n.w || p.y > n.y + n.h) continue;
+    if (!best || n.w * n.h <= best.w * best.h) best = n;
+  }
+  if (best === hot) return;
+  hot = best; draw();
+  for (const e of document.querySelectorAll(".node.hot")) e.classList.remove("hot");
+  if (best) {
+    const row = document.querySelector('.node[data-i="' + nodes.indexOf(best) + '"]');
+    if (row) { row.classList.add("hot"); row.scrollIntoView({ block: "nearest" }); }
+  }
+}
+overlay.addEventListener("pointerleave", () => { if (!fingers.size) { hot = null; draw(); } });
+function setTree(open) {
+  const panel = $("tree-panel");
+  // In a drawer or sheet it slides away; beside the screen it just goes.
+  if (!open && !panel.hidden && getComputedStyle(panel).position === "fixed") {
+    leave(panel, "closing", () => { panel.hidden = true; setTimeout(sizeOverlay, 0); });
+    $("btn-tree").classList.remove("on");
+    hot = null; draw();
+    return;
+  }
+  panel.hidden = !open;
+  $("btn-tree").classList.toggle("on", open);
+  if (open) loadTree(); else { hot = null; draw(); }
+  setTimeout(sizeOverlay, 0);
+}
+$("btn-tree").addEventListener("click", () => setTree(!treeOpen()));
+$("tree-close").addEventListener("click", () => setTree(false));
+
+// ───────────────────────────── settings ─────────────────────────────
+for (const b of document.querySelectorAll(".rail [data-tip], .topbar .iconbtn[data-tip]")) {
+  b.classList.add("labeled");
+  b.append(el("span", { class: "lbl", text: b.title }));
+}
+function applyLabels() {
+  document.body.classList.remove("labels-icon", "labels-text", "labels-both");
+  document.body.classList.add("labels-" + settings.labels);
+  setTimeout(sizeOverlay, 0);
+}
+applyLabels();
+$("btn-settings").addEventListener("click", () => {
+  const row = (title, seg) => el("div", { class: "row" }, el("b", { text: title }), seg);
+  modal({ title: t("settings"), sheet: true, body: [
+    row(t("quality"), segmented([["low", "480p"], ["medium", "720p"], ["high", "1080p"]], settings.quality, (v) => {
+      settings.quality = v; prefs.set("quality", v); runStream();
+    })),
+    row(t("codec"), segmented([["auto", t("auto")], ["h264", "H.264"], ["hevc", "H.265"]], settings.codec, (v) => {
+      settings.codec = v; prefs.set("codec", v);
+      if (player) player.close();
+      player = null;
+      runStream();
+    })),
+    row(t("theme"), segmented([["system", t("system")], ["light", t("light")], ["dark", t("dark")]], settings.theme, (v) => {
+      settings.theme = v; prefs.set("theme", v); applyTheme();
+    })),
+    row(t("labels"), segmented([["icon", t("icons")], ["text", t("words")], ["both", t("both")]], settings.labels, (v) => {
+      settings.labels = v; prefs.set("labels", v); applyLabels();
+    })),
+    (close) => el("div", { class: "comp", onclick: () => { close(null); $("flow-file").click(); } },
+      el("div", { class: "t" }, el("div", { class: "title", text: t("replay") }), el("div", { class: "summary", text: t("replayHint") }))),
+    (close) => el("div", { class: "comp", onclick: () => { close(null); guide(); } },
+      el("div", { class: "t" }, el("div", { class: "title", text: t("guideAgain") }), el("div", { class: "summary", text: t("guideHint") }))),
+    (close) => el("div", { class: "comp", onclick: () => { close(null); copyDiagnostics(); } },
+      el("div", { class: "t" }, el("div", { class: "title", text: t("copyDiag") }), el("div", { class: "summary", text: t("copyDiagHint") }))),
+  ], buttons: [[t("done"), null, true]] });
+});
+async function copyDiagnostics() {
+  const text = JSON.stringify({
+    page: pageVersion, browser: navigator.userAgent, secure: window.isSecureContext,
+    player: player ? player.constructor.name : null, codec_setting: settings.codec, quality: settings.quality,
+    decoded_frames: decoded, shown_at: shownAt ? Math.round(shownAt) : 0, now: Math.round(performance.now()),
+    hevc_ok: hevcOK, link: $("sub").textContent, frame: diag.frame || null, events: diag.events,
+  }, null, 1);
+  try { await navigator.clipboard.writeText(text); }
+  catch (_) {
+    const area = el("textarea", { style: "position:fixed;opacity:0" });
+    area.value = text; document.body.append(area); area.select(); document.execCommand("copy"); area.remove();
+  }
+  snack(t("copied"));
+}
+$("btn-full").addEventListener("click", () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else ($("app").requestFullscreen || $("app").webkitRequestFullscreen || (() => {})).call($("app"));
+});
+new ResizeObserver(sizeOverlay).observe(overlay);
+
+// ───────────────────────────── guide ─────────────────────────────
+// Shown once per browser: a spotlight on each part of the page in turn.
+function guide() {
+  const legend = () => el("div", { class: "legend" }, ...[...document.querySelectorAll("#tools [data-tip]")].map((b) =>
+    el("div", {}, b.querySelector("svg").cloneNode(true), el("span", { text: b.title }))));
+  const steps = [
+    ["screen", "g1t", desktop ? "g1d" : "g1m"], ["tools", "g2t", "g2", legend],
+    [wide.matches ? "devices" : ".titles", "g7t", "g7"], [".titles, #people", "g3t", "g3"],
+    ["btn-rec", "g4t", "g4"], ["btn-tree", "g5t", "g5"], ["btn-settings", "g6t", "g6"],
+  ];
+  const block = el("div", { class: "coach-block" }), hole = el("div", { class: "coach" }), card = el("div", { class: "coach-card" });
+  document.body.append(block, hole, card);
+  let i = 0;
+  const end = () => { block.remove(); hole.remove(); card.remove(); removeEventListener("resize", place); prefs.set("guided", "1"); };
+  function place() {
+    // Every visible element the step names, as one box.
+    const boxes = [...document.querySelectorAll(steps[i][0].split(", ").map((q) => /^[.#]/.test(q) ? q : "#" + q).join(", "))]
+      .map((e) => e.getBoundingClientRect()).filter((b) => b.width && b.height);
+    if (!boxes.length) { if (++i < steps.length) render(); else end(); return; }   // not on screen at this size
+    const r = { left: Math.min(...boxes.map((b) => b.left)), top: Math.min(...boxes.map((b) => b.top)),
+                right: Math.max(...boxes.map((b) => b.right)), bottom: Math.max(...boxes.map((b) => b.bottom)) };
+    r.width = r.right - r.left; r.height = r.bottom - r.top;
+    const pad = 6, gap = 14, m = 16, vw = innerWidth, vh = innerHeight;
+    Object.assign(hole.style, { left: r.left - pad + "px", top: r.top - pad + "px", width: r.width + 2 * pad + "px", height: r.height + 2 * pad + "px" });
+    const cw = card.offsetWidth, ch = card.offsetHeight;
+    let x = r.left + r.width / 2 - cw / 2, y;
+    if (r.bottom + pad + gap + ch <= vh - m) y = r.bottom + pad + gap;
+    else if (r.top - pad - gap - ch >= m) y = r.top - pad - gap - ch;
+    else if (r.right + pad + gap + cw <= vw - m) { x = r.right + pad + gap; y = r.top + r.height / 2 - ch / 2; }
+    else if (r.left - pad - gap - cw >= m) { x = r.left - pad - gap - cw; y = r.top + r.height / 2 - ch / 2; }
+    else y = vh - ch - m;
+    card.style.left = Math.min(Math.max(x, m), vw - cw - m) + "px";
+    card.style.top = Math.min(Math.max(y, m), vh - ch - m) + "px";
+  }
+  function render() {
+    const [, title, text, extra] = steps[i], last = i === steps.length - 1;
+    card.replaceChildren(...[el("div", { class: "step", text: (i + 1) + " / " + steps.length }),
+      el("h3", { text: t(title) }), el("p", { text: t(text) }), extra && extra(),
+      el("div", { class: "go" }, !last && el("button", { class: "btn text", text: t("skip"), onclick: end }),
+        el("button", { class: "btn primary", text: t(last ? "gotIt" : "next"), onclick: () => { if (++i < steps.length) render(); else end(); } }))]
+      .filter(Boolean));
+    place();
+  }
+  addEventListener("resize", place);
+  render();
+}
+
+// ───────────────────────────── recording ─────────────────────────────
+// What a person does here, as steps another session can replay: each the
+// call it made and the pause before it.
+let recording = null, replaying = null;
+// "wait" is never recorded, but a recording may be edited to wait for a text
+// ({method:"wait", params:{text, timeout}}) before its next step.
+const RECORDED = new Set(["tap", "long_press", "gesture", "drag", "type", "home", "lock", "unlock", "launch_app", "rotate", "app_switcher", "notification_center", "control_center", "wait"]);
+function record(method, params) {
+  if (!recording || replaying || !RECORDED.has(method)) return;
+  const now = performance.now();
+  recording.steps.push({ method, params, wait: Math.round(now - recording.last) / 1000 });
+  recording.last = now;
+  const badge = $("btn-rec").querySelector(".badge");
+  badge.hidden = false; badge.textContent = recording.steps.length;
+  bump(badge);
+}
+$("btn-rec").addEventListener("click", async () => {
+  const btn = $("btn-rec"), badge = btn.querySelector(".badge");
+  if (replaying) { replaying.stop = true; return; }
+  if (!recording) { recording = { steps: [], last: performance.now() }; btn.classList.add("rec"); return; }
+  const steps = recording.steps;
+  recording = null; btn.classList.remove("rec"); badge.hidden = true;
+  if (!steps.length) return snack(t("recEmpty"));
+  const choice = await modal({ title: t("recSaved", steps.length), buttons: [[t("discard"), null], [t("download"), "save"], [t("play"), "play", true]] });
+  if (choice === "save") saveFlow(steps);
+  if (choice === "play") replayFlow(steps);
+});
+function saveFlow(steps) {
+  const flow = { loopctrl_flow: 1, device: device.name || "", recorded: new Date().toISOString(), steps };
+  const a = el("a", { href: URL.createObjectURL(new Blob([JSON.stringify(flow, null, 1)], { type: "application/json" })),
+                      download: "loopctrl-" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".json" });
+  document.body.append(a); a.click(); a.remove();
+}
+async function replayFlow(steps) {
+  replaying = { stop: false };
+  $("btn-rec").classList.add("rec");
+  const stop = () => { if (replaying) replaying.stop = true; };
+  let i = 0;
+  for (; i < steps.length && !replaying.stop; i++) {
+    snack(t("replaying", i + 1, steps.length), [t("stop"), stop], true);
+    await new Promise((r) => setTimeout(r, Math.min(Math.max(steps[i].wait || 0, 0), 10) * 1000));
+    if (replaying.stop) break;
+    try { await rpc(steps[i].method, { ...steps[i].params, manual: true }); }
+    catch (e) { actionFailed(steps[i].method, e); break; }
+  }
+  if (i >= steps.length) snack(t("replayDone"));
+  else document.querySelector(".snack")?.remove();
+  replaying = null;
+  $("btn-rec").classList.remove("rec");
+}
+$("flow-file").addEventListener("change", async () => {
+  const file = $("flow-file").files[0];
+  $("flow-file").value = "";
+  if (!file) return;
+  try {
+    const flow = JSON.parse(await file.text());
+    if (flow.loopctrl_flow !== 1 || !Array.isArray(flow.steps)) throw new Error("format");
+    replayFlow(flow.steps.filter((s) => s && RECORDED.has(s.method)));
+  } catch (_) { snack(t("badFlow")); }
+});
+
+// ───────────────────────────── status ─────────────────────────────
+let relayed = location.protocol === "https:", linkUp = false;
+function setLink(up) { linkUp = up; renderSub(); renderDevices(); }
+let lastDecoded = 0, fps = 0, codecName = "";
+function renderSub() {
+  const parts = [linkUp ? t(relayed ? "relay" : "direct") : t("offline")];
+  if (linkUp && shownAt) parts.push(codecName, fps + " fps", Math.round(lastRTT) + " ms");
+  $("sub").textContent = parts.join(" · ");
+}
+setInterval(() => {
+  fps = decoded - lastDecoded; lastDecoded = decoded; renderSub();
+  if (player && player.check) player.check();   // also when frames stop coming
+}, 1000);
+document.addEventListener("visibilitychange", () => {
+  note("page " + document.visibilityState, "");
+  if (!key) return;
+  if (document.hidden) stopStream(); else runStream();
+});
+
+// ───────────────────────────── devices ─────────────────────────────
+// Every phone opened in this browser on this site, to switch between. Under
+// a relay all phones share the site, so each one's page lists the others; a
+// phone at another address (a LAN or tailnet IP) can be added by its URL.
+// Switching is opening that phone's page: each keeps its own pairing key.
+const pageURL = () => location.href.split("#")[0].split("?")[0];
+const wide = matchMedia("(min-width: 1100px)");
+function deviceList() {
+  try { const l = JSON.parse(prefs.get("devices") || "[]"); return Array.isArray(l) ? l : []; } catch (_) { return []; }
+}
+function saveDevices(list) { prefs.set("devices", JSON.stringify(list.slice(0, 30))); }
+function rememberThisDevice() {
+  const list = deviceList(), url = pageURL();
+  const at = list.findIndex((d) => (device.id && d.id === device.id) || d.url === url);
+  const entry = { id: device.id || url, name: device.name || location.host, url, via: relayed ? "relay" : "direct" };
+  if (at >= 0) list[at] = entry; else list.push(entry);
+  saveDevices(list);
+}
+const devState = {};   // id → "on" | "off" | "unknown"
+async function probe(d) {
+  if (new URL(d.url).origin !== location.origin) return "unknown";   // whoami is same-origin only
+  const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 6000);
+  try {
+    const r = await fetch(new URL("whoami", d.url), { cache: "no-store", signal: abort.signal });
+    const who = r.ok ? await r.json() : null;
+    if (!who || (d.id && !d.id.startsWith("http") && who.device_id !== d.id)) return "off";
+    if (who.name && who.name !== d.name) {
+      const list = deviceList(), e = list.find((x) => x.url === d.url);
+      if (e) { e.name = who.name; e.id = who.device_id; saveDevices(list); }
+    }
+    return "on";
+  } catch (_) { return "off"; } finally { clearTimeout(timer); }
+}
+const PHONE_ICON = icon('<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>');
+function renderDevices() {
+  const here = pageURL();
+  $("devlist").replaceChildren(...deviceList().map((d, k) => {
+    const current = d.url === here || (device.id && d.id === device.id);
+    const st = current ? (linkUp ? "on" : "off") : devState[d.id] || "unknown";
+    const row = el(current ? "div" : "a", { class: "dev" + (current ? " current" : ""), style: "--k:" + k, ...(current ? {} : { href: d.url }) },
+      el("div", { class: "ic" }, PHONE_ICON.cloneNode(true)),
+      el("div", { class: "t" }, el("div", { class: "title", text: d.name || d.url }),
+        el("div", { class: "summary" }, el("i", { class: "dot" + (st === "on" ? " on" : st === "off" ? " off" : "") }),
+          el("span", { text: [t(d.via === "relay" ? "relay" : "direct"),
+                              current ? t("devThis") : t(st === "on" ? "devOn" : st === "off" ? "devOff" : "devOpen")].join(" · ") }))),
+      !current && el("button", { class: "iconbtn rm", title: t("remove"), "aria-label": t("remove"), onclick: (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        saveDevices(deviceList().filter((x) => x.url !== d.url));
+        renderDevices();
+      } }, icon('<path d="M6 6l12 12M18 6L6 18"/>')));
+    return row;
+  }));
+}
+async function refreshDevices() {
+  const here = pageURL();
+  await Promise.all(deviceList().filter((d) => d.url !== here && d.id !== device.id).map(async (d) => { devState[d.id] = await probe(d); }));
+  renderDevices();
+}
+setInterval(() => { if (!document.hidden && devicesShown()) refreshDevices(); }, 20000);
+const devicesShown = () => getComputedStyle($("devices")).display !== "none" && !$("devices").classList.contains("collapsed");
+let drawerScrim = null;
+function setDevices(show) {
+  const panel = $("devices");
+  $("title-btn").setAttribute("aria-expanded", String(show));
+  if (wide.matches) {
+    panel.classList.toggle("collapsed", !show);
+    prefs.set("devicesCollapsed", show ? "" : "1");
+    setTimeout(sizeOverlay, 0);
+  } else if (show) {
+    panel.classList.add("open");
+    if (!drawerScrim) {
+      drawerScrim = el("div", { class: "drawer-scrim", onclick: () => setDevices(false) });
+      document.body.append(drawerScrim);
+    }
+  } else {
+    leave(panel, "closing", () => panel.classList.remove("open"));
+    if (drawerScrim) { leave(drawerScrim, "closing"); drawerScrim = null; }
+  }
+  if (show) {
+    const list = $("devlist");
+    list.classList.add("entering");
+    setTimeout(() => list.classList.remove("entering"), 700);
+    refreshDevices();
+  }
+}
+$("title-btn").addEventListener("click", () => setDevices(!devicesShown()));
+$("devices-close").addEventListener("click", () => setDevices(false));
+wide.addEventListener("change", () => {
+  $("devices").classList.remove("open");
+  if (drawerScrim) { drawerScrim.remove(); drawerScrim = null; }
+  $("devices").classList.toggle("collapsed", !!prefs.get("devicesCollapsed"));
+  setTimeout(sizeOverlay, 0);
+});
+$("devices").classList.toggle("collapsed", !!prefs.get("devicesCollapsed"));
+$("dev-add").addEventListener("click", async () => {
+  const input = el("input", { class: "keyfield", type: "url", placeholder: "https://…/remote", autocomplete: "off", spellcheck: "false" });
+  const err = el("div", { class: "err" });
+  const value = await modal({ title: t("addDevice"), body: [el("p", { text: t("addHint") }), (close) => {
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") close("go"); });
+    return input;
+  }, err], buttons: [[t("close"), null], [t("add"), "go", true]] });
+  if (value !== "go" || !input.value.trim()) return;
+  let u;
+  try { u = new URL(input.value.trim()); if (!/^https?:$/.test(u.protocol)) throw 0; } catch (_) { return snack(t("badUrl")); }
+  u.hash = ""; u.search = "";
+  if (!/\/remote\/?$/.test(u.pathname)) u.pathname = u.pathname.replace(/\/?$/, "/remote");
+  const list = deviceList();
+  if (!list.some((d) => d.url === u.href)) {
+    list.push({ id: u.href, name: u.pathname.match(/\/d\/([^/]+)\//)?.[1] || u.host, url: u.href,
+                via: u.protocol === "https:" ? "relay" : "direct" });
+    saveDevices(list);
+  }
+  setDevices(true);
+});
+// Followed in other tabs too: a phone added or renamed there shows up here.
+addEventListener("storage", (e) => { if (e.key === "loopctrl.devices") renderDevices(); });
+
+// ───────────────────────────── start ─────────────────────────────
+function show(id) {
+  for (const e of ["pair-start", "pair-wait"]) $(e).hidden = e !== id;
+}
+function needPair() {
+  stopStream();
+  key = null;
+  store.del(storeName());
+  $("pair").hidden = false;
+  show("pair-start");
+}
+$("pair-btn").addEventListener("click", async () => {
+  $("pair-err").textContent = "";
+  $("pair-btn").disabled = true;
+  try { await pair(); begin(); }
+  catch (e) { $("pair-err").textContent = e.message || String(e); show("pair-start"); }
+  $("pair-btn").disabled = false;
+});
+$("key-toggle").addEventListener("click", () => { $("key-input").hidden = !$("key-input").hidden; $("key-input").focus(); });
+$("key-input").addEventListener("change", () => {
+  const v = $("key-input").value.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(v)) return;
+  store.set(storeName(), v); useKey(v); begin();
+});
+
+async function begin(adopt = "") {
+  $("pair").hidden = true;
+  setMessage(t("connecting"));
+  try {
+    const info = await rpc("device_info");
+    if (adopt) store.set(storeName(), adopt);
+    if (info.point_width) points = { w: info.point_width, h: info.point_height };
+    if (info.device_name || info.name) $("name").textContent = info.device_name || info.name;
+    const c = await rpc("control");
+    onState({ ...state, paused: c.paused, people: c.people });
+    if (!prefs.get("guided")) setTimeout(guide, 400);
+  } catch (e) {
+    if (e instanceof AuthError) return needPair();
+  }
+  runStream();
+}
+
+// Kept by the browser, so that with the phone offline (the relay answers
+// for it) the page still opens: the device list, the tools and the settings
+// work, and only the screen says the phone is away.
+if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("remote-sw.js").catch(() => {});
+
+function waitForPhone() {
+  setLink(false);
+  setMessage(t("phoneOffline"), true);
+  const timer = setInterval(async () => {
+    try {
+      const r = await fetch("whoami", { cache: "no-store" });
+      if (r.ok) { clearInterval(timer); location.reload(); }
+    } catch (_) {}
+  }, 5000);
+}
+
+(async () => {
+  let reachable = false;
+  try {
+    const r = await fetch("whoami", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    device = await r.json();
+    device.id = device.device_id || "";
+    relayed = device.via === "relay";
+    reachable = true;
+  } catch (_) {
+    // Offline: what this browser remembers of the phone.
+    const known = deviceList().find((d) => d.url === pageURL());
+    if (known) {
+      device = { id: known.id.startsWith("http") ? "" : known.id, name: known.name };
+      relayed = known.via === "relay";
+    }
+  }
+  if (!settings.quality) settings.quality = relayed ? "medium" : "high";
+  $("name").textContent = $("pair-name").textContent = device.name || "LoopCtrl";
+  document.title = (device.name || "LoopCtrl");
+  if (reachable) rememberThisDevice();
+  renderDevices();
+  if (devicesShown()) refreshDevices();
+  renderSub();
+  if (!reachable) return waitForPhone();
+  // Pages before this one kept the key under the site's name, which every
+  // phone on one relay shares. Try such a key once; keep it under this
+  // phone's id if the phone takes it.
+  const own = store.get(storeName()), legacy = store.get("loopctrl.key." + location.host);
+  const saved = own || legacy;
+  if (saved && /^[0-9a-f]{64}$/.test(saved)) { useKey(saved); begin(!own && device.id ? saved : ""); }
+  else needPair();
+})();
 })();
 </script>
 </body>

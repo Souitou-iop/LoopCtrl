@@ -188,7 +188,8 @@ final class RemoteServiceStore: ObservableObject {
             id: id, serverURL: invite.serverURL, organization: enrollment.organization,
             deviceID: enrollment.deviceID, operators: enrollment.operators,
             preApprovedKeyIDs: check.preApproved.map(\.keyID), preApprovalSynced: check.preApproved.isEmpty,
-            spkiPin: invite.spkiPin ?? enrollment.spkiSHA256, enrolledAt: Date(), autoConnect: true)
+            spkiPin: invite.spkiPin ?? enrollment.spkiSHA256, enrolledAt: Date(), autoConnect: true,
+            publicURL: enrollment.publicURL)
         connections.append(connection)
         save()
         append(id, .enrolled, String(format: L10n.rs(.logEnrolled), connection.serverDisplay))
@@ -341,6 +342,11 @@ final class RemoteServiceStore: ObservableObject {
             update(id, .operatorEnded)
         case .action(let text):
             append(id, .action, text)
+        case .publicURL(let url):
+            if let i = connections.firstIndex(where: { $0.id == id }), connections[i].publicURL != url {
+                connections[i].publicURL = url
+                save()
+            }
         case .lost:
             update(id, .lost)
             if case .failed(let error) = machine(id).phase {

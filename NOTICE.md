@@ -29,6 +29,7 @@ third-party signing code those versions used (AltSign, `ldid`).
 | `idevice` | [jkcoxson/idevice](https://github.com/jkcoxson/idevice) | MIT | Linked as `IDevice.xcframework`, built from source with `Patches/idevice/` applied (the patch is MIT as well). Does the RSD tunnel, lockdownd, image mounter and pairing work for `LoopCtrlApp/DDI`. |
 | musl | [musl-libc.org](https://musl.libc.org) | MIT | Linked statically into `cli/loopctrl`, which the runner serves. Its notice is in `cli/musl-COPYRIGHT`. |
 | LocalDevVPN / StosVPN | [jkcoxson/LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN), [SideStore/StosVPN](https://github.com/SideStore/StosVPN) | Upstream's | Not included. Opened as a separate app through its URL scheme. |
+| miuix | [compose-miuix-ui/miuix](https://github.com/compose-miuix-ui/miuix) | Apache-2.0 | Not linked. The remote-control page (`LoopCtrlKit/RemoteHTML.swift`) reuses its colour, radius and spacing values in CSS. |
 | DeveloperDiskImage mirror | [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage) | Upstream's | Not included. Fetched at runtime from a pinned commit and checked against pinned SHA-256 hashes; users may supply their own copy from Xcode. |
 
 No code from StikDebug, StikPair or WebDriverAgent is included.
