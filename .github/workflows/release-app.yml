@@ -95,9 +95,16 @@ jobs:
             gh release delete "$TAG" --yes --cleanup-tag
           fi
 
+          # Per-release notes (docs/release-notes/vX.Y.Z.md) when present; the
+          # standard text otherwise. The install template below is always added.
+          if [ -f "docs/release-notes/$TAG.md" ]; then
+            HEAD=$(sed '/^<!--/,/^-->/d' "docs/release-notes/$TAG.md")
+          else
+            HEAD="Unsigned IPA, built from ${GITHUB_SHA:0:7} by GitHub Actions with Xcode ${XCODE_VERSION}."
+          fi
+
           cat > notes.md <<EOF
-          Unsigned IPA, built from \`${GITHUB_SHA:0:7}\` by GitHub Actions with
-          Xcode ${XCODE_VERSION}.
+          $HEAD
 
           Bundle version \`$VERSION\` (build $GITHUB_RUN_NUMBER).
 
