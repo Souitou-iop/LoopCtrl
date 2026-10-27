@@ -1,9 +1,10 @@
-name: Release image
+name: Server release (relay image)
 
-# Tag vX.Y.Z to publish ghcr.io/<owner>/loopctrl-relay:X.Y.Z, :X.Y and :latest.
+# Tag server-vX.Y.Z to publish ghcr.io/<owner>/loopctrl-relay:X.Y.Z, :X.Y and
+# :latest (the app's own releases are tagged vX.Y.Z, Pair's pair-vX.Y.Z).
 on:
   push:
-    tags: ["v*"]
+    tags: ["server-v*"]
   workflow_dispatch:
 
 permissions:
@@ -17,9 +18,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: connect/relay/go.mod
+          go-version-file: server/connect/relay/go.mod
       - name: Relay tests
-        working-directory: connect/relay
+        working-directory: server/connect/relay
         run: go test -race ./...
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -28,21 +29,24 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Image name
+      - name: Image name and version
         id: name
-        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/loopctrl-relay" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/loopctrl-relay" >> "$GITHUB_OUTPUT"
+          # server-v1.2.3 → v1.2.3 for the semver tags below
+          echo "version=${GITHUB_REF_NAME#server-}" >> "$GITHUB_OUTPUT"
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.name.outputs.image }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{version}},value=${{ steps.name.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.name.outputs.version }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/server-v') }}
             type=sha
       - uses: docker/build-push-action@v6
         with:
-          context: connect/relay
+          context: server/connect/relay
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

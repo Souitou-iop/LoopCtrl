@@ -1,20 +1,33 @@
-# Build, test and package LoopCtrl Pair. Pushes to main and pull requests
-# run the checks and build every bundle; a v* tag also publishes a GitHub
-# release with the bundles attached (pre-release when the tag has a "-").
-name: CI
+# Build, test and package LoopCtrl Pair (pair/). Pushes to main and pull
+# requests that touch it run the checks and build every bundle; a pair-v* tag
+# also publishes a GitHub release with the bundles attached (pre-release when
+# the tag has a "-"). The app's own releases are tagged v*, the relay's
+# server-v*.
+name: Pair CI
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    tags: ["pair-v*"]
+    paths:
+      - "pair/**"
+      - ".github/workflows/pair-ci.yml"
   pull_request:
+    paths:
+      - "pair/**"
+      - ".github/workflows/pair-ci.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Everything below runs in pair/.
+defaults:
+  run:
+    working-directory: pair
+
 concurrency:
-  group: ci-${{ github.ref }}
+  group: pair-ci-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
@@ -39,6 +52,8 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "pair -> target"
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - name: UI (type check and build)
@@ -66,12 +81,14 @@ jobs:
           # Not the action's default --all-features: the Android bridge's
           # "cli" feature is a build tool (uniffi-bindgen) that never ships;
           # deny.toml sets all-features = false.
+          manifest-path: pair/Cargo.toml
           arguments: --workspace
           command: check licenses bans sources
       - name: Advisories (informational)
         uses: EmbarkStudios/cargo-deny-action@v2
         continue-on-error: true
         with:
+          manifest-path: pair/Cargo.toml
           arguments: --workspace
           command: check advisories
       - name: Licenses (JS)
@@ -95,6 +112,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y $LINUX_DEPS
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "pair -> target"
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - name: Desktop app (.deb)
@@ -115,7 +134,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
-          path: out/*
+          path: pair/out/*
           if-no-files-found: error
 
   macos:
@@ -128,6 +147,8 @@ jobs:
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "pair -> target"
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - name: Desktop app (.dmg, unsigned)
@@ -148,7 +169,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: out/*
+          path: pair/out/*
           if-no-files-found: error
 
   windows:
@@ -159,6 +180,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "pair -> target"
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - name: Tests
@@ -179,7 +202,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: out/*
+          path: pair/out/*
           if-no-files-found: error
 
   android:
@@ -196,6 +219,8 @@ jobs:
         with:
           targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "pair -> target"
       - name: NDK
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" > /dev/null
       - name: Release keystore
@@ -205,14 +230,14 @@ jobs:
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "ANDROID_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
-          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          elif [[ "$GITHUB_REF" == refs/tags/pair-v* ]]; then
             echo "::error::ANDROID_KEYSTORE_BASE64 is not set; a release needs a signed APK"
             exit 1
           else
             echo "No release keystore: the release APK is built unsigned (not published)."
           fi
       - name: Build and unit tests
-        working-directory: android
+        working-directory: pair/android
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -230,12 +255,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: android
-          path: out/*
+          path: pair/out/*
           if-no-files-found: error
 
   release:
     name: Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/pair-v')
     needs: [linux, macos, windows, android]
     runs-on: ubuntu-22.04
     permissions:
@@ -247,6 +272,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Publish
+        working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -254,11 +280,12 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           ls -l
           tag="$GITHUB_REF_NAME"
-          pre=""; case "$tag" in *-*) pre="--prerelease";; esac
-          notes=../docs/release-notes/$tag.md
+          version="${tag#pair-}"   # pair-v0.2.1-beta → v0.2.1-beta
+          pre=""; case "$version" in *-*) pre="--prerelease";; esac
+          notes=../pair/docs/release-notes/$version.md
           if [ -f "$notes" ]; then n="--notes-file $notes"; else n="--generate-notes"; fi
           if gh release view "$tag" > /dev/null 2>&1; then
             gh release upload "$tag" * --clobber
           else
-            gh release create "$tag" * $pre $n --title "LoopCtrl Pair $tag"
+            gh release create "$tag" * $pre $n --title "LoopCtrl Pair $version"
           fi
