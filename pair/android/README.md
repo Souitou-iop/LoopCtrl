@@ -40,5 +40,6 @@ Gradle 自己完成 Rust 部分：`buildRustLibs<Variant>` 按 ABI 用 NDK clang
 
 - ✅ arm64 / armv7 / x86_64 三个 ABI 编译、打包；Kotlin 单元测试；`usbmux` 97 个测试。
 - ✅ arm64 模拟器（Android 13）上：内置 usbmuxd 启动正常；无 OTG 时的环境提示；模拟设备 1 台和 5 台走完开始、信任、开发者模式、重启、出错重试、停止、完成；中英文。
-- ⚠️ 真机未验证：没有用安卓手机 + 真 iPhone 跑过。USB 权限、配置切换、usbfs 传输、信任弹窗、写入 LoopCtrl 都要在真机上确认。内置 usbmuxd 本身在 iloader 里用真机跑通过。
-- ⚠️ 发布签名、商店上架未做。
+- ✅ 真机（安卓手机 + 真 iPhone，USB OTG，debug 版安装包）：USB 权限、配置切换、usbfs 传输、信任弹窗、开发者模式、写入 LoopCtrl、校验走通完整配对流程。
+- ⚠️ 发布签名版的安装包只在模拟器上启动过，没有在真机上跑过配对流程（与 debug 版同一份代码）。
+- ⚠️ 商店上架未做。
