@@ -14,20 +14,21 @@ provides two interchangeable ones:
 | | In-app relay (`connect/relay/`) | Headscale tailnet (`connect/headscale/`) |
 |---|---|---|
 | Phone setup | Scan an invite QR code in LoopCtrl. Nothing else. | Join a tailnet through Shadowrocket (or another Tailscale client) with a pre-auth key. |
-| Server | One small Python process behind HTTPS. | Headscale + embedded DERP relay behind HTTPS, UDP 3478 for STUN. |
-| Transport | HTTPS long-poll through the relay. | WireGuard, direct when NAT allows, otherwise via your DERP. |
-| Operator reaches | `relay/operator` endpoints with a bearer token. | `100.64.x.y:8300` from any `tag:operator` node. |
+| Server | One small Go binary behind HTTPS. | Headscale + embedded DERP relay behind HTTPS, UDP 3478 for STUN. |
+| Transport | The phone holds one WebSocket to the relay; the relay forwards whole HTTP exchanges down it. | WireGuard, direct when NAT allows, otherwise via your DERP. |
+| Operator reaches | The phone's own public address, `https://<slug>.<relay domain>/`: the control page in a browser, or `/rpc` for agents. | `100.64.x.y:8300` from any `tag:operator` node. |
 | Use it when | Default. Zero configuration on the customer's phone. | Fallback, or when you already run a tailnet. |
 
 Either way the operator pairs with the phone (X25519) and every call is
 sealed end to end with the LoopCtrl v1 envelope. **Neither the relay nor
-Headscale can read or forge requests.** The relay is untrusted by design: the
-invite names the operator keys the phone will accept.
+Headscale can read or forge requests.** The invite names the operator keys the
+phone pre-approves. The relay does serve the control page a browser opens, so
+use a relay you run or trust ([why](https://github.com/Souitou-iop/LoopCtrl/blob/main/docs/remote-control.md#trust)).
 
 ## Layout
 
 ```
-connect/relay/        the relay server, its self-test, operator tools,
+connect/relay/        the relay (Go), its tests, the operator tool,
                       Dockerfile, compose file, nginx and systemd templates
 connect/headscale/    Headscale + embedded DERP: compose file, config, ACL policy, nginx
 cli/                  `loopctrl` operator CLI (direct or through the relay)
@@ -41,7 +42,7 @@ Relay, with Docker, behind your own HTTPS reverse proxy:
 ```sh
 cd connect/relay
 cp relay.env.example relay.env && $EDITOR relay.env
-install -d -m 0700 -o 10001 -g 10001 state
+install -d -m 0700 -o 65532 -g 65532 state
 docker compose up -d
 curl -s http://127.0.0.1:8787/healthz
 ```
@@ -52,10 +53,13 @@ Then mint an invite and drive the phone:
 export LOOPCTRL_RELAY_URL=https://relay.example.com
 export LOOPCTRL_RELAY_OPERATOR_TOKEN=...      # from relay.env
 cli/loopctrl relay enroll --name "Alex"       # prints the loopctrl://connect link; show it as a QR code
-cli/loopctrl relay devices
+cli/loopctrl relay devices                    # each phone's public address
 cli/loopctrl relay pair --device-id dev_...   # approved automatically: the invite named your key
 cli/loopctrl relay call --device-id dev_... device_info
 ```
+
+Or open the phone's public address in a browser and pair from there (the
+phone asks its user): a live screen, touch, keyboard and the view tree.
 
 Full guides:
 
@@ -71,12 +75,13 @@ Tagged releases publish `ghcr.io/souitou-iop/loopctrl-relay:<version>` (and
 ## Development
 
 ```sh
-python3 connect/relay/selftest.py     # the relay, in-process, both sides; no iPhone needed
-ruff check .
+cd connect/relay && go test -race ./...   # the relay against a simulated phone; no iPhone needed
+ruff check .                              # the Python CLI
 ```
 
-Python 3.10+, standard library only (the operator CLI uses `cryptography`
-for X25519 pairing if it is installed, and falls back to pure Python).
+The relay needs Go 1.23+ and one dependency (`github.com/coder/websocket`).
+The CLI is Python 3.10+, standard library only (it uses `cryptography` for
+X25519 pairing if it is installed, and falls back to pure Python).
 
 ## License
 

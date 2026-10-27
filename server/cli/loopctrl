@@ -3,18 +3,19 @@
 
     loopctrl direct --host 100.64.0.7:8300 pair --name ops-laptop   # tailnet / LAN
     loopctrl direct --host 100.64.0.7:8300 call device_info
-    loopctrl direct --host 100.64.0.7:8300 shot screen.jpg
+    loopctrl direct --host https://<slug>.relay.example.com call device_info   # a phone's relay address
 
     export LOOPCTRL_RELAY_URL=https://relay.example.com/loopctrl-relay
     export LOOPCTRL_RELAY_OPERATOR_TOKEN=...                       # never on argv
     loopctrl relay enroll --name "Alex"                            # invite link for the phone
-    loopctrl relay devices
-    loopctrl relay pair --device-id dev_...
-    loopctrl relay call --device-id dev_... get_status '{}'
+    loopctrl relay devices                                         # with each phone's public address
+    loopctrl relay pair --device-id dev_...                        # pre-approved: the invite named this key
+    loopctrl relay call --device-id dev_... device_info
 
-`direct` is cli/loopctrl_rpc.py (the phone's address must be reachable: the
-same LAN, or a tailnet joined to your Headscale). `relay` is
-connect/relay/relay_operator.py. Both keep their keys in ~/.loopctrl/.
+`direct` is cli/loopctrl_rpc.py: give it the phone's address on the LAN or a
+tailnet joined to your Headscale, or the public address the relay gives the
+phone. `relay` is connect/relay/relay_operator.py, which pairs with the
+operator key an invite names. Both keep their keys in ~/.loopctrl/.
 """
 from __future__ import annotations
 

@@ -9,7 +9,21 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: connect/relay/go.mod
+      - name: Vet and test
+        working-directory: connect/relay
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+          go vet ./...
+          go test -race ./...
+
+  cli:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -21,8 +35,6 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Compile
         run: python -m compileall -q connect cli && python -m py_compile cli/loopctrl
-      - name: Relay self-test
-        run: python connect/relay/selftest.py
       - name: CLI help
         run: |
           python cli/loopctrl direct --help > /dev/null
@@ -55,5 +67,8 @@ jobs:
             -e LOOPCTRL_RELAY_OPERATOR_TOKEN=ci-token-0123456789abcdefghij \
             -e LOOPCTRL_RELAY_PUBLIC_SERVER=relay.test \
             loopctrl-relay:ci
-          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:8787/healthz && exit 0; sleep 1; done
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8787/healthz && docker exec relay /loopctrl-relay -healthcheck; then exit 0; fi
+            sleep 1
+          done
           docker logs relay; exit 1

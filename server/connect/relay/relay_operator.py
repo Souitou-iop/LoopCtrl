@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Operator client for a LoopCtrl relay (docs/relay-enrollment.md).
+"""Operator client for a LoopCtrl relay (docs/relay-enrollment.md, docs/remote-control.md).
 
 A test and reference tool, not a control plane. It keeps one long-lived X25519
 pairing key per operator in ~/.loopctrl/relay_operator.json, so the key ID it
@@ -7,13 +7,14 @@ puts in an invite is the key it later pairs with:
 
     relay_operator.py key                                  # name and key ID
     relay_operator.py enroll --name "Alex" [--org …]       # code + invite link
-    relay_operator.py devices
-    relay_operator.py pair --device-id dev_…               # POST /pair through the relay
-    relay_operator.py call --device-id dev_… get_status '{}'
+    relay_operator.py devices                              # with each phone's public address
+    relay_operator.py pair --device-id dev_…               # POST /pair at the phone's public address
+    relay_operator.py call --device-id dev_… device_info '{}'
 
-The relay operator token is read from LOOPCTRL_RELAY_OPERATOR_TOKEN, so it
-never appears in argv. Without it the requests go out unauthenticated, which
-is what `operator_shim.py` (run on the relay host, adds the token) expects.
+`pair` and `call` talk to the phone's public address, the same place a browser
+opens; `--url` names it directly instead of looking it up. The relay operator
+token is read from LOOPCTRL_RELAY_OPERATOR_TOKEN, so it never appears in argv;
+it is sent to the relay's admin API only, never to a phone.
 """
 from __future__ import annotations
 
@@ -68,10 +69,11 @@ def identity(name: str | None = None) -> dict:
     return data
 
 
-def _request(method: str, url: str, body: dict | bytes | None = None, timeout: float = 120) -> tuple[int, bytes]:
+def _request(method: str, url: str, body: dict | bytes | None = None, timeout: float = 120,
+             admin: bool = False) -> tuple[int, bytes]:
     headers = {}
     token = os.environ.get("LOOPCTRL_RELAY_OPERATOR_TOKEN", "")
-    if token:
+    if token and admin:
         headers["Authorization"] = "Bearer " + token
     data = None
     if body is not None:
@@ -85,13 +87,24 @@ def _request(method: str, url: str, body: dict | bytes | None = None, timeout: f
         return error.code, error.read()
 
 
-def pair(base: str, device_id: str, client_name: str) -> dict:
+def public_url(base: str, device_id: str) -> str:
+    """The phone's public address, from the relay's device list."""
+    status, raw = _request("GET", base + "/v1/admin/devices", admin=True)
+    if status != 200:
+        raise SystemExit(f"device list failed ({status}): {raw.decode('utf-8', 'replace')}")
+    for device in json.loads(raw).get("devices", []):
+        if device.get("device_id") == device_id and device.get("public_url"):
+            return device["public_url"].rstrip("/")
+    raise SystemExit(f"no public address for {device_id} (unknown device, or the relay serves none)")
+
+
+def pair(url: str, device_id: str, client_name: str) -> dict:
     me = identity()
     priv = bytes.fromhex(me["priv"])
     pub = _x25519(priv, _X25519_BASE)
     print(f"pairing as {client_name!r}, key {me['key_id'][:8]}… through the relay", file=sys.stderr)
     started = time.time()
-    status, raw = _request("POST", f"{base}/v1/operator/devices/{device_id}/pair",
+    status, raw = _request("POST", f"{url}/pair",
                            {"client_name": client_name, "pub": base64.b64encode(pub).decode()})
     took = time.time() - started
     if status != 200:
@@ -107,7 +120,7 @@ def pair(base: str, device_id: str, client_name: str) -> dict:
     return resp
 
 
-def call(base: str, device_id: str, method: str, params: dict) -> dict:
+def call(url: str, device_id: str, method: str, params: dict) -> dict:
     record = _load().get("sessions", {}).get(device_id)
     if not record:
         raise SystemExit("not paired with that device: run `pair` first")
@@ -117,7 +130,7 @@ def call(base: str, device_id: str, method: str, params: dict) -> dict:
     k_mac = _hmac(key, LABEL_MAC + nonce)
     ct = _keystream_xor(_hmac(key, LABEL_ENC_REQ + nonce), nonce, body)
     tag = _hmac(k_mac, b"v1" + bytes.fromhex(tok) + ts.to_bytes(8, "big") + nonce + ct)
-    status, raw = _request("POST", f"{base}/v1/operator/devices/{device_id}/rpc", {
+    status, raw = _request("POST", f"{url}/rpc", {
         "v": 1, "tok": tok, "ts": ts, "nonce": nonce.hex(),
         "ct": base64.b64encode(ct).decode(), "tag": tag.hex(),
     })
@@ -143,9 +156,11 @@ def main() -> int:
     sub.add_parser("devices")
     p = sub.add_parser("pair")
     p.add_argument("--device-id", required=True)
+    p.add_argument("--url", help="the phone's public address (default: look it up)")
     p.add_argument("--client-name")
     c = sub.add_parser("call")
     c.add_argument("--device-id", required=True)
+    c.add_argument("--url", help="the phone's public address (default: look it up)")
     c.add_argument("method")
     c.add_argument("params", nargs="?", default="{}")
     args = parser.parse_args()
@@ -159,19 +174,21 @@ def main() -> int:
         payload = {"operators": [{"name": me["name"], "key_id": me["key_id"]}], "expires_in": args.expires_in}
         if args.org:
             payload["organization"] = args.org
-        status, raw = _request("POST", base + "/v1/admin/enrollments", payload)
+        status, raw = _request("POST", base + "/v1/admin/enrollments", payload, admin=True)
         if status != 201:
             raise SystemExit(f"enrollment failed ({status}): {raw.decode('utf-8', 'replace')}")
         print(json.dumps(json.loads(raw), indent=1))
     elif args.command == "devices":
-        status, raw = _request("GET", base + "/v1/admin/devices")
+        status, raw = _request("GET", base + "/v1/admin/devices", admin=True)
         if status != 200:
             raise SystemExit(f"list failed ({status}): {raw.decode('utf-8', 'replace')}")
         print(json.dumps(json.loads(raw), indent=1))
     elif args.command == "pair":
-        pair(base, args.device_id, args.client_name or identity()["name"])
+        url = (args.url or public_url(base, args.device_id)).rstrip("/")
+        pair(url, args.device_id, args.client_name or identity()["name"])
     elif args.command == "call":
-        print(json.dumps(call(base, args.device_id, args.method, json.loads(args.params)), indent=1, ensure_ascii=False))
+        url = (args.url or public_url(base, args.device_id)).rstrip("/")
+        print(json.dumps(call(url, args.device_id, args.method, json.loads(args.params)), indent=1, ensure_ascii=False))
     return 0
 
 

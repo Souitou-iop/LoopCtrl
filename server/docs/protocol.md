@@ -5,7 +5,7 @@ Three layers, each defined in one place.
 ```
 operator ──(1) LoopCtrl v1: pairing + sealed JSON-RPC, end to end──▶ runner on the phone
    │                                                                     ▲
-   └──(2) transport: relay long-poll  ─or─  tailnet (WireGuard) ────────┘
+   └──(2) transport: relay tunnel  ─or─  tailnet (WireGuard) ──────────┘
           (3) enrollment: invite → preview → redeem   (relay only)
 ```
 
@@ -24,11 +24,14 @@ read or forge it.
 
 ## 2. Transports
 
-- **Relay** (`connect/relay/`): the phone keeps a repeated HTTPS poll open to
-  the relay (each held about 25 s, then `204`), receives opaque `/pair` and
-  `/rpc` bodies, hands them to its local runner as relayed requests, and posts
-  the answers back. Operators call `POST /v1/operator/devices/{id}/rpc` and get
-  the phone's answer as the phone sent it (90 s at most).
+- **Relay** (`connect/relay/`): the phone keeps one WebSocket open to the
+  relay. Each HTTP request to the phone's public address
+  (`https://<slug>.<relay domain>/…`, or `…/d/<slug>/…`) travels down it as a
+  stream and reaches the runner unchanged; the response comes back the same
+  way, with per-stream flow control. So a browser gets the control page, the
+  screen stream and `/rpc` exactly as on the LAN. The tunnel protocol is in
+  LoopCtrl's
+  [docs/remote-control.md](https://github.com/Souitou-iop/LoopCtrl/blob/main/docs/remote-control.md#tunnel-protocol-v1).
 - **Tailnet** (`connect/headscale/`): plain TCP to `100.64.x.y:8300` over
   WireGuard. Headscale only coordinates keys and the DERP relay; the ACL limits
   operators to port 8300 on customer phones.
@@ -45,7 +48,7 @@ error format are specified in LoopCtrl's
 **[docs/relay-enrollment.md](https://github.com/Souitou-iop/LoopCtrl/blob/main/docs/relay-enrollment.md)**.
 That page is the client contract and the **source of truth**; this repo
 deliberately keeps no copy, so the two can't drift. The reference relay here
-implements exactly that API, and `connect/relay/selftest.py` exercises it.
+implements exactly that API, and `connect/relay/relay_test.go` exercises it.
 
 In short:
 
@@ -54,7 +57,7 @@ In short:
 2. The phone previews it, the user confirms, and the phone redeems it with an
    Ed25519 key it generated, signing over the relay's public name.
 3. The phone authenticates with that key (challenge, signature, short-lived
-   token) whenever it opens the channel.
+   token) whenever it opens the tunnel.
 4. The app refuses to connect if the relay reports operators other than the
    ones in the invite, so a malicious relay can't substitute its own key.
 
@@ -67,6 +70,8 @@ openssl x509 -in fullchain.pem -pubkey -noout | openssl pkey -pubin -outform der
 
 ## Versioning
 
-The relay's `GET /healthz` reports `"api": 1`. A breaking change to the
-enrollment API bumps that number and the `/v1/` prefix together, and lands in
-LoopCtrl's `docs/relay-enrollment.md` first.
+The relay's `GET /healthz` reports `"api": 1` and `"tunnel": 1`. A breaking
+change to the enrollment API bumps `api` and the `/v1/` prefix together, and
+lands in LoopCtrl's `docs/relay-enrollment.md` first; one to the tunnel bumps
+`tunnel` and its WebSocket subprotocol (`loopctrl-tunnel-v1`), and lands in
+LoopCtrl's `docs/remote-control.md` first.

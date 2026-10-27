@@ -1,7 +1,7 @@
 # LoopCtrl relay behind your own TLS reverse proxy. See docs/self-host-relay.md.
 #
-#   cp relay.env.example relay.env && $EDITOR relay.env    # token + public URL
-#   install -d -m 0700 -o 10001 -g 10001 state            # the image runs as uid 10001
+#   cp relay.env.example relay.env && $EDITOR relay.env    # token, public name, device domain
+#   install -d -m 0700 -o 65532 -g 65532 state            # the image runs as uid 65532
 #   docker compose up -d
 #
 # The relay speaks plain HTTP on 127.0.0.1:8787; nginx (or Caddy, …) in front
@@ -15,9 +15,9 @@ services:
     restart: unless-stopped
     env_file: relay.env
     environment:
-      LOOPCTRL_RELAY_STATE_FILE: /data/state.json
       # Published ports reach the container from the bridge gateway, so trust
-      # X-Real-IP from there too (it only feeds the per-address rate limits).
+      # X-Real-IP from there too (it feeds the per-address rate limits and the
+      # address the phone shows for a browser).
       LOOPCTRL_RELAY_TRUSTED_PROXIES: ${RELAY_TRUSTED_PROXIES:-127.0.0.1/32,::1/128,172.16.0.0/12}
     ports:
       - "127.0.0.1:${RELAY_PORT:-8787}:8787"

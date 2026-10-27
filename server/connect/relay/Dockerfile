@@ -1,26 +1,26 @@
-# LoopCtrl relay: standard-library Python, no dependencies.
+# LoopCtrl relay: one static Go binary.
 #   docker build -t loopctrl-relay connect/relay
-FROM python:3.12-slim
+FROM golang:1.23-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY *.go ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /loopctrl-relay .
+
+FROM gcr.io/distroless/static-debian12:nonroot
 
 LABEL org.opencontainers.image.title="loopctrl-relay" \
-      org.opencontainers.image.description="LoopCtrl in-app relay: invite enrollment and a long-poll transport for LoopCtrl's JSON-RPC" \
+      org.opencontainers.image.description="LoopCtrl relay: invite enrollment and a reverse tunnel that gives each phone a public address" \
       org.opencontainers.image.source="https://github.com/Souitou-iop/LoopCtrl-Server" \
       org.opencontainers.image.licenses="Apache-2.0"
 
-RUN useradd --system --uid 10001 --no-create-home --home-dir /data relay \
- && install -d -o relay -g relay -m 0700 /data
-
-WORKDIR /app
-COPY loopctrl_relay_server.py ed25519.py ./
-
-USER relay
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
+COPY --from=build /loopctrl-relay /loopctrl-relay
+ENV LOOPCTRL_RELAY_LISTEN=0.0.0.0:8787 \
     LOOPCTRL_RELAY_STATE_FILE=/data/state.json
 VOLUME ["/data"]
 EXPOSE 8787
+USER nonroot
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=4)"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 CMD ["/loopctrl-relay", "-healthcheck"]
 
-ENTRYPOINT ["python", "/app/loopctrl_relay_server.py", "--bind", "0.0.0.0", "--port", "8787"]
+ENTRYPOINT ["/loopctrl-relay"]
