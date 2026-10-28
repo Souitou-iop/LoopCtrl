@@ -479,7 +479,30 @@ the copyright notices and the third-party components.
 LoopCtrl was split from [iCTRL](https://github.com/OpenMinis/iCTRL), and
 [`NOTICE.md`](NOTICE.md) also records that lineage.
 
-Pairing and mounting are built on [idevice](https://github.com/jkcoxson/idevice)
-(MIT). [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN) is opened as a
-separate app for the tunnel, and disk images are downloaded at runtime from
-[doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage).
+### Acknowledgments
+
+Shipped inside LoopCtrl and LoopCtrl Pair:
+
+- [idevice](https://github.com/jkcoxson/idevice) (MIT) — the USB pairing and
+  Developer Disk Image mount stack
+- [iloader](https://github.com/nab138/iloader) (MIT) — Pair's Android USB
+  implementation is a port of it (its name and branding are not used)
+- [miuix](https://github.com/compose-miuix-ui/miuix) (Apache-2.0) — the Pair
+  Android UI; the desktop apps recreate its look in CSS
+- [Tauri](https://github.com/tauri-apps/tauri) (MIT OR Apache-2.0) — the Pair
+  desktop apps
+- [musl](https://musl.libc.org) (MIT) — the static `loopctrl` CLI
+- [coder/websocket](https://github.com/coder/websocket) (BSD-3-Clause) — the
+  relay's WebSocket transport
+
+Used alongside, not bundled:
+
+- [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN) — the tunnel app
+  LoopCtrl opens as a separate process
+- [SideStore](https://sidestore.io) — signing and sideloading
+- [osy/Jitterbug](https://github.com/osy/Jitterbug) — the `jitterbugpair`
+  pairing-file tool
+- [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage)
+  — the disk images downloaded at runtime
+- [Headscale](https://github.com/juanfont/headscale) (BSD-3-Clause) — the
+  self-hosted coordination server [`server/`](server/) ships templates for

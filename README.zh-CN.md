@@ -362,5 +362,21 @@ Apache License 2.0，见 [`LICENSE`](LICENSE)。版权声明和第三方组件�
 [`NOTICE.md`](NOTICE.md)。本项目从 [iCTRL](https://github.com/OpenMinis/iCTRL)
 分支而来，沿革也记录在 [`NOTICE.md`](NOTICE.md)。
 
-配对和挂载基于 [idevice](https://github.com/jkcoxson/idevice)（MIT）；隧道通过 [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN)
-作为独立 App 调用；磁盘镜像在运行时从 [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage) 下载。
+### 致谢
+
+随 LoopCtrl 与 LoopCtrl Pair 一起分发：
+
+- [idevice](https://github.com/jkcoxson/idevice)（MIT）——USB 配对与开发者磁盘镜像挂载
+- [iloader](https://github.com/nab138/iloader)（MIT）——Pair 的安卓 USB 实现是它的移植（未使用其名称与品牌）
+- [miuix](https://github.com/compose-miuix-ui/miuix)（Apache-2.0）——Pair 的安卓界面；桌面版在 CSS 里复刻了它的观感
+- [Tauri](https://github.com/tauri-apps/tauri)（MIT OR Apache-2.0）——Pair 的桌面应用
+- [musl](https://musl.libc.org)（MIT）——静态编译的 `loopctrl` CLI
+- [coder/websocket](https://github.com/coder/websocket)（BSD-3-Clause）——中继的 WebSocket 传输
+
+配套使用、不随包分发：
+
+- [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN)——LoopCtrl 以独立进程调用的隧道 App
+- [SideStore](https://sidestore.io)——签名与侧载
+- [osy/Jitterbug](https://github.com/osy/Jitterbug)——`jitterbugpair` 配对文件工具
+- [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage)——运行时下载的磁盘镜像
+- [Headscale](https://github.com/juanfont/headscale)（BSD-3-Clause）——自托管协调服务器，[`server/`](server/) 附带其部署模板
