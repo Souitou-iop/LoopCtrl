@@ -395,14 +395,10 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .iconbtn.pop[data-act="rotate"] svg { animation: turn .55s var(--ease); }
 .iconbtn.pop[data-act="notifications"] svg { animation: swing .7s var(--ease); transform-origin: 50% 15%; }
 .iconbtn.pop[data-act="switcher"] svg, .iconbtn.pop[data-act="home"] svg { animation: hop .5s var(--spring); }
-.iconbtn.pop[data-act="lock"] svg { animation: clamp .45s var(--spring); }
-.iconbtn.pop[data-act="wake"] svg { animation: glow .7s var(--ease); }
 @keyframes pop { 40% { transform: scale(1.22); } }
 @keyframes turn { from { transform: rotate(-90deg); } }
 @keyframes swing { 20% { transform: rotate(14deg); } 40% { transform: rotate(-10deg); } 60% { transform: rotate(6deg); } 80% { transform: rotate(-3deg); } }
 @keyframes hop { 40% { transform: translateY(-4px) scale(1.08); } }
-@keyframes clamp { 40% { transform: scale(.82); } }
-@keyframes glow { 30% { transform: rotate(45deg) scale(1.15); } to { transform: rotate(90deg); } }
 .iconbtn svg, .btn svg { transition: transform .3s var(--spring); }
 /* recording: a ring keeps breathing out of the button */
 .iconbtn.rec::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; border: 2px solid var(--error); pointer-events: none;
@@ -509,8 +505,6 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
       <button class="iconbtn" data-act="app" data-tip="app"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1.8"/><rect x="14" y="4" width="6" height="6" rx="1.8"/><rect x="4" y="14" width="6" height="6" rx="1.8"/><path d="M17 14v6M14 17h6"/></svg></button>
       <button class="iconbtn" data-act="keyboard" data-tip="keyboard"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg></button>
       <button class="iconbtn" data-act="wire" data-tip="wire"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M4 9h16M10 9v12"/></svg></button>
-      <button class="iconbtn" data-act="lock" data-tip="lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
-      <button class="iconbtn" data-act="wake" data-tip="wake"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
     </nav>
     <aside class="side card" id="tree-panel" hidden>
       <div class="head"><b data-t="tree"></b>
@@ -546,7 +540,7 @@ const T = {
   waitingFrame: ["Waiting for the screen…", "正在等待画面…"],
   relay: ["Relay", "中继"], direct: ["Direct", "直连"], offline: ["Offline", "未连接"],
   home: ["Home", "主屏幕"], app: ["Open app", "打开 App"], keyboard: ["Type", "键盘输入"], wire: ["Outlines", "元素轮廓"],
-  lock: ["Lock", "锁屏"], wake: ["Wake", "唤醒"], tree: ["View tree", "视图树"], full: ["Full screen", "全屏"],
+  tree: ["View tree", "视图树"], full: ["Full screen", "全屏"],
   settings: ["Screen settings", "画面设置"], record: ["Record", "录制操作"], refresh: ["Refresh", "刷新"], close: ["Close", "关闭"],
   appPrompt: ["App name", "App 名称"], notFound: ["No app matches “%s”.", "没有找到“%s”。"],
   filter: ["Filter", "筛选元素"], nodes: ["%s elements", "%s 个元素"], treeErr: ["Could not read the view tree: %s", "无法读取视图树：%s"],
@@ -1685,8 +1679,10 @@ for (const b of document.querySelectorAll("[data-act]")) {
       case "rotate": act("rotate", { manual: true }); break;
       case "notifications": act("notification_center", { manual: true }); break;
       case "controls": act("control_center", { manual: true }); break;
-      case "lock": act("lock", { manual: true }); break;
-      case "wake": act("unlock", { manual: true }); break;
+      // No lock / wake buttons: locking the phone suspends the app that holds
+      // the relay tunnel (the page simply loses the phone), and waking it is a
+      // Home press that cannot get past a passcode. Both stay available to
+      // agents over RPC, where screen_locked says what actually happened.
       case "app": openApp(); break;
       case "keyboard":
         keyboardOn = !keyboardOn; b.classList.toggle("on", keyboardOn);

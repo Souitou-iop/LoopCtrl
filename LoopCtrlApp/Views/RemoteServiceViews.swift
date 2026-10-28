@@ -1169,7 +1169,8 @@ struct RemoteConnectionDetailView: View {
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     ValueRow(title: L10n.rs(.organization), systemImage: "building.2", value: c.organization)
-                    Text(L10n.rs(.providedByServer)).font(.caption2).foregroundColor(.secondary).padding(.leading, 36)
+                    Text(L10n.rs(.providedByServer)).font(.caption2).foregroundColor(.secondary)
+                        .padding(.leading, DetailRow.indent)
                 }
                 if let page = c.controlPageURL {
                     ControlPageRow(url: page)
@@ -1298,20 +1299,20 @@ struct RemoteConnectionDetailView: View {
 
 /// The relay's address for this phone's control page: open it in any
 /// browser, pair, and drive the phone (docs/remote-control.md).
+///
+/// On the same grid as the rows above and below it: the address sits under the
+/// title's left edge (as the 「由服务器提供」 note does), and copy/share sit on
+/// the title line at the trailing edge, which is where every other row in this
+/// list puts its value. Nothing floats under the icon.
 private struct ControlPageRow: View {
     let url: URL
     @State private var copied = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(L10n.rs(.controlPage), systemImage: "safari")
-            Text(verbatim: url.absoluteString)
-                .font(.system(.footnote, design: .monospaced))
-                .foregroundColor(.secondary)
-                .textSelection(.enabled)
-                .lineLimit(2)
-                .truncationMode(.middle)
-            HStack(spacing: 16) {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 12) {
+                Label(L10n.rs(.controlPage), systemImage: "safari")
+                Spacer(minLength: 8)
                 Button {
                     UIPasteboard.general.url = url
                     copied = true
@@ -1321,17 +1322,31 @@ private struct ControlPageRow: View {
                     }
                 } label: {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .frame(width: 20)
                 }
                 ShareLink(item: url) {
                     Image(systemName: "square.and.arrow.up")
+                        .frame(width: 20)
                 }
                 .accessibilityLabel(L10n.rs(.shareControlPage))
             }
             .buttonStyle(.borderless)
-            .padding(.leading, 36)
+            Text(verbatim: url.absoluteString)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .padding(.leading, DetailRow.indent)
         }
-        .padding(.vertical, 2)
     }
+}
+
+/// Where a row's second line starts: the title's left edge, past the icon
+/// column. Shared so the 「由服务器提供」 note and the control address line up
+/// with each other instead of each carrying its own number.
+private enum DetailRow {
+    static let indent: CGFloat = 36
 }
 
 private struct SPKIRow: View {
