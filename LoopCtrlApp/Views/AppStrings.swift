@@ -15,6 +15,7 @@ extension L10n {
         case mountDiskImage, setupRow
         case runnerOpenFailed, runnerStartFailed
         case localAddress, lanAddress, noWiFi, copied
+        case controlPage, shareControlPage
         case remoteAccess, remoteAccessOnFooter, remoteAccessOffFooter, remoteAccessApproveFooter
         case portLabel, portFooter, portRunningFooter, portInvalid, portReset, portApply
         // Settings sheet
@@ -88,6 +89,9 @@ extension L10n {
         .localAddress: [.en: "This device", .zhHans: "本机", .zhHant: "本機"],
         .lanAddress: [.en: "Wi-Fi", .zhHans: "局域网", .zhHant: "區域網路"],
         .noWiFi: [.en: "Not on Wi-Fi", .zhHans: "未连接 Wi-Fi", .zhHant: "未連接 Wi-Fi"],
+        .controlPage: [.en: "Control page", .zhHans: "网页控制", .zhHant: "網頁控制"],
+        .shareControlPage: [.en: "Share the control page link",
+                            .zhHans: "分享网页控制链接", .zhHant: "分享網頁控制連結"],
         .copied: [.en: "Copied", .zhHans: "已复制", .zhHant: "已複製"],
         .portLabel: [.en: "Port", .zhHans: "端口", .zhHant: "連接埠"],
         .portFooter: [.en: "The port automation clients connect to. Default %d. Don't share it with another automation app.",

@@ -221,6 +221,24 @@ struct SettingsView: View {
         runnerAdmin.visibility.map { $0 != .local } ?? false
     }
 
+    /// The browser page for a host we advertise: the same control page the relay
+    /// hands out, served plain over the LAN (docs/remote-control.md). Optional
+    /// because a host that cannot form a URL is no use to anyone, and forcing
+    /// one here would put the failure in the middle of a card.
+    private static func controlPageURL(host: String, port: Int) -> URL? {
+        URL(string: "http://\(host):\(port)/remote")
+    }
+
+    /// The address to hand clients. The runner's own list comes first: it is the
+    /// process holding the port, and that list has already left out tunnels and
+    /// cellular. It is empty until a `config` call has been made, which the
+    /// all-in-one app never needs for its own settings (it reads the choice in
+    /// process, without pairing) — so read the interface as a fallback. Same
+    /// process, same answer; the fallback is only ever narrower.
+    private var lanHost: String? {
+        runnerAdmin.lanAddresses.first?.address ?? AppState.wifiAddress()
+    }
+
     /// Where clients reach the server, and the switch that opens it to the LAN.
     private var connectionCard: some View {
         VStack(spacing: 8) {
@@ -229,9 +247,13 @@ struct SettingsView: View {
                            address: "127.0.0.1:\(appState.serverPort)")
                 if remoteOn {
                     Divider().padding(.leading, 16)
-                    if let ip = AppState.wifiAddress() {
+                    if let host = lanHost {
                         AddressRow(title: L10n.ui(.lanAddress),
-                                   address: "\(ip):\(appState.serverPort)")
+                                   address: "\(host):\(appState.serverPort)")
+                        if let page = Self.controlPageURL(host: host, port: appState.serverPort) {
+                            Divider().padding(.leading, 16)
+                            ControlPageRow(url: page)
+                        }
                     } else {
                         AddressRow(title: L10n.ui(.lanAddress), address: nil)
                     }
@@ -456,6 +478,49 @@ private struct AddressRow: View {
             } else {
                 Text(L10n.ui(.noWiFi)).foregroundColor(.secondary)
             }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+}
+
+/// The browser's address of the control page, and the two things a person does
+/// with it: copy it, or hand it to another device. The URL gets a line of its
+/// own because the address is the thing to read — squeezed onto the title line
+/// it truncates in the middle, which is the one part of a URL nobody can guess.
+/// Same word and same affordances as the relay's row, so 「网页控制」 means one
+/// thing in this app (docs/relay-enrollment.md).
+private struct ControlPageRow: View {
+    let url: URL
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 12) {
+                Text(L10n.ui(.controlPage))
+                Spacer(minLength: 8)
+                Button {
+                    UIPasteboard.general.url = url
+                    copied = true
+                    Task {
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        copied = false
+                    }
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .frame(width: 20)
+                }
+                ShareLink(item: url) {
+                    Image(systemName: "square.and.arrow.up")
+                        .frame(width: 20)
+                }
+                .accessibilityLabel(L10n.ui(.shareControlPage))
+            }
+            .buttonStyle(.borderless)
+            Text(verbatim: url.absoluteString)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(.secondary)
+                .textSelection(.enabled)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

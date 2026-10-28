@@ -102,6 +102,18 @@ class AppState: ObservableObject {
             let name = String(cString: interface.ifa_name)
             guard name == "en0" else { continue }
 
+            // Two addresses a client cannot use: link-local (no DHCP — Wi-Fi is
+            // associated but the network gave nothing) and the benchmark range a
+            // proxy or fake-IP setup parks on an interface. Both look like a
+            // usable host and reach nobody; the runner's own list leaves them out
+            // the same way (LoopCtrlUITests `allReachableAddresses`).
+            let ip = sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                UInt32(bigEndian: $0.pointee.sin_addr.s_addr)
+            }
+            guard ip & 0xFFFF_0000 != 0xA9FE_0000,       // 169.254.0.0/16
+                  ip & 0xFFFE_0000 != 0xC612_0000,       // 198.18.0.0/15
+                  ip != 0 else { continue }
+
             var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             guard getnameinfo(
                 sa, socklen_t(sa.pointee.sa_len),

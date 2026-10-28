@@ -150,10 +150,6 @@ struct OptionsView: View {
         Int(portText).map(ServerPort.allowed.contains) ?? false
     }
 
-    private var remoteOn: Bool {
-        runnerAdmin.visibility.map { $0 != .local } ?? false
-    }
-
     private var busy: Bool { runnerAdmin.pairing || runnerAdmin.changingVisibility }
 
     /// Settings › 远程服务: relays this phone is bound to.
@@ -199,16 +195,6 @@ struct OptionsView: View {
             }
 
             visibilityRow
-
-            if runner.isRunning {
-                CopyRow(title: L10n.ui(.localAddress), systemImage: "iphone",
-                        value: "127.0.0.1:\(appState.serverPort)")
-                if remoteOn {
-                    CopyRow(title: L10n.ui(.lanAddress), systemImage: "wifi",
-                            value: AppState.wifiAddress().map { "\($0):\(appState.serverPort)" },
-                            placeholder: L10n.ui(.noWiFi))
-                }
-            }
         } header: {
             Text(L10n.ui(.connectionSection))
         } footer: {

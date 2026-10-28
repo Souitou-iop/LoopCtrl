@@ -58,12 +58,22 @@ final class RunnerAdmin: ObservableObject {
     @Published private(set) var clients: [Client] = []
     /// Who can reach the runner right now, from its `config`; nil until known.
     @Published private(set) var visibility: Visibility?
+    /// Where clients can reach the service, as the runner reports it
+    /// (`config` → `lan_addresses`), best first. Empty when there is no LAN at
+    /// all — cellular only, or a tunnel whose address nobody else can reach.
+    @Published private(set) var lanAddresses: [LANAddress] = []
     /// Nearby discovery is switched on but not advertising yet (waiting for
     /// Wi-Fi or permission): `visibility` says what was chosen, this says it
     /// is not in effect.
     @Published private(set) var nearbyPending = false
     /// The runner reported that iOS refused it Local Network access.
     @Published private(set) var localNetworkDenied = false
+
+    /// One reachable address with the runner's own label for it (Wi-Fi, Hotspot).
+    struct LANAddress: Equatable {
+        let label: String
+        let address: String
+    }
 
     /// The runner's reach, widest first. Only local is safe from other devices.
     enum Visibility: Hashable {
@@ -115,6 +125,8 @@ final class RunnerAdmin: ObservableObject {
             let result = try await client.call("config")
             clients = Self.parseClients(result["sessions"])
             visibility = Self.parseVisibility(result)
+            let lan = Self.parseLANAddresses(result["lan_addresses"])
+            if lan != lanAddresses { lanAddresses = lan }
             applyPairing(result["pairing"])
             let relay = Self.parseRelayPreApprovals(result["relay_preapprovals"])
             if relay != relayPreApprovals { relayPreApprovals = relay }
@@ -466,6 +478,19 @@ final class RunnerAdmin: ObservableObject {
         guard remote else { return .local }
         let nearby = config["nearby"] as? [String: Any]
         return (nearby?["enabled"] as? Bool) == true ? .lanAndNearby : .lan
+    }
+
+    /// The addresses the runner says peers can reach it on. Reading Wi-Fi here
+    /// instead would be both narrower and wrong in the common case: the runner
+    /// is the process holding the port, and its list already skips tunnels and
+    /// cellular — a proxy's TUN typically carries an address nobody else can
+    /// reach, which is exactly what must NOT end up in a control-page link.
+    private static func parseLANAddresses(_ value: Any?) -> [LANAddress] {
+        let rows = value as? [[String: Any]] ?? []
+        return rows.compactMap { row in
+            guard let address = row["address"] as? String, !address.isEmpty else { return nil }
+            return LANAddress(label: row["label"] as? String ?? "", address: address)
+        }
     }
 
     private static func parseClients(_ value: Any?) -> [Client] {
