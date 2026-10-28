@@ -367,6 +367,7 @@ The reference implementations are `Scripts/loopctrl_rpc.py` and `cli/main.c`.
 
 [`docs/research/`](docs/research/) has measurements and designs behind the
 manual: [control speed and accuracy](docs/research/control-speed-accuracy.md),
+[decision models as a fast executor](docs/research/jev-decision-models.md),
 the [cross-app playbook design](docs/research/operation-playbook-design.md),
 [how app knowledge is kept](docs/research/app-knowledge-workflow.md) and the
 [SKILL.md A/B test](docs/research/skill-ab-test.md) (kit in
@@ -475,6 +476,8 @@ make ipa                     # → LoopCtrl.ipa
 
 Apache License 2.0, see [`LICENSE`](LICENSE). [`NOTICE.md`](NOTICE.md) has
 the copyright notices and the third-party components.
+LoopCtrl was split from [iCTRL](https://github.com/OpenMinis/iCTRL), and
+[`NOTICE.md`](NOTICE.md) also records that lineage.
 
 Pairing and mounting are built on [idevice](https://github.com/jkcoxson/idevice)
 (MIT). [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN) is opened as a

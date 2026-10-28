@@ -358,7 +358,9 @@ make ipa                     # → LoopCtrl.ipa
 
 ## 许可证
 
-Apache License 2.0，见 [`LICENSE`](LICENSE)。版权声明和第三方组件见 [`NOTICE.md`](NOTICE.md)。
+Apache License 2.0，见 [`LICENSE`](LICENSE)。版权声明和第三方组件见
+[`NOTICE.md`](NOTICE.md)。本项目从 [iCTRL](https://github.com/OpenMinis/iCTRL)
+分支而来，沿革也记录在 [`NOTICE.md`](NOTICE.md)。
 
 配对和挂载基于 [idevice](https://github.com/jkcoxson/idevice)（MIT）；隧道通过 [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN)
 作为独立 App 调用；磁盘镜像在运行时从 [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage) 下载。
