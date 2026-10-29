@@ -130,6 +130,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 /* TopAppBar (small) */
 .topbar { flex: none; height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 16px; }
 .topbar img { width: 28px; height: 28px; border-radius: 7px; flex: none; }
+.title-wrap { min-width: 0; flex: 0 1 auto; display: flex; flex-direction: column; align-items: flex-start; }
 .titles { min-width: 0; flex: 0 1 auto; display: flex; flex-direction: column; align-items: flex-start; border: 0; background: transparent;
   padding: 4px 8px; margin-left: -6px; border-radius: 12px; text-align: left; cursor: pointer; transition: background .15s; }
 .titles:hover { background: var(--press); }
@@ -137,7 +138,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .titles .brand span { overflow: hidden; text-overflow: ellipsis; }
 .titles .chev { width: 16px; height: 16px; opacity: .55; flex: none; }
 .brand { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sub { font-size: 12px; color: var(--summary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.sub { font-size: 12px; color: var(--summary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; margin-left: 2px; max-width: 100%; }
 .sp { flex: 1; }
 .iconbtn { width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent; display: grid; place-items: center;
   cursor: pointer; color: var(--on-surface); transition: background .15s, transform .25s var(--spring), color .2s; position: relative; }
@@ -354,6 +355,23 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   .topbar .labeled { width: 40px !important; padding: 0 !important; justify-content: center; }
   .topbar .labeled svg { display: block !important; } .topbar .labeled .lbl { display: none !important; }
 }
+/* narrow phones: the status line gets its own row under the bar instead of
+   being clipped by the people pill and the tool buttons */
+@media (max-width: 760px) {
+  .topbar { flex-wrap: wrap; height: auto; min-height: 56px; padding-bottom: 4px; }
+  .title-wrap { display: contents; }
+  .sub { order: 10; flex: 0 0 calc(100% - 42px); margin-left: 42px; }
+}
+/* very narrow phones: keep the tool buttons on the first row; the status
+   line and the people pill share the second */
+@media (max-width: 375px) {
+  .sub { order: 9; flex: 1 1 auto; min-width: 0; }
+  .pill { order: 10; }
+}
+/* tiny phones: the people pill is the one thing that can go */
+@media (max-width: 340px) {
+  .pill { display: none; }
+}
 /* landscape phone: every point of height for the screen; tools stay right */
 @media (max-height: 520px) and (orientation: landscape) {
   .topbar { height: 44px; }
@@ -452,7 +470,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 <div class="app" id="app">
   <header class="topbar">
     <img src="remote/icon.png" alt="">
-    <button class="titles" id="title-btn" data-tip="devices"><span class="brand"><span id="name">LoopCtrl</span><svg class="chev" viewBox="0 0 24 24"><path d="M8 10l4 4 4-4"/></svg></span><span class="sub" id="sub"></span></button>
+    <div class="title-wrap"><button class="titles" id="title-btn" data-tip="devices"><span class="brand"><span id="name">LoopCtrl</span><svg class="chev" viewBox="0 0 24 24"><path d="M8 10l4 4 4-4"/></svg></span></button><span class="sub" id="sub"></span></div>
     <span class="sp"></span>
     <button class="pill" id="people" hidden><i class="pdot"></i><span class="long"></span><span class="short"></span></button>
     <button class="iconbtn" id="btn-rec" data-tip="record"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg><i class="badge" hidden></i></button>
