@@ -597,7 +597,7 @@ const T = {
   resetOrder: ["Reset", "恢复默认"],
   keepAwake: ["Keep awake", "保持唤醒"], off: ["Off", "关闭"],
   clipboard: ["Clipboard", "剪贴板"],
-  clipboardHint: ["Send text to the phone, or read what it copied", "把文字发到手机，或读取手机复制的内容"],
+  clipboardHint: ["Send text to the phone, or read what it copied (the phone briefly shows LoopCtrl)", "把文字发到手机，或读取手机复制的内容（手机会短暂切到 LoopCtrl）"],
   clipboardPlaceholder: ["Text to put on the phone's clipboard", "要放进手机剪贴板的文字"],
   sendToPhone: ["Send to phone", "发到手机"], readPhone: ["Read from phone", "读取手机"],
   copiedToPhone: ["Copied to the phone's clipboard", "已复制到手机剪贴板"],

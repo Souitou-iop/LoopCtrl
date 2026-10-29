@@ -2774,10 +2774,51 @@ class ActionHandler {
     }
 
     /// `clipboard {action:"get"|"set", text}`: the phone's system pasteboard.
+    /// iOS only lets an app touch the clipboard while it is in the foreground,
+    /// and a background write is dropped without an error. Bring LoopCtrl
+    /// forward briefly, do the work, then put the previous app back.
     /// Reading someone else's text may make iOS ask "Allow Paste" on the
-    /// phone; writing never prompts. The text is never written to the log.
+    /// phone. The text is never written to the log.
     private func clipboard(_ cmd: ActionCommand) -> ([String: JSONValue]?, JSONRPCError?) {
         let action = (cmd.action ?? "get").lowercased()
+        guard action == "get" || action == "set" else {
+            return (nil, JSONRPCError(code: -32602, message:
+                "clipboard action is 'get' or 'set'.", data: [
+                    "outcome": .string("not_sent"), "retry_safe": .bool(true),
+                ]))
+        }
+        if action == "set" && cmd.text == nil {
+            return (nil, JSONRPCError(code: -32602, message:
+                "clipboard set needs text.", data: [
+                    "outcome": .string("not_sent"), "retry_safe": .bool(true),
+                ]))
+        }
+
+        let host = Bundle.main.bundleIdentifier
+        let before = resolveForegroundBundleId()
+        let wasForeground = host.map { before == $0 } ?? true
+        var switched = false
+        if let host, !wasForeground {
+            if ForegroundApp.activateOrLaunchBundleID(host) {
+                for _ in 0..<12 {
+                    usleep(100_000)
+                    if resolveForegroundBundleId() == host { switched = true; break }
+                }
+            }
+        }
+        defer {
+            if switched, let before, before != host {
+                _ = ForegroundApp.activateOrLaunchBundleID(before)
+            }
+        }
+        if !wasForeground && !switched {
+            return (nil, JSONRPCError(code: -32603, message:
+                "The phone's clipboard is only available while LoopCtrl is in the foreground, "
+                + "and it could not be brought forward.", data: [
+                    "outcome": .string("not_sent"), "retry_safe": .bool(true),
+                ]))
+        }
+
         switch action {
         case "get":
             var text = ""
@@ -2793,14 +2834,10 @@ class ActionHandler {
                 "text": .string(shown),
                 "length": .int(text.count),
                 "truncated": .bool(truncated),
+                "switched_app": .bool(switched),
             ], nil)
         case "set":
-            guard let text = cmd.text else {
-                return (nil, JSONRPCError(code: -32602, message:
-                    "clipboard set needs text.", data: [
-                        "outcome": .string("not_sent"), "retry_safe": .bool(true),
-                    ]))
-            }
+            guard let text = cmd.text else { return (nil, .invalidParams) }
             var raised: String?
             onMain {
                 raised = ObjCException.catching { UIPasteboard.general.string = text }
@@ -2810,12 +2847,10 @@ class ActionHandler {
                 "message": .string("Copied \(text.count) characters to the phone's clipboard"),
                 "length": .int(text.count),
                 "outcome": .string("applied"),
+                "switched_app": .bool(switched),
             ], nil)
         default:
-            return (nil, JSONRPCError(code: -32602, message:
-                "clipboard action is 'get' or 'set'.", data: [
-                    "outcome": .string("not_sent"), "retry_safe": .bool(true),
-                ]))
+            return (nil, .invalidParams)
         }
     }
 

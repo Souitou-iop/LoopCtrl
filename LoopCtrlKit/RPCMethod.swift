@@ -306,7 +306,7 @@ struct RPCMethodRegistry {
         ),
         RPCMethodDef(
             name: "clipboard",
-            description: "Read or write the phone's system clipboard. action:'set' with text copies text onto the phone so it can be pasted there; action:'get' returns what the phone copied (up to 100000 characters). Reading another app's text may show iOS's Allow Paste prompt on the phone. The text is never written to LoopCtrl's log.",
+            description: "Read or write the phone's system clipboard. action:'set' with text copies text onto the phone so it can be pasted there; action:'get' returns what the phone copied (up to 100000 characters). iOS only allows this while LoopCtrl is in the foreground, so the runner brings LoopCtrl forward briefly and puts the previous app back (switched_app:true). Reading another app's text may show iOS's Allow Paste prompt on the phone. The text is never written to LoopCtrl's log.",
             params: [
                 RPCParamDef(name: "action", type: "string", required: false, description: "'get' (default) or 'set'"),
                 RPCParamDef(name: "text", type: "string", required: false, description: "Text to put on the phone's clipboard (with action:'set')"),
