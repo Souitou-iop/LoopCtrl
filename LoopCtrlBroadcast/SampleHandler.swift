@@ -43,11 +43,21 @@ final class SampleHandler: RPBroadcastSampleHandler {
     private var newest: (pixels: CVPixelBuffer, orientation: CGImagePropertyOrientation)?
     /// Pixels per point, read once: UIKit belongs to the main thread.
     private var scale: Double = 3
+    /// The screen in points, read once on the main thread. ReplayKit hands
+    /// over a video buffer that is already scaled (884×1920 here, not the
+    /// screen's 1206×2622), so buffer pixels divided by nativeScale is NOT
+    /// the tap space: it made every tap land up and to the left of the
+    /// finger. The tap space is nativeBounds / nativeScale.
+    private var screenPoints = CGSize.zero
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
-        let scale = Double(UIScreen.main.nativeScale)
+        let screen = UIScreen.main
+        let scale = Double(screen.nativeScale)
+        let points = CGSize(width: screen.nativeBounds.width / scale,
+                            height: screen.nativeBounds.height / scale)
         queue.async {
             self.scale = scale
+            self.screenPoints = points
             self.lostSince = CACurrentMediaTime()
             self.connect()
             self.watch()
@@ -146,6 +156,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
             }
             for spec in wanted {
                 let lane = lanes[spec.id] ?? EncoderLane(id: spec.id, queue: queue, scale: scale,
+                                                         screenPoints: screenPoints,
                                                          output: { [weak self] in self?.send($0, counted: true) })
                 lanes[spec.id] = lane
                 lane.apply(spec)
@@ -237,6 +248,7 @@ private final class EncoderLane {
     let id: UInt32
     private let queue: DispatchQueue
     private let scale: Double
+    private let screenPoints: CGSize
     private let output: (Data) -> Void
     /// The whole screen in points, as it is turned now.
     private var points = (width: 0.0, height: 0.0)
@@ -254,10 +266,12 @@ private final class EncoderLane {
     private var configSent = false
     private var failures = 0
 
-    init(id: UInt32, queue: DispatchQueue, scale: Double, output: @escaping (Data) -> Void) {
+    init(id: UInt32, queue: DispatchQueue, scale: Double, screenPoints: CGSize,
+         output: @escaping (Data) -> Void) {
         self.id = id
         self.queue = queue
         self.scale = scale
+        self.screenPoints = screenPoints
         self.output = output
     }
 
@@ -280,7 +294,19 @@ private final class EncoderLane {
         guard let spec, !spec.hold else { return nil }
         if !forceKey, lastAt > 0, Double(now - lastAt) < 1_000_000 / spec.fps * 0.9 { return nil }
         guard let upright = turn(pixels, orientation: orientation) else { return nil }
-        let turned = (Double(CVPixelBufferGetWidth(upright)) / scale, Double(CVPixelBufferGetHeight(upright)) / scale)
+        // The tap space comes from the screen, never from this buffer: the
+        // buffer is already scaled by ReplayKit. Swap only when the picture
+        // is turned relative to the screen.
+        let turned: (Double, Double)
+        if screenPoints.width > 0, screenPoints.height > 0 {
+            let bufferLandscape = CVPixelBufferGetWidth(upright) > CVPixelBufferGetHeight(upright)
+            let screenLandscape = screenPoints.width > screenPoints.height
+            turned = bufferLandscape == screenLandscape
+                ? (Double(screenPoints.width), Double(screenPoints.height))
+                : (Double(screenPoints.height), Double(screenPoints.width))
+        } else {
+            turned = (Double(CVPixelBufferGetWidth(upright)) / scale, Double(CVPixelBufferGetHeight(upright)) / scale)
+        }
         if turned != points {
             points = turned
             configSent = false   // tap space changed: say so with the next frame

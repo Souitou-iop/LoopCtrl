@@ -84,6 +84,12 @@ final class ScreenStream {
     private var pools: [Size: CVPixelBufferPool] = [:]
     /// The extension, while a broadcast is running and taken.
     private var broadcast: BroadcastLink?
+    /// The extension's connection between accept and its hello. It has to be
+    /// held somewhere: every handler the link installs refers back weakly, so
+    /// a local in `offered` would be deallocated before the hello is read and
+    /// the broadcast would never start (only "connected" in the log, the
+    /// stream still on screenshots).
+    private var pendingBroadcast: BroadcastLink?
     private var broadcastListener: NWListener?
     private var broadcastSync: DispatchSourceTimer?
     private var lastLanes: [BroadcastWire.Lane] = []
@@ -334,7 +340,11 @@ final class ScreenStream {
                     return
                 }
                 self.log(String(format: "system broadcast: connected (screen captured after %.1f s)", waited))
+                // A retry can arrive before the previous connection's close
+                // callback; drop that one rather than leaking it.
+                self.pendingBroadcast?.cancel()
                 let link = BroadcastLink(connection: connection, queue: self.queue, stream: self)
+                self.pendingBroadcast = link
                 link.start()
             }
         }
@@ -342,6 +352,7 @@ final class ScreenStream {
 
     fileprivate func broadcastStarted(_ link: BroadcastLink) {
         guard broadcast == nil else { return link.stop() }
+        if pendingBroadcast === link { pendingBroadcast = nil }
         broadcast = link
         log("system broadcast started: the screen now comes from iOS")
         for lane in lanes { lane.restart(nil) }
@@ -352,6 +363,12 @@ final class ScreenStream {
         timer.resume()
         broadcastSync = timer
         sendStateToViewers()
+    }
+
+    /// A connection that closed before saying hello (the extension gave up,
+    /// or a newer one replaced it). Only the pending slot is affected.
+    fileprivate func broadcastLinkClosed(_ link: BroadcastLink) {
+        if pendingBroadcast === link { pendingBroadcast = nil }
     }
 
     fileprivate func broadcastEnded(_ link: BroadcastLink) {
@@ -1211,11 +1228,15 @@ private final class BroadcastLink {
         })
     }
 
+    /// Drop this connection without telling the extension to end its
+    /// broadcast: used when a newer connection replaces it.
+    func cancel() { close() }
+
     private func close() {
         guard !closed else { return }
         closed = true
         connection.cancel()
-        if started { stream.broadcastEnded(self) }
+        if started { stream.broadcastEnded(self) } else { stream.broadcastLinkClosed(self) }
     }
 }
 
