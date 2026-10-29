@@ -539,6 +539,7 @@ const T = {
   noVideo: ["The screen is unavailable: %s", "画面不可用：%s"],
   waitingFrame: ["Waiting for the screen…", "正在等待画面…"],
   relay: ["Relay", "中继"], direct: ["Direct", "直连"], offline: ["Offline", "未连接"],
+  srcCapture: ["Screenshots", "截图"], srcBroadcast: ["Screen recording", "系统录屏"],
   home: ["Home", "主屏幕"], app: ["Open app", "打开 App"], keyboard: ["Type", "键盘输入"], wire: ["Outlines", "元素轮廓"],
   tree: ["View tree", "视图树"], full: ["Full screen", "全屏"],
   settings: ["Screen settings", "画面设置"], record: ["Record", "录制操作"], refresh: ["Refresh", "刷新"], close: ["Close", "关闭"],
@@ -761,7 +762,14 @@ let lastRTT = 0;
 // it everything queued behind it (acknowledgements, the next stream ticket).
 // Give up after a while: the retry gets a fresh connection.
 const RPC_TIMEOUT = { stream_ack: 4000, stream_ticket: 8000 };
-async function rpc(method, params = {}, retry = true) {
+// The direct path: a page that came through the relay talks to the phone on
+// the LAN when both are on one (Chrome and Edge ask once to allow the local
+// network; other browsers refuse an http address from an https page, and the
+// relay carries on). apiBase is "" for this page's own origin.
+let apiBase = "";
+const LAN_FETCH = { targetAddressSpace: "local" };
+const via = (base) => base ? LAN_FETCH : {};
+async function rpc(method, params = {}, retry = true, base = apiBase) {
   if (!key) throw new AuthError("not paired");
   const nonce = random(16), ts = Math.floor(Date.now() / 1000 + clockSkew);
   const body = enc.encode(JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }));
@@ -773,10 +781,12 @@ async function rpc(method, params = {}, retry = true) {
   const abort = new AbortController(), timer = setTimeout(() => abort.abort(), limit);
   let r, j;
   try {
-    r = await fetch("rpc", { method: "POST", headers: { "Content-Type": "application/json" }, signal: abort.signal,
-      body: JSON.stringify({ v: 1, tok, ts, nonce: hex(nonce), ct: b64(ct), tag: hex(tag) }) });
+    r = await fetch(base + "rpc", { method: "POST", headers: { "Content-Type": "application/json" }, signal: abort.signal,
+      body: JSON.stringify({ v: 1, tok, ts, nonce: hex(nonce), ct: b64(ct), tag: hex(tag) }), ...via(base) });
     j = await r.json().catch(() => ({}));
   } catch (e) {
+    // The LAN went away under us: the relay from now on.
+    if (base && base === apiBase) dropDirect("rpc: " + (e.message || e));
     throw new Error(abort.signal.aborted ? "no answer from the phone" : (e.message || String(e)));
   } finally { clearTimeout(timer); }
   lastRTT = performance.now() - started;
@@ -784,7 +794,7 @@ async function rpc(method, params = {}, retry = true) {
     const e = j.error || {};
     if (e.code === "ts_skew" && e.server_ts && retry) {
       clockSkew = e.server_ts - Date.now() / 1000;
-      return rpc(method, params, false);
+      return rpc(method, params, false, base);
     }
     throw new AuthError(e.message || "key rejected");
   }
@@ -840,7 +850,8 @@ function setMessage(text, spinning = true) {
 // WebCodecs: lowest latency; only in secure contexts.
 class CodecPlayer {
   static ok() { return typeof VideoDecoder === "function" && window.isSecureContext; }
-  constructor() { this.ctx = videoCanvas.getContext("2d"); this.decoder = null; this.needKey = true; this.conf = null; this.waiting = 0; }
+  constructor() { this.ctx = videoCanvas.getContext("2d"); this.decoder = null; this.needKey = true; this.conf = null; this.waiting = 0; this.shown = 0; }
+  presented() { return this.shown; }
   async configure(cfg) {
     this.close();
     const conf = { codec: cfg.codec, description: unb64(cfg.description), optimizeForLatency: true };
@@ -861,6 +872,7 @@ class CodecPlayer {
         checkGeometry(f, this.size, this.conf.codec);
         this.ctx.drawImage(f, 0, 0, videoCanvas.width, videoCanvas.height);
         f.close();
+        this.shown++;
         frameShown();
       },
       error: (e) => { note("decoder error", (e && e.message) || ""); this.decoder = null; this.needKey = true; askKeyframe(); },
@@ -900,6 +912,12 @@ class CodecPlayer {
 class MsePlayer {
   static ok() { return !!(window.ManagedMediaSource || window.MediaSource); }
   constructor() { this.queue = []; this.sb = null; this.seq = 1; this.time = 0; this.needKey = true; }
+  // What the video element painted, not what was handed to it: a media
+  // element that errs or stalls keeps taking data and shows none of it.
+  presented() {
+    const q = mse.getVideoPlaybackQuality ? mse.getVideoPlaybackQuality() : null;
+    return q ? q.totalVideoFrames : decoded;
+  }
   configure(cfg) {
     this.close();
     const MS = window.ManagedMediaSource || window.MediaSource;
@@ -1088,9 +1106,82 @@ setInterval(() => {
   if (streamAbort && lastMessageAt && performance.now() - lastMessageAt > 10000 && !document.hidden) {
     lastMessageAt = 0;
     note("watchdog", "nothing for 10 s: reconnecting");
-    runStream();
+    if (apiBase) dropDirect("silent for 10 s"); else runStream();
   }
 }, 2000);
+// The picture, end to end. Frames that arrive and never reach the screen (a
+// decoder or media element that stopped without an error) get a new player;
+// an action that brings no new frame asks the phone for one, which also has
+// it restart an encoder that died; and if even that brings nothing, a new
+// stream. Whatever broke, the picture comes back without a reload.
+let framesIn = 0, lastFrameAt = 0, lastConfig = null;
+let seenIn = 0, seenShown = 0, stuckSince = 0, resets = [];
+setInterval(() => {
+  if (!player || !player.presented || !streamAbort || document.hidden) { stuckSince = 0; return; }
+  const shown = player.presented(), now = performance.now();
+  if (framesIn !== seenIn && shown === seenShown) stuckSince = stuckSince || now;
+  else stuckSince = 0;
+  seenIn = framesIn; seenShown = shown;
+  if (!stuckSince || now - stuckSince < 3000) return;
+  stuckSince = 0;
+  resets = resets.filter((at) => now - at < 30000).concat(now);
+  if (resets.length > 2) { note("picture stuck", "again: new stream"); resets = []; runStream(); return; }
+  note("picture stuck", "frames arrive, none shown: new player");
+  if (player) player.close();
+  player = null;
+  if (lastConfig) onConfig(lastConfig).catch((e) => note("player", e.message || String(e)));
+  askKeyframe();
+}, 1000);
+let frameProbe = 0;
+function expectFrame() {
+  const since = framesIn;
+  clearTimeout(frameProbe);
+  frameProbe = setTimeout(() => {
+    if (framesIn !== since || !streamAbort || state.paused) return;
+    note("no frame after an action", "asking for one");
+    askKeyframe();
+    frameProbe = setTimeout(() => {
+      if (framesIn !== since || !streamAbort || state.paused) return;
+      note("still no frame", "new stream");
+      runStream();
+    }, 4000);
+  }, 1500);
+}
+// Try the phone's LAN addresses (from its state) when this page came through
+// the relay; every 20 s at most, and not again while one works.
+let lanEndpoints = [], lanTryAt = 0, lanTrying = false;
+async function tryDirect() {
+  if (!relayed || apiBase || lanTrying || !key || !lanEndpoints.length || performance.now() < lanTryAt) return;
+  lanTrying = true;
+  // Soon again: the first try may have been waiting on the browser's prompt.
+  lanTryAt = performance.now() + 20000;
+  try {
+    for (const ep of lanEndpoints) {
+      const base = "http://" + ep + "/";
+      try {
+        const t0 = performance.now();
+        // Answered under this page's key: it is this phone, not some other
+        // device at the same address.
+        await Promise.race([rpc("device_info", {}, true, base),
+          new Promise((_, no) => setTimeout(() => no(new Error("timeout")), 3000))]);
+        apiBase = base;
+        note("direct", ep + " (" + Math.round(performance.now() - t0) + " ms)");
+        renderSub();
+        runStream();
+        return;
+      } catch (e) { note("direct unavailable", ep + ": " + (e.message || e)); }
+    }
+  } finally { lanTrying = false; }
+}
+function dropDirect(why) {
+  if (!apiBase) return;
+  note("back to the relay", why);
+  apiBase = "";
+  lanTryAt = performance.now() + 60000;
+  renderSub();
+  runStream();
+}
+
 async function runStream() {
   const gen = ++streamGen;
   if (streamAbort) streamAbort.abort();
@@ -1106,8 +1197,9 @@ async function runStream() {
       const quality = settings.quality;
       const encrypted = !!SUBTLE;
       const codec = await wantedCodec();
-      const r = await fetch("stream?ticket=" + encodeURIComponent(ticket) + "&quality=" + quality + "&codec=" + codec + "&ack=1" +
-        (encrypted ? "&enc=1" : ""), { signal: abort.signal, cache: "no-store" });
+      const base = apiBase;
+      const r = await fetch(base + "stream?ticket=" + encodeURIComponent(ticket) + "&quality=" + quality + "&codec=" + codec + "&ack=1" +
+        (encrypted ? "&enc=1" : ""), { signal: abort.signal, cache: "no-store", ...via(base) });
       if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
       lastMessageAt = performance.now();
       setLink(true);
@@ -1119,6 +1211,7 @@ async function runStream() {
       if (gen !== streamGen) return;
       if (e instanceof AuthError) return needPair();
       note("stream error", (e && e.message) || String(e));
+      if (apiBase) { dropDirect("stream: " + ((e && e.message) || e)); continue; }
       setLink(false);
       setMessage(t("noVideo", e.message || e), false);
     }
@@ -1163,6 +1256,7 @@ async function readStream(reader, gen) {
         const view = new DataView(payload.buffer, payload.byteOffset);
         const ts = view.getUint32(1) * 4294967296 + view.getUint32(5);
         noteArrival(ts);
+        framesIn++; lastFrameAt = performance.now();
         player.frame((payload[0] & 1) === 1, ts, payload.subarray(9));
       }
     }
@@ -1172,6 +1266,7 @@ async function readStream(reader, gen) {
 
 async function onConfig(cfg) {
   note("config", cfg.codec + " " + cfg.width + "x" + cfg.height);
+  lastConfig = cfg;
   if (cfg.point_width) points = { w: cfg.point_width, h: cfg.point_height };
   codecName = /^(hvc1|hev1)/.test(cfg.codec || "") ? "H.265" : "H.264";
   screenEl.style.setProperty("--ar", cfg.width / cfg.height);
@@ -1411,7 +1506,7 @@ async function pumpActions() {
   acting = true;
   while (actions.length) {
     const [method, params] = actions.shift();
-    try { await rpc(method, params); }
+    try { await rpc(method, params); expectFrame(); }
     catch (e) { if (!actionFailed(method, e)) break; }
     if (treeOpen() || wireOn()) scheduleTree(500);
   }
@@ -1435,7 +1530,7 @@ function actionFailed(method, e) {
 // ───────────────────────────── control ─────────────────────────────
 // Anyone paired may operate; the pill says how many watch and operate, and
 // opens everyone's own log of actions.
-let state = { paused: false, people: [], hidden: false };
+let state = { paused: false, people: [], hidden: false, source: "" };
 let pageVersion = 0;
 function onState(s) {
   const was = state;
@@ -1444,7 +1539,11 @@ function onState(s) {
     if (!pageVersion) pageVersion = s.page;
     else if (s.page !== pageVersion) { pageVersion = s.page; snack(t("pageUpdated"), [t("reload"), () => location.reload()], true); }
   }
-  state = { paused: !!s.paused, people: Array.isArray(s.people) ? s.people : [], hidden: !!s.hidden };
+  state = { paused: !!s.paused, people: Array.isArray(s.people) ? s.people : [], hidden: !!s.hidden, source: s.source || "" };
+  if (state.source !== was.source) { if (was.source) note("source", state.source); renderSub(); }
+  lanEndpoints = Array.isArray(s.lan) ? s.lan.filter((e) => typeof e === "string") : [];
+  if (apiBase && !lanEndpoints.some((e) => apiBase === "http://" + e + "/")) dropDirect("the phone left the LAN");
+  else tryDirect();
   hiddenScreen = state.hidden && !state.paused;
   $("paused-msg").hidden = !state.paused;
   $("paused-msg").querySelector("span").textContent = t("paused");
@@ -1834,7 +1933,9 @@ async function copyDiagnostics() {
     page: pageVersion, browser: navigator.userAgent, secure: window.isSecureContext,
     player: player ? player.constructor.name : null, codec_setting: settings.codec, quality: settings.quality,
     decoded_frames: decoded, shown_at: shownAt ? Math.round(shownAt) : 0, now: Math.round(performance.now()),
-    hevc_ok: hevcOK, link: $("sub").textContent, frame: diag.frame || null, events: diag.events,
+    hevc_ok: hevcOK, link: $("sub").textContent, direct: apiBase || null, lan: lanEndpoints, source: state.source,
+    frames_in: framesIn, presented: player && player.presented ? player.presented() : null,
+    frame: diag.frame || null, events: diag.events,
   }, null, 1);
   try { await navigator.clipboard.writeText(text); }
   catch (_) {
@@ -1962,7 +2063,10 @@ let relayed = location.protocol === "https:", linkUp = false;
 function setLink(up) { linkUp = up; renderSub(); renderDevices(); }
 let lastDecoded = 0, fps = 0, codecName = "";
 function renderSub() {
-  const parts = [linkUp ? t(relayed ? "relay" : "direct") : t("offline")];
+  const parts = [linkUp ? t(relayed && !apiBase ? "relay" : "direct") : t("offline")];
+  // How the phone takes its screen: screenshots, or the system's screen
+  // recording while one runs (docs/remote-control.md, "System broadcast").
+  if (linkUp && state.source) parts.push(t(state.source === "broadcast" ? "srcBroadcast" : "srcCapture"));
   if (linkUp && shownAt) parts.push(codecName, fps + " fps", Math.round(lastRTT) + " ms");
   $("sub").textContent = parts.join(" · ");
 }
@@ -1970,10 +2074,17 @@ setInterval(() => {
   fps = decoded - lastDecoded; lastDecoded = decoded; renderSub();
   if (player && player.check) player.check();   // also when frames stop coming
 }, 1000);
+// A quick look at another tab or window keeps the stream: a new one would
+// cost a keyframe and start its bitrate low again, every time. Only a page
+// hidden for a while lets it go.
+let hideTimer = 0;
 document.addEventListener("visibilitychange", () => {
   note("page " + document.visibilityState, "");
   if (!key) return;
-  if (document.hidden) stopStream(); else runStream();
+  clearTimeout(hideTimer);
+  if (document.hidden) hideTimer = setTimeout(stopStream, 15000);
+  else if (streamAbort) askKeyframe();   // frames may have been skipped meanwhile
+  else runStream();
 });
 
 // ───────────────────────────── devices ─────────────────────────────

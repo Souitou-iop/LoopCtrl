@@ -19,6 +19,8 @@ struct SettingsView: View {
     @State private var showMountSheet = false
     @State private var showOptions = false
     @State private var showAddRemote = false
+    /// Settings › System broadcast; re-read when Settings closes.
+    @State private var broadcastOn = SystemBroadcast.enabled
     /// DEBUG `-remoteShow list|connection`: a 远程服务 page pushed at launch.
     @State private var debugRemotePage: String?
     @EnvironmentObject private var remote: RemoteServiceStore
@@ -175,6 +177,7 @@ struct SettingsView: View {
     }
 
     private func refresh() {
+        broadcastOn = SystemBroadcast.enabled
         ddi = DeveloperDiskImage.status()
         hasPairingFile = PairingFileStore.exists
     }
@@ -258,6 +261,12 @@ struct SettingsView: View {
                         AddressRow(title: L10n.ui(.lanAddress), address: nil)
                     }
                 }
+                #if LOOPCTRL_ALL_IN_ONE
+                if broadcastOn {
+                    Divider().padding(.leading, 16)
+                    BroadcastRow()
+                }
+                #endif
                 Divider().padding(.leading, 16)
                 HStack {
                     Text(L10n.ui(.remoteAccess))

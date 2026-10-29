@@ -80,6 +80,10 @@ targets:
       - target: LoopCtrlLiveActivity
         embed: true
         codeSign: true
+      # The system broadcast (docs/remote-control.md, "System broadcast").
+      - target: LoopCtrlBroadcast
+        embed: true
+        codeSign: true
     settings:
       base:
         # Its own product name: the LoopCtrl target still gets built (the UI test
@@ -167,6 +171,32 @@ targets:
   # Pause / Resume, on the Lock Screen and in the Dynamic Island. Embedded in
   # the all-in-one app only: there the runner shares the app's process, which
   # is what may start a Live Activity and what the buttons' intents run in.
+  # The system broadcast: iOS hands it the screen as it is drawn, and it
+  # passes the encoded frames to the runner over loopback. Embedded in the
+  # all-in-one app only, where the switch that turns it on lives.
+  LoopCtrlBroadcast:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: LoopCtrlBroadcast
+        excludes:
+          - Info.plist
+      - path: LoopCtrlKit/BroadcastWire.swift
+    dependencies:
+      - sdk: ReplayKit.framework
+      - sdk: VideoToolbox.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(LOOPCTRL_BUNDLE_PREFIX).loopctrl$(LOOPCTRL_BUNDLE_SUFFIX).broadcast"
+        INFOPLIST_FILE: LoopCtrlBroadcast/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "$(LOOPCTRL_DISPLAY_NAME)"
+        MARKETING_VERSION: "0.3.0"
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+
   LoopCtrlLiveActivity:
     type: app-extension
     platform: iOS
@@ -212,6 +242,7 @@ targets:
       - path: LoopCtrlKit/AuthManager.swift
       - path: LoopCtrlKit/KeychainStore.swift
       - path: LoopCtrlKit/TokenFileStore.swift
+      - path: LoopCtrlKit/BroadcastWire.swift
       - path: Tests/LoopCtrlKitTests
     settings:
       base:

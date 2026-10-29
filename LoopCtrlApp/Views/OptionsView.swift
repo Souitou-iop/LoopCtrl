@@ -18,6 +18,7 @@ struct OptionsView: View {
     @State private var logCount = AppLog.allFiles().count
     @State private var portText = String(ServerPort.stored)
     @State private var movingPort = false
+    @State private var broadcastOn = SystemBroadcast.enabled
 
     @State private var pendingRevoke: RunnerAdmin.Client?
     @State private var confirmRevokeOthers = false
@@ -41,6 +42,9 @@ struct OptionsView: View {
                 .listRowBackground(Color.clear)
 
                 connectionSection
+                #if LOOPCTRL_ALL_IN_ONE
+                broadcastSection
+                #endif
                 remoteServiceSection
                 setupSection
                 clientsSection
@@ -151,6 +155,21 @@ struct OptionsView: View {
     }
 
     private var busy: Bool { runnerAdmin.pairing || runnerAdmin.changingVisibility }
+
+    /// The screen from the system broadcast instead of screenshots, while one
+    /// runs (started from the home card).
+    private var broadcastSection: some View {
+        Section {
+            Toggle(isOn: Binding(get: { broadcastOn }, set: { on in
+                broadcastOn = on
+                SystemBroadcast.set(on)
+            })) {
+                Label(L10n.ui(.broadcastToggle), systemImage: "record.circle")
+            }
+        } footer: {
+            Text(L10n.ui(.broadcastFooter))
+        }
+    }
 
     /// Settings › 远程服务: relays this phone is bound to.
     private var remoteServiceSection: some View {

@@ -670,7 +670,12 @@ class JSONRPCServer {
             handleRPC(body: body, exchange: exchange(connection, headers: headers))
 
         case ("OPTIONS", _):
-            sendHTTPResponse(connection: connection, status: 200, headers: corsHeaders(), body: "")
+            // The control page served by the relay may reach the phone
+            // directly on the LAN; browsers that still ask before a public
+            // page talks to a private address want this answer.
+            var headers = corsHeaders()
+            headers["Access-Control-Allow-Private-Network"] = "true"
+            sendHTTPResponse(connection: connection, status: 200, headers: headers, body: "")
 
         default:
             sendHTTPResponse(connection: connection, status: 404, body: "Not Found")

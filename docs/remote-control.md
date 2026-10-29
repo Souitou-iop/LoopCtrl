@@ -105,7 +105,7 @@ len u32 (big-endian, covers type + payload) | type u8 | payload
 | 0 | `HELLO` | JSON, always in the clear: `{"v": 1, "enc": "none" \| "aes-256-gcm", "salt": "<hex>", "viewer": "<id>"}` |
 | 1 | `CONFIG` | JSON: `{"codec": "avc1.64002a" \| "hvc1.1.6.L120.B0", "width", "height", "point_width", "point_height", "description": "<base64 avcC or hvcC>"}` |
 | 2 | `FRAME` | `flags u8` (bit 0: keyframe) `| ts u64` (microseconds) `| access unit` (length-prefixed NAL units) |
-| 3 | `STATE` | JSON: `{"paused", "people": [{"tok", "name", "kind", "watching", "operating", "since", "actions"}], "hidden"}`, first after `HELLO` and again whenever it changes (see [Control](#control)) |
+| 3 | `STATE` | JSON: `{"paused", "people": [{"tok", "name", "kind", "watching", "operating", "since", "actions"}], "hidden", "lan": ["<ip:port>"]}`, first after `HELLO` and again whenever it changes (see [Control](#control)); `lan` lists where the phone answers on the LAN, when it does (see [Direct on the LAN](#direct-on-the-lan)) |
 
 With `enc=1` the runner derives `key = HMAC-SHA256(K, "loopctrl-stream-v1" || salt)`
 from the pairing key `K` the ticket was minted for, and every message after
@@ -120,17 +120,36 @@ frame rate, and hand each frame to the encoder without waiting for it; a frame
 whose capture finishes after a later one's is dropped. Measured on an iPhone
 17: one capture takes 29 ms alone and 34 ms when two overlap, so two workers
 reach about 45–50 fps and three about 60. If captures keep failing with several
-workers, the runner drops to one.
+workers, the runner drops to one. While the screen has not changed for a
+second, it is looked at 10 times a second instead, and at the full rate again
+as soon as it changes or an action lands: each capture is a full screenshot,
+and sixty a second of a still screen only warm the phone, which then captures
+slower (seen: 200 ms a capture instead of 50).
 
 `CONFIG` comes first and again whenever the encoder restarts (rotation,
-quality or codec change). A new client starts at a keyframe. An unchanged
-screen sends nothing. When a client can't keep up, the runner skips frames for
-it and resumes at the next keyframe.
+quality or codec change, or a restart after a failure). A new client starts at
+a keyframe. An unchanged screen sends nothing. When a client can't keep up,
+the runner skips frames for it and resumes at the next keyframe.
 
-**Codec.** One encoder serves every viewer, so it makes HEVC only when every
-viewer asked for `codec=hevc`, and H.264 otherwise (also when the phone can't
-make HEVC). The page asks for HEVC when its choice is Auto and the browser can
-decode it, or when the user picks H.265. HEVC needs roughly a third less
+**One encoder per viewer.** Each viewer gets an encoder of its own (its codec,
+its size, its bitrate), up to three; viewers beyond that share one that makes
+the same quality, HEVC only if all of them asked for it. So a viewer joining
+doesn't change what the others get, and one on a slow relay doesn't slow one
+on the LAN: its encoder simply takes no new frame while its frames queue.
+Each frame is captured once and drawn once per size, however many encoders
+take it.
+
+**Encoders that stop.** iOS invalidates a hardware encoder made while LoopCtrl
+was in front once LoopCtrl goes to the background (pressing Home from the
+page is enough); frames then go in and nothing comes out, with no error the
+stream would otherwise notice, while actions still work. So the runner starts
+every encoder afresh when LoopCtrl moves between foreground and background,
+and also starts a new one for any encoder that reports an error or has taken
+frames for a second without returning one.
+
+**Codec.** The page asks for HEVC when its choice is Auto and the browser can
+decode it, or when the user picks H.265; the runner makes H.264 when the phone
+can't make HEVC. HEVC needs roughly a third less
 bitrate for the same picture, which on a slow link means more frames and less
 delay.
 
@@ -168,6 +187,12 @@ things could otherwise leave the page showing an old picture for good:
   page starts a new stream when it has heard nothing for 10 s, and every
   request gives up after a while (4 s for acknowledgements, 8 s for a stream
   ticket, 20 s otherwise), so a retry gets a fresh connection.
+- Anything else that stops the picture while the stream goes on. The page
+  checks the whole path itself: frames that arrive for 3 s with none shown
+  get a new player (a third time within 30 s, a new stream); and an action
+  that brings no new frame within 1.5 s asks for a keyframe, which also has
+  the runner restart an encoder that died, and if nothing comes 4 s later
+  either, the page starts a new stream.
 
 Without acknowledgements, a link slower than the stream's bitrate builds
 seconds of delay (measured: 4 s at 720p over a 1.5 Mbit/s uplink); with them
@@ -176,6 +201,56 @@ it stays at a few hundred milliseconds, and the quality drops instead.
 The page decodes with WebCodecs where it can (secure contexts) and otherwise
 wraps each frame in fragmented MP4 (`avc1`/`hvc1`) for Media Source
 Extensions.
+
+## System broadcast
+
+Settings › System broadcast (all-in-one app only) adds a second way to get the
+screen: iOS's own screen broadcast (ReplayKit), started with one tap on the
+home screen's 系统录屏推流 row, which presses the system's broadcast button
+limited to LoopCtrl's extension. iOS starts a broadcast only that way, never
+on its own, and shows the red recording indicator while it runs. Until one is
+started, and the moment it ends, the stream takes screenshots as before.
+
+The extension (`LoopCtrlBroadcast`, a broadcast upload extension) gets each
+picture as iOS draws it, with no screenshot taken and no JPEG made: it turns
+it upright, scales it in hardware to each lane's size and encodes it there.
+The runner keeps everything else: viewers, acknowledgements, bitrate,
+keyframes and holding back for a viewer that falls behind. It tells the
+extension 20 times a second what each lane needs, and passes the frames it
+gets back to that lane's viewers. The format between them is in
+`LoopCtrlKit/BroadcastWire.swift`; the extension may use 50 MB, so it keeps
+only the newest picture (for a keyframe on a still screen, or a viewer who
+joins one) and drops frames the runner hasn't taken yet.
+
+They meet on loopback port 48300. No App Group is needed, so re-signing stays
+as it is. The runner takes one connection at a time, and only while the
+screen is being captured (`UIScreen.isCaptured`): another app could reach a
+loopback port, but not make the screen be recorded. Turning the switch off
+ends a running broadcast.
+
+## Direct on the LAN
+
+A page opened through the relay is served over HTTPS, which the browser needs
+for WebCodecs (the lowest-latency player). When the phone is on a LAN, its
+`STATE` lists where it answers there (`lan`, from the Wi-Fi or hotspot
+interface, only with remote access on). The page then tries each address
+with an ordinary `device_info` RPC, answered under the page's own pairing key,
+so a reply proves it is this phone. If one answers within 3 s, the page sends
+its RPC and its stream there instead of through the relay, and the subtitle
+says Direct.
+
+Chrome and Edge allow an HTTPS page to reach a private address over plain
+HTTP once the user allows local network access (the browser asks the first
+time); the page passes `targetAddressSpace: "local"`, and the runner answers
+the preflight with `Access-Control-Allow-Private-Network: true` and serves
+`/stream` with `Access-Control-Allow-Origin: *` (`/rpc` already had it; both
+are locked by the pairing key and the single-use ticket). Safari and Firefox
+refuse such requests, and those pages stay on the relay.
+
+A failed request, a stream that ends or falls silent, or an address that
+leaves `lan` sends the page back to the relay at once, and it tries the LAN
+again a minute later (20 s after a try that found nothing). Viewers on the LAN and on the relay each have their own
+encoder, so both get what their link carries.
 
 ## Control
 

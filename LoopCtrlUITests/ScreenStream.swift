@@ -4,23 +4,38 @@ import CoreVideo
 import Foundation
 import Network
 import QuartzCore
+import UIKit
 import VideoToolbox
 
 /// The live screen for `GET /stream` (docs/remote-control.md, "Stream").
 ///
-/// One capture loop and one encoder (H.264, or HEVC when every viewer can
-/// decode it) serve every viewer: frames are captured while anyone watches,
-/// skipped while the screen doesn't change, and fanned out to each viewer's
-/// connection. A viewer that can't keep up loses frames instead of queueing
-/// them, and picks up again at a keyframe.
+/// One capture loop serves every viewer; each viewer has an encoder of its
+/// own (a lane: its codec, its size, its bitrate), up to a few, after which
+/// viewers that ask for the same thing share one. A viewer on a slow relay
+/// and one on the LAN then no longer drag each other down, and one joining
+/// doesn't rebuild the others' encoder. Frames are captured while anyone
+/// watches and skipped while the screen doesn't change.
 ///
 /// Viewers that acknowledge frames (`stream_ack`) also keep the queue short
-/// end to end: no frame is captured while frames are queueing on the way to
-/// a viewer, and the bitrate follows what actually gets through. On a
-/// link slower than the stream, that is the difference between a fraction of
-/// a second and several seconds behind. Pausing the capture rather than
-/// dropping encoded frames keeps the picture whole: the next frame is an
-/// ordinary delta, not a keyframe the slow link would have to carry too.
+/// end to end: a lane encodes nothing while frames are queueing on the way
+/// to its viewer, and its bitrate follows what actually gets through. On a
+/// link slower than the stream, that is the difference between a fraction
+/// of a second and several seconds behind. Holding frames back before the
+/// encoder rather than dropping encoded ones keeps the picture whole: the
+/// next frame is an ordinary delta, not a keyframe the slow link would have
+/// to carry too.
+///
+/// An encoder can stop without a word: iOS invalidates one made while
+/// LoopCtrl was in front when it goes to the background, and from then on
+/// frames go in and nothing comes out. So a lane whose encoder errs or falls
+/// silent starts a new one, and every lane starts afresh when LoopCtrl
+/// moves between foreground and background.
+///
+/// With the system broadcast on (Settings › System broadcast) and running,
+/// the screen comes from iOS instead, through the LoopCtrlBroadcast extension:
+/// it encodes each lane (`BroadcastWire`) and the lanes here only pass its
+/// frames on, with everything else (acknowledgements, bitrate, keyframes) as
+/// before. Screenshots take over again the moment the broadcast ends.
 final class ScreenStream {
     static let shared = ScreenStream()
 
@@ -28,6 +43,10 @@ final class ScreenStream {
     static var onLog: ((String) -> Void)?
     /// How many are watching, whenever that changes (on the stream's queue).
     static var onViewersChange: ((Int) -> Void)?
+    /// Where the phone answers on the LAN ("192.168.1.5:8300"), best first;
+    /// empty without one. Sent with the state, so a page that came through
+    /// the relay can try the direct path. Set by the runner.
+    static var lanEndpoints: (() -> [String])?
 
     /// One screen frame in pixels, its JPEG bytes when the capture side
     /// produced them (equal bytes mean an unchanged screen), and pixels per
@@ -36,39 +55,45 @@ final class ScreenStream {
 
     private let queue = DispatchQueue(label: "top.ebato.loopctrl.screenstream")
     private var viewers: [String: Viewer] = [:]
-    private var quality: ScreenStreamRequest.Quality = .medium
-    private var codec: ScreenStreamRequest.Codec = .h264
+    private var lanes: [Lane] = []
+    private var nextLane = 1
+    /// Viewers beyond this share a lane (encoders aren't free).
+    private static let maxLanes = 3
     /// This device would not make HEVC once; H.264 from then on.
     private var hevcUnavailable = false
-    /// What the encoder aims for: the quality's rate, lowered while viewers
-    /// fall behind and raised again as they keep up.
-    private var bitrate = ScreenStreamRequest.Quality.medium.bitsPerSecond
     private var controller: DispatchSourceTimer?
-    private var calmTicks = 0
-    private static let minBitrate = 300_000
-    private static let startBitrate = 2_000_000
+    static let minBitrate = 300_000
+    static let startBitrate = 2_000_000
     private var activeWorkers = 0
     private var workerCount = 3
     private var nextSlot: CFTimeInterval = 0
     private var captureSeq: UInt64 = 0
     private var encodedSeq: UInt64 = 0
+    /// The newest capture's JPEG and when the screen last changed. A still
+    /// screen is looked at a few times a second instead of at the full
+    /// rate: each capture is a full-screen screenshot, and taking sixty a
+    /// second of an unchanging screen only heats the phone, which then
+    /// captures slower when it matters (a capture took 200 ms instead of 50
+    /// on a warm phone).
+    private var lastSeenJPEG: Data?
+    private var changedAt: CFTimeInterval = 0
+    private static let idleAfter: CFTimeInterval = 1
+    private static let idleFPS = 10.0
     private let wake = DispatchSemaphore(value: 0)
 
-    // Encoder state, on `queue`.
-    private var session: VTCompressionSession?
-    private var encodedSize: (width: Int, height: Int) = (0, 0)
-    private var pool: CVPixelBufferPool?
-    private var config: [String: Any]?
-    private var forceKeyframe = false
-    private var lastForcedAt: CFTimeInterval = 0
+    private var pools: [Size: CVPixelBufferPool] = [:]
+    /// The extension, while a broadcast is running and taken.
+    private var broadcast: BroadcastLink?
+    private var broadcastListener: NWListener?
+    private var broadcastSync: DispatchSourceTimer?
+    private var lastLanes: [BroadcastWire.Lane] = []
     private var lastHeartbeat: CFTimeInterval = 0
     static let heartbeatInterval: CFTimeInterval = 3
-    private var lastJPEG: Data?
     /// The last frame came out (nearly) black: an app that hides its screen
     /// from capture (banking, payment), so viewers fall back to outlines.
     private var screenHidden = false
-    private let started = CACurrentMediaTime()
-    private var frames = 0
+    private var pointSize: (Double, Double) = (0, 0)
+    let started = CACurrentMediaTime()
     private var statsSince = CACurrentMediaTime()
     // Where a frame's time goes, for the stats line in the log.
     private var captures = 0
@@ -76,7 +101,25 @@ final class ScreenStream {
     private var convertTime: CFTimeInterval = 0
     private var pausedTime: CFTimeInterval = 0
 
-    private func log(_ message: String) {
+    private init() {
+        // In front or not, LoopCtrl's encoders may not survive the move
+        // (see above): start them afresh either way.
+        for name in [UIApplication.didEnterBackgroundNotification, UIApplication.willEnterForegroundNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] note in
+                let into = note.name == UIApplication.didEnterBackgroundNotification ? "background" : "foreground"
+                self?.restartEncoders("LoopCtrl went to the \(into)")
+            }
+        }
+        NotificationCenter.default.addObserver(forName: InProcessRunnerControl.setBroadcast, object: nil, queue: nil) {
+            [weak self] note in
+            let on = note.userInfo?["on"] as? Bool ?? false
+            UserDefaults.standard.set(on, forKey: InProcessRunnerControl.broadcastKey)
+            self?.queue.async { self?.setBroadcast(on) }
+        }
+        queue.async { self.setBroadcast(UserDefaults.standard.bool(forKey: InProcessRunnerControl.broadcastKey)) }
+    }
+
+    func log(_ message: String) {
         NSLog("LoopCtrl stream: %@", message)
         Self.onLog?("🎥 " + message)
     }
@@ -89,56 +132,67 @@ final class ScreenStream {
                             codec: request.codec, acks: request.acks)
         queue.async {
             self.viewers[id] = viewer
-            if request.quality != self.quality || self.viewers.count == 1 {
-                self.quality = request.quality
-                // With feedback, start where most links cope and climb from
-                // there; a first burst at the full rate is what a slow link
-                // would be stuck queueing.
-                self.bitrate = request.acks ? min(request.quality.bitsPerSecond, Self.startBitrate)
-                    : request.quality.bitsPerSecond
-                self.teardownEncoder()   // new size and bitrate on the next frame
-            }
-            self.chooseCodec()
+            let lane = self.lane(for: viewer, quality: request.quality)
+            viewer.lane = lane
+            lane.viewers.append(viewer)
+            lane.forceKeyframe = true
             if let workers = request.workers { self.workerCount = min(max(workers, 1), 3) }
-            self.forceKeyframe = true
-            self.lastJPEG = nil
-            self.log("viewer joined (\(self.viewers.count) watching, \(request.quality.rawValue), \(request.codec.rawValue)"
-                     + "\(request.acks ? ", acknowledging" : "")\(viewer.sealer.encrypted ? ", encrypted" : ""))")
+            self.log("viewer joined lane \(lane.id) (\(self.viewers.count) watching, \(request.quality.rawValue), "
+                     + "\(request.codec.rawValue)\(request.acks ? ", acknowledging" : "")"
+                     + "\(viewer.sealer.encrypted ? ", encrypted" : ""))")
             if let client = request.client {
                 viewer.client = client
                 RemoteSession.shared.watch(tok: client, name: AuthManager.shared.clientName(forTokenId: client) ?? client)
             }
             viewer.start(onClose: { self.queue.async { self.remove(id) } })
-            if let config = self.config { viewer.sendConfig(config) }
+            if let config = lane.config { viewer.sendConfig(config) }
             viewer.sendState(self.stateFields())
             Self.onViewersChange?(self.viewers.count)
             self.startCaptureIfNeeded()
             self.startController()
+            self.wake.signal()
         }
+    }
+
+    /// A lane of its own while there are few, else one that already makes
+    /// what this viewer asked for (or the closest to it).
+    private func lane(for viewer: Viewer, quality: ScreenStreamRequest.Quality) -> Lane {
+        let codec: ScreenStreamRequest.Codec = hevcUnavailable ? .h264 : viewer.codec
+        if lanes.count < Self.maxLanes {
+            let bitrate = viewer.acks ? min(quality.bitsPerSecond, Self.startBitrate) : quality.bitsPerSecond
+            let lane = Lane(id: nextLane, quality: quality, codec: codec, bitrate: bitrate, stream: self)
+            nextLane += 1
+            lanes.append(lane)
+            return lane
+        }
+        let lane = lanes.first { $0.quality == quality && $0.codec == codec }
+            ?? lanes.first { $0.quality == quality }
+            ?? lanes.min { $0.viewers.count < $1.viewers.count }!
+        // One encoder serves them all: HEVC only if everyone can decode it.
+        if lane.codec == .hevc && codec == .h264 {
+            lane.codec = .h264
+            lane.restart(nil)
+        }
+        return lane
     }
 
     private func remove(_ id: String) {
         guard let viewer = viewers.removeValue(forKey: id) else { return }
         if let client = viewer.client { RemoteSession.shared.unwatch(tok: client) }
+        if let lane = viewer.lane {
+            lane.viewers.removeAll { $0 === viewer }
+            if lane.viewers.isEmpty {
+                lane.teardown()
+                lanes.removeAll { $0 === lane }
+            }
+        }
         log("viewer left (\(viewers.count) watching)")
         Self.onViewersChange?(viewers.count)
         if viewers.isEmpty {
-            teardownEncoder()
+            pools.removeAll()
             controller?.cancel()
             controller = nil
-        } else {
-            chooseCodec()
         }
-    }
-
-    /// HEVC only when every viewer asked for it: one encoder serves them all.
-    private func chooseCodec() {
-        let wanted: ScreenStreamRequest.Codec =
-            !hevcUnavailable && viewers.values.allSatisfy { $0.codec == .hevc } ? .hevc : .h264
-        guard wanted != codec else { return }
-        codec = wanted
-        teardownEncoder()
-        forceKeyframe = true
     }
 
     /// Tell every viewer who holds control and whether the owner paused (the
@@ -148,7 +202,10 @@ final class ScreenStream {
             if RemoteSession.shared.paused { self.log("paused by the owner: no frames until they resume") }
             let state = self.stateFields()
             for viewer in self.viewers.values { viewer.sendState(state) }
-            if !RemoteSession.shared.paused { self.forceKeyframe = true; self.lastJPEG = nil; self.wake.signal() }
+            if !RemoteSession.shared.paused {
+                for lane in self.lanes { lane.forceKeyframe = true; lane.lastJPEG = nil }
+                self.wake.signal()
+            }
         }
     }
 
@@ -156,6 +213,8 @@ final class ScreenStream {
         var fields = RemoteSession.shared.state()
         fields["hidden"] = .bool(screenHidden)
         fields["page"] = .int(PageUpdate.servedVersion)
+        fields["source"] = .string(broadcast == nil ? "capture" : "broadcast")
+        if let lan = Self.lanEndpoints?(), !lan.isEmpty { fields["lan"] = .array(lan.map(JSONValue.string)) }
         return fields
     }
 
@@ -169,20 +228,42 @@ final class ScreenStream {
             v.ack(upTo: micros, queue: queueMs.map { $0 / 1000 })
             if wantsKey {
                 v.wantKeyframe()
+                // Also the page's way to check the whole path when an action
+                // brought no new frame: the lane makes a keyframe now, and one
+                // whose encoder died starts a new one on the way.
+                v.lane?.lastForcedAt = 0
                 self.wake.signal()
             }
         }
     }
 
-    // MARK: - Bitrate
+    /// Start every encoder afresh (on any queue).
+    func restartEncoders(_ reason: String) {
+        queue.async {
+            guard !self.lanes.isEmpty else { return }
+            self.log("\(reason): starting the encoders afresh")
+            for lane in self.lanes { lane.restart(nil) }
+            self.wake.signal()
+        }
+    }
+
+    // MARK: - Once a second
 
     private func startController() {
         guard controller == nil else { return }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + 1, repeating: 1)
         timer.setEventHandler { [weak self] in
-            self?.heartbeat()
-            self?.adjustBitrate()
+            guard let self else { return }
+            self.heartbeat()
+            for lane in self.lanes {
+                lane.checkHealth()
+                lane.adjustBitrate()
+            }
+            for viewer in self.viewers.values where viewer.stuck {
+                self.log("a viewer took nothing for \(Int(Viewer.stuckAfter)) s: closing its stream")
+                viewer.close()
+            }
         }
         timer.resume()
         controller = timer
@@ -198,55 +279,139 @@ final class ScreenStream {
         for viewer in viewers.values { viewer.sendState(state) }
     }
 
-    /// Once a second: down to what got through when a viewer fell behind,
-    /// back up by a quarter each second once two have passed calmly.
-    private func adjustBitrate() {
-        let reports = viewers.values.compactMap { $0.takeReport() }
-        guard !reports.isEmpty else { return }
-        let ceiling = quality.bitsPerSecond
-        var target = bitrate
-        let congested = reports.filter(\.fellBehind)
-        if let slowest = congested.map(\.deliveredBitsPerSecond).min() {
-            // What got through understates the link while frames were held
-            // back, so never more than halve in one step.
-            calmTicks = 0
-            target = max(Self.minBitrate, bitrate / 2, min(bitrate, Int(Double(slowest) * 0.85)))
-        } else {
-            calmTicks += 1
-            if calmTicks >= 2 { target = min(ceiling, Int(Double(bitrate) * 1.25)) }
-        }
-        guard target != bitrate else { return }
-        let before = bitrate
-        bitrate = target
-        applyBitrate()
-        if abs(target - before) * 10 >= before { log("bitrate \(before / 1000) → \(target / 1000) kbps") }
-    }
-
-    private func applyBitrate() {
-        guard let session else { return }
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFTypeRef)
-        Self.limitBursts(session, bitrate: bitrate)
-    }
-
-    /// At most half again the bitrate over a second, and twice it over any
-    /// 0.2 s. With only the one-second limit, fast motion (the app switcher
-    /// opening) spent a second's bytes in a tenth of one: the queue that built
-    /// paused capture for a second, and the viewer saw the animation stop and
-    /// jump. Bounded over 0.2 s, such frames come out softer instead. Encoders
-    /// that take one limit only get the one-second one.
-    private static func limitBursts(_ session: VTCompressionSession, bitrate: Int) {
-        let perSecond = bitrate / 8
-        let both = [perSecond * 3 / 2, 1, perSecond * 2 / 5, 0.2] as [Any] as CFArray
-        if VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: both) != noErr {
-            VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits,
-                                 value: [perSecond * 3 / 2, 1] as CFArray)
-        }
-    }
-
     /// Capture now instead of at the next tick: something on screen just
     /// changed because of an action.
     func nudge() {
+        queue.async { self.changedAt = CACurrentMediaTime() }
         wake.signal()
+    }
+
+    // MARK: - System broadcast (on `queue`)
+
+    /// Take the extension's connections, or stop taking them (and end a
+    /// broadcast that is running).
+    private func setBroadcast(_ on: Bool) {
+        if !on {
+            broadcastListener?.cancel()
+            broadcastListener = nil
+            broadcast?.stop()
+            return
+        }
+        guard broadcastListener == nil, let port = NWEndpoint.Port(rawValue: BroadcastWire.port) else { return }
+        let params = NWParameters.tcp
+        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: port)
+        params.allowLocalEndpointReuse = true
+        guard let listener = try? NWListener(using: params) else {
+            log("system broadcast: could not listen on \(BroadcastWire.port)")
+            return
+        }
+        listener.newConnectionHandler = { [weak self] connection in self?.offered(connection) }
+        listener.stateUpdateHandler = { [weak self] state in
+            if case .failed(let error) = state { self?.log("system broadcast: listener failed (\(error))") }
+        }
+        listener.start(queue: queue)
+        broadcastListener = listener
+    }
+
+    /// A connection to the extension's port. Only one, and only while iOS
+    /// says the screen is being captured: another app on the phone could
+    /// reach a loopback port too, but it can't make the screen be recorded.
+    /// The extension connects the moment the broadcast starts, a little
+    /// before iOS counts the screen as captured: wait for that, a few seconds
+    /// at most.
+    private func offered(_ connection: NWConnection, since: CFTimeInterval = CACurrentMediaTime()) {
+        DispatchQueue.main.async {
+            let captured = UIScreen.main.isCaptured
+            self.queue.async {
+                let waited = CACurrentMediaTime() - since
+                if !captured && waited < 5 {
+                    self.queue.asyncAfter(deadline: .now() + 0.2) { self.offered(connection, since: since) }
+                    return
+                }
+                guard captured, self.broadcast == nil, self.broadcastListener != nil else {
+                    self.log("system broadcast: refused a connection (\(captured ? "one is already open" : "the screen is not being captured"))")
+                    connection.cancel()
+                    return
+                }
+                self.log(String(format: "system broadcast: connected (screen captured after %.1f s)", waited))
+                let link = BroadcastLink(connection: connection, queue: self.queue, stream: self)
+                link.start()
+            }
+        }
+    }
+
+    fileprivate func broadcastStarted(_ link: BroadcastLink) {
+        guard broadcast == nil else { return link.stop() }
+        broadcast = link
+        log("system broadcast started: the screen now comes from iOS")
+        for lane in lanes { lane.restart(nil) }
+        lastLanes = []
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: 0.05)
+        timer.setEventHandler { [weak self] in self?.syncBroadcast() }
+        timer.resume()
+        broadcastSync = timer
+        sendStateToViewers()
+    }
+
+    fileprivate func broadcastEnded(_ link: BroadcastLink) {
+        guard broadcast === link else { return }
+        broadcast = nil
+        broadcastSync?.cancel()
+        broadcastSync = nil
+        log("system broadcast ended: back to screenshots")
+        for lane in lanes { lane.restart(nil) }
+        if !viewers.isEmpty { startCaptureIfNeeded() }
+        sendStateToViewers()
+    }
+
+    /// Twenty times a second: what each lane needs from the extension, sent
+    /// when it changed or a keyframe is wanted.
+    private func syncBroadcast() {
+        guard let broadcast else { return }
+        let now = CACurrentMediaTime()
+        // As the capture loop does: a viewer waiting for a keyframe gets one,
+        // at most once a second, even on a still screen.
+        for lane in lanes where !lane.forceKeyframe && now - lane.lastForcedAt > 1
+            && lane.viewers.contains(where: \.waitingForKeyframe) {
+            lane.forceKeyframe = true
+            lane.lastForcedAt = now
+        }
+        let specs = lanes.map { $0.broadcastSpec() }
+        guard specs != lastLanes || specs.contains(where: \.key) else { return }
+        lastLanes = specs
+        broadcast.send(lanes: specs)
+    }
+
+    fileprivate func broadcastMessage(_ kind: BroadcastWire.Kind, _ payload: Data) {
+        switch kind {
+        case .config:
+            guard let c = try? JSONDecoder().decode(BroadcastWire.Config.self, from: payload),
+                  let lane = lanes.first(where: { UInt32($0.id) == c.lane }) else { return }
+            pointSize = (c.pointWidth, c.pointHeight)
+            lane.broadcastConfig(c)
+        case .frame:
+            guard let (id, keyframe, micros, unit) = BroadcastWire.parseFrame(payload),
+                  let lane = lanes.first(where: { UInt32($0.id) == id }) else { return }
+            // Stamped on the system clock; the stream counts from its start.
+            let base = UInt64(started * 1_000_000)
+            lane.broadcastFrame(unit, keyframe: keyframe, micros: micros > base ? micros - base : 0)
+            changedAt = CACurrentMediaTime()
+            logStats()
+        case .hidden:
+            guard let h = try? JSONDecoder().decode(BroadcastWire.Hidden.self, from: payload), h.hidden != screenHidden else { return }
+            screenHidden = h.hidden
+            log(h.hidden ? "screen hidden from capture (black frame): viewers show outlines" : "screen visible again")
+            sendStateToViewers()
+        default:
+            break
+        }
+    }
+
+    /// The state to every viewer now (who, paused, hidden, source).
+    private func sendStateToViewers() {
+        let state = stateFields()
+        for viewer in viewers.values { viewer.sendState(state) }
     }
 
     // MARK: - Capture
@@ -257,8 +422,8 @@ final class ScreenStream {
     /// from ~30 to 60 fps. Frames are stamped in the order their captures
     /// start; one that finishes after a later one is dropped.
     private func startCaptureIfNeeded() {
+        guard broadcast == nil else { return }
         if activeWorkers == 0 {
-            frames = 0
             captures = 0
             captureTime = 0
             convertTime = 0
@@ -280,36 +445,37 @@ final class ScreenStream {
         var misses = 0
         while true {
             var stop = false
-            var quality = ScreenStreamRequest.Quality.medium
-            var force = false
+            var fps = 30.0
+            var jpegQuality = 0.5
             var paused = false
             var slot: CFTimeInterval = 0
             var seq: UInt64 = 0
             queue.sync {
-                if viewers.isEmpty || activeWorkers > workerCount {
+                if viewers.isEmpty || activeWorkers > workerCount || broadcast != nil {
                     activeWorkers -= 1
                     stop = true
                     if activeWorkers == 0, viewers.isEmpty { log("capture stopped") }
                     return
                 }
-                quality = self.quality
-                // A viewer is waiting for a keyframe (it missed frames, or
-                // its decoder did): make one even if the screen is still,
-                // at most once a second, until it has one. Otherwise a
-                // still screen leaves it showing an old picture for good.
+                fps = lanes.map(\.quality.fps).max() ?? 30
+                jpegQuality = lanes.map(\.quality.jpegQuality).max() ?? 0.5
+                // A viewer waiting for a keyframe (it missed frames, or its
+                // decoder did) gets one even if the screen is still, at most
+                // once a second, until it has one. Otherwise a still screen
+                // leaves it showing an old picture for good.
                 let now = CACurrentMediaTime()
-                if !forceKeyframe, now - lastForcedAt > 1, viewers.values.contains(where: \.waitingForKeyframe) {
-                    forceKeyframe = true
-                    lastForcedAt = now
+                for lane in lanes where !lane.forceKeyframe && now - lane.lastForcedAt > 1
+                    && lane.viewers.contains(where: \.waitingForKeyframe) {
+                    lane.forceKeyframe = true
+                    lane.lastForcedAt = now
                 }
-                force = forceKeyframe
-                // A frame now would only queue behind the ones in flight, or
-                // the owner has paused remote viewing.
-                paused = RemoteSession.shared.paused || viewers.values.contains { $0.behind() }
+                // A frame now would only queue behind the ones in flight to
+                // every viewer, or the owner has paused remote viewing.
+                paused = RemoteSession.shared.paused || lanes.allSatisfy(\.behind)
                 if !paused {
-                    let now = CACurrentMediaTime()
                     slot = max(now, nextSlot)
-                    nextSlot = slot + 1 / quality.fps
+                    let idle = now - changedAt > Self.idleAfter && !lanes.contains(where: \.forceKeyframe)
+                    nextSlot = slot + 1 / (idle ? min(fps, Self.idleFPS) : fps)
                     captureSeq += 1
                     seq = captureSeq
                 }
@@ -325,7 +491,7 @@ final class ScreenStream {
             // A nudge (an action just changed the screen) captures at once.
             if wait > 0 { _ = wake.wait(timeout: .now() + wait) }
             let started = CACurrentMediaTime()
-            guard let grab, let shot = autoreleasepool(invoking: { grab(quality.jpegQuality) }) else {
+            guard let grab, let shot = autoreleasepool(invoking: { grab(jpegQuality) }) else {
                 misses += 1
                 if misses == 3 {
                     // Captures that overlap may be what fails on this OS:
@@ -337,6 +503,7 @@ final class ScreenStream {
                         }
                     }
                 }
+                if misses % 100 == 0 { queue.sync { log("screen capture failing (\(misses) in a row)") } }
                 continue
             }
             misses = 0
@@ -348,75 +515,81 @@ final class ScreenStream {
                 self.captureTime += grabbed
                 // A later capture already went out: this one is stale.
                 guard seq > self.encodedSeq else { return }
-                if !force, let jpeg = shot.jpeg, jpeg == self.lastJPEG { return }
                 self.encodedSeq = seq
-                self.lastJPEG = shot.jpeg
-                self.encode(shot.image, scale: shot.scale, quality: quality)
+                self.encode(shot.image, jpeg: shot.jpeg, scale: shot.scale)
             }
         }
     }
 
     // MARK: - Encoding (on `queue`)
 
-    private func encode(_ cg: CGImage, scale: Double, quality: ScreenStreamRequest.Quality) {
-        let (width, height) = Self.fit(width: cg.width, height: cg.height, longSide: quality.longSide)
-        if session == nil || encodedSize != (width, height) {
-            teardownEncoder()
-            if !makeEncoder(width: width, height: height, quality: quality) {
-                guard codec == .hevc else { return }
-                // No HEVC encoder here: H.264 for everyone, for good.
-                hevcUnavailable = true
-                codec = .h264
-                guard makeEncoder(width: width, height: height, quality: quality) else { return }
+    /// Hands the frame to every lane that wants it: one whose viewers aren't
+    /// behind and that hasn't encoded this picture yet. Each size is drawn
+    /// once, however many lanes take it.
+    private func encode(_ cg: CGImage, jpeg: Data?, scale: Double) {
+        if jpeg == nil || jpeg != lastSeenJPEG { changedAt = CACurrentMediaTime() }
+        lastSeenJPEG = jpeg
+        // A capture that was under way when the broadcast took over.
+        if RemoteSession.shared.paused || broadcast != nil { return }
+        // Screenshots are in pixels; taps are in points.
+        pointSize = (Double(cg.width) / max(scale, 1), Double(cg.height) / max(scale, 1))
+        var drawn: [Size: CVPixelBuffer] = [:]
+        for lane in lanes {
+            if lane.behind { continue }
+            if !lane.forceKeyframe, let jpeg, jpeg == lane.lastJPEG { continue }
+            let (width, height) = Self.fit(width: cg.width, height: cg.height, longSide: lane.quality.longSide)
+            let size = Size(width: width, height: height)
+            guard lane.prepare(size: size) else { continue }
+            if drawn[size] == nil {
+                let convertStart = CACurrentMediaTime()
+                drawn[size] = draw(cg, size: size)
+                convertTime += CACurrentMediaTime() - convertStart
             }
-            config = nil
-            forceKeyframe = true
-            // Screenshots are in pixels; taps are in points.
-            pointSize = (Double(cg.width) / max(scale, 1), Double(cg.height) / max(scale, 1))
+            guard let buffer = drawn[size] else { continue }
+            lane.lastJPEG = jpeg
+            lane.encode(buffer, micros: UInt64((CACurrentMediaTime() - started) * 1_000_000))
         }
-        guard let session, let pool else { return }
-        let convertStart = CACurrentMediaTime()
-        defer { convertTime += CACurrentMediaTime() - convertStart }
+        logStats()
+    }
+
+    private func draw(_ cg: CGImage, size: Size) -> CVPixelBuffer? {
+        if pools[size] == nil {
+            let attrs: [CFString: Any] = [
+                kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey: size.width,
+                kCVPixelBufferHeightKey: size.height,
+                kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
+            ]
+            var pool: CVPixelBufferPool?
+            CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &pool)
+            pools[size] = pool
+        }
         var pixelBuffer: CVPixelBuffer?
-        guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer) == kCVReturnSuccess,
-              let buffer = pixelBuffer else { return }
+        guard let pool = pools[size],
+              CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer) == kCVReturnSuccess,
+              let buffer = pixelBuffer else { return nil }
         CVPixelBufferLockBaseAddress(buffer, [])
-        let drawn: Bool = {
+        let ok: Bool = {
             guard let context = CGContext(
-                data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height, bitsPerComponent: 8,
+                data: CVPixelBufferGetBaseAddress(buffer), width: size.width, height: size.height, bitsPerComponent: 8,
                 bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
             ) else { return false }
             context.interpolationQuality = .medium
-            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
             return true
         }()
-        let hidden = drawn && Self.nearlyBlack(buffer)
+        let hidden = ok && Self.nearlyBlack(buffer)
         CVPixelBufferUnlockBaseAddress(buffer, [])
-        guard drawn else { return }
+        guard ok else { return nil }
         if hidden != screenHidden {
             screenHidden = hidden
             log(hidden ? "screen hidden from capture (black frame): viewers show outlines" : "screen visible again")
             let state = stateFields()
             for viewer in viewers.values { viewer.sendState(state) }
         }
-
-        var options: CFDictionary?
-        if forceKeyframe {
-            options = [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue] as CFDictionary
-            forceKeyframe = false
-        }
-        let micros = UInt64((CACurrentMediaTime() - started) * 1_000_000)
-        let pts = CMTime(value: CMTimeValue(micros), timescale: 1_000_000)
-        VTCompressionSessionEncodeFrame(session, imageBuffer: buffer, presentationTimeStamp: pts,
-                                        duration: .invalid, frameProperties: options,
-                                        infoFlagsOut: nil) { [weak self] status, _, sample in
-            guard status == noErr, let sample else { return }
-            self?.queue.async { self?.deliver(sample, micros: micros) }
-        }
+        return buffer
     }
-
-    private var pointSize: (Double, Double) = (0, 0)
 
     /// Whether a 16×16 grid of samples is all but black (BGRA, locked).
     private static func nearlyBlack(_ buffer: CVPixelBuffer) -> Bool {
@@ -433,16 +606,130 @@ final class ScreenStream {
         return true
     }
 
-    private func makeEncoder(width: Int, height: Int, quality: ScreenStreamRequest.Quality) -> Bool {
+    /// No HEVC encoder on this device at all: H.264 for everyone, for good.
+    fileprivate func noHEVC() {
+        guard !hevcUnavailable else { return }
+        hevcUnavailable = true
+        for lane in lanes where lane.codec == .hevc {
+            lane.codec = .h264
+            lane.restart(nil)
+        }
+    }
+
+    fileprivate var currentPointSize: (Double, Double) { pointSize }
+
+    fileprivate func keyframeWanted() { wake.signal() }
+
+    private func logStats() {
+        let now = CACurrentMediaTime()
+        guard now - statsSince >= 30 else { return }
+        let span = now - statsSince
+        let n = Double(max(captures, 1))
+        let perLane = lanes.map { lane in
+            String(format: "lane %d %@ %@ %.1f fps %d kbps", lane.id, lane.codec.rawValue, lane.quality.rawValue,
+                   Double(lane.takeFrames()) / span, lane.bitrate / 1000)
+        }.joined(separator: "; ")
+        if broadcast != nil {
+            log(String(format: "over the last %.0f s, from the system broadcast: %@", span, perLane))
+        } else {
+            log(String(format: "over the last %.0f s: capture %.0f ms, convert %.0f ms a frame, paused %.0f%%; %@",
+                       span, captureTime / n * 1000, convertTime / n * 1000, pausedTime / span * 100, perLane))
+        }
+        captures = 0
+        captureTime = 0
+        convertTime = 0
+        pausedTime = 0
+        statsSince = now
+    }
+
+    /// The largest even size with this aspect whose longer side is at most
+    /// `longSide`, never larger than the source.
+    /// Multiples of 16, the codecs' block size, so no decoder has to crop a
+    /// padded edge. 882 wide (an iPhone's 1206 at 1920 high) needed that, and
+    /// Edge's H.265 decoder on Windows drew such a stream wrong (the top half
+    /// of the screen stretched over all of it) — the likeliest reason.
+    static func fit(width: Int, height: Int, longSide: Int) -> (Int, Int) {
+        let scale = min(1, Double(longSide) / Double(max(width, height)))
+        func block(_ v: Double) -> Int { max(16, Int(v) & ~15) }
+        return (block(Double(width) * scale), block(Double(height) * scale))
+    }
+}
+
+private struct Size: Hashable {
+    let width: Int
+    let height: Int
+}
+
+/// One encoder and the viewers it serves. Touched only on the stream's queue.
+private final class Lane {
+    let id: Int
+    let quality: ScreenStreamRequest.Quality
+    var codec: ScreenStreamRequest.Codec
+    var viewers: [Viewer] = []
+    /// What the encoder aims for: the quality's rate, lowered while viewers
+    /// fall behind and raised again as they keep up.
+    var bitrate: Int
+    var forceKeyframe = true
+    var lastForcedAt: CFTimeInterval = 0
+    /// The picture this lane last encoded (as JPEG bytes), so a still screen
+    /// costs it nothing.
+    var lastJPEG: Data?
+    private(set) var config: [String: Any]?
+    private unowned let stream: ScreenStream
+    private var session: VTCompressionSession?
+    private var size = Size(width: 0, height: 0)
+    private var calmTicks = 0
+    private var frames = 0
+    /// Frames handed to the encoder and not out yet, and when it last made
+    /// progress: one that takes frames and returns none has died.
+    private var pending = 0
+    private var waitingSince: CFTimeInterval?
+    private var restarts: [CFTimeInterval] = []
+    /// No new encoder before this, after one could not be made.
+    private var retryAt: CFTimeInterval = 0
+
+    init(id: Int, quality: ScreenStreamRequest.Quality, codec: ScreenStreamRequest.Codec, bitrate: Int,
+         stream: ScreenStream) {
+        self.id = id
+        self.quality = quality
+        self.codec = codec
+        self.bitrate = bitrate
+        self.stream = stream
+    }
+
+    /// Frames are queueing on the way to one of its viewers.
+    var behind: Bool { viewers.contains { $0.behind() } }
+
+    func takeFrames() -> Int {
+        defer { frames = 0 }
+        return frames
+    }
+
+    /// An encoder for this size, making one when there is none.
+    func prepare(size: Size) -> Bool {
+        if session != nil && self.size == size { return true }
+        teardown()
+        let now = CACurrentMediaTime()
+        guard now >= retryAt else { return false }
+        let wasHEVC = codec == .hevc
+        // No HEVC encoder on this device (noHEVC switched the lane over):
+        // H.264 at once. Any other failure is tried again shortly.
+        if makeEncoder(size) || (wasHEVC && codec == .h264 && makeEncoder(size)) { return true }
+        retryAt = now + 0.5
+        return false
+    }
+
+    private func makeEncoder(_ size: Size) -> Bool {
         var made: VTCompressionSession?
         let hevc = codec == .hevc
         let status = VTCompressionSessionCreate(
-            allocator: nil, width: Int32(width), height: Int32(height),
+            allocator: nil, width: Int32(size.width), height: Int32(size.height),
             codecType: hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264,
             encoderSpecification: nil, imageBufferAttributes: nil, compressedDataAllocator: nil,
             outputCallback: nil, refcon: nil, compressionSessionOut: &made)
         guard status == noErr, let made else {
-            log("\(codec.rawValue) encoder could not start (\(status))")
+            stream.log("lane \(id): \(codec.rawValue) encoder could not start (\(status))")
+            if hevc && status == kVTCouldNotFindVideoEncoderErr { stream.noHEVC() }
             return false
         }
         let props: [CFString: Any] = [
@@ -459,33 +746,68 @@ final class ScreenStream {
         }
         Self.limitBursts(made, bitrate: bitrate)
         VTCompressionSessionPrepareToEncodeFrames(made)
-        let attrs: [CFString: Any] = [
-            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey: width,
-            kCVPixelBufferHeightKey: height,
-            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
-        ]
-        var newPool: CVPixelBufferPool?
-        CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &newPool)
-        guard let newPool else {
-            VTCompressionSessionInvalidate(made)
-            return false
-        }
         session = made
-        pool = newPool
-        encodedSize = (width, height)
-        log("\(codec.rawValue) encoder \(width)x\(height) \(quality.rawValue) \(bitrate / 1000) kbps")
+        self.size = size
+        config = nil
+        forceKeyframe = true
+        stream.log("lane \(id): \(codec.rawValue) encoder \(size.width)x\(size.height) \(quality.rawValue) \(bitrate / 1000) kbps")
         return true
     }
 
-    private func teardownEncoder() {
-        if let session {
-            VTCompressionSessionInvalidate(session)
-        }
+    func teardown() {
+        if let session { VTCompressionSessionInvalidate(session) }
         session = nil
-        pool = nil
-        encodedSize = (0, 0)
+        size = Size(width: 0, height: 0)
         config = nil
+        pending = 0
+        waitingSince = nil
+    }
+
+    /// A new encoder from the next frame on, which is a keyframe and goes out
+    /// even if the screen hasn't changed. `reason` is logged when given.
+    func restart(_ reason: String?) {
+        if let reason {
+            let now = CACurrentMediaTime()
+            restarts = restarts.filter { now - $0 < 60 } + [now]
+            // Say it, but not a hundred times a minute.
+            if restarts.count <= 3 { stream.log("lane \(id): \(reason): starting a new encoder") }
+        }
+        teardown()
+        forceKeyframe = true
+        lastJPEG = nil
+        stream.keyframeWanted()
+    }
+
+    /// Frames went in a second ago and nothing has come out since.
+    func checkHealth() {
+        if let since = waitingSince, pending > 0, CACurrentMediaTime() - since > 1 {
+            restart("no output for \(pending) frame\(pending == 1 ? "" : "s")")
+        }
+    }
+
+    func encode(_ buffer: CVPixelBuffer, micros: UInt64) {
+        guard let session else { return }
+        var options: CFDictionary?
+        if forceKeyframe {
+            options = [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue] as CFDictionary
+            forceKeyframe = false
+        }
+        let pts = CMTime(value: CMTimeValue(micros), timescale: 1_000_000)
+        let status = VTCompressionSessionEncodeFrame(session, imageBuffer: buffer, presentationTimeStamp: pts,
+                                                     duration: .invalid, frameProperties: options,
+                                                     infoFlagsOut: nil) { [weak self] status, _, sample in
+            guard let lane = self else { return }
+            lane.stream.queueAsync { [weak lane] in
+                guard let lane, lane.session === session else { return }   // from an encoder since replaced
+                lane.pending = max(0, lane.pending - 1)
+                lane.waitingSince = lane.pending > 0 ? CACurrentMediaTime() : nil
+                guard status == noErr else { return lane.restart("encoder error \(status)") }
+                if let sample { lane.deliver(sample, micros: micros) }
+            }
+        }
+        guard status == noErr else { return restart("encoder refused a frame (\(status))") }
+        if pending == 0 { waitingSince = CACurrentMediaTime() }
+        pending += 1
     }
 
     private func deliver(_ sample: CMSampleBuffer, micros: UInt64) {
@@ -497,7 +819,7 @@ final class ScreenStream {
         if keyframe || config == nil, let fresh = makeConfig(format) {
             if config.map({ NSDictionary(dictionary: $0) != NSDictionary(dictionary: fresh) }) ?? true {
                 config = fresh
-                for viewer in viewers.values { viewer.sendConfig(fresh) }
+                for viewer in viewers { viewer.sendConfig(fresh) }
             }
         }
         var length = 0
@@ -505,32 +827,52 @@ final class ScreenStream {
         guard CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil,
                                           totalLengthOut: &length, dataPointerOut: &pointer) == noErr,
               let pointer else { return }
-        let unit = Data(bytes: pointer, count: length)
+        fanOut(Data(bytes: pointer, count: length), keyframe: keyframe, micros: micros)
+    }
+
+    /// One encoded frame to every viewer of the lane.
+    private func fanOut(_ unit: Data, keyframe: Bool, micros: UInt64) {
         var wantKey = false
-        for viewer in viewers.values {
+        for viewer in viewers {
             if viewer.send(unit, keyframe: keyframe, micros: micros) { wantKey = true }
         }
         // Someone missed frames: give them a keyframe, at most once a second.
         if wantKey, CACurrentMediaTime() - lastForcedAt > 1 {
             lastForcedAt = CACurrentMediaTime()
             forceKeyframe = true
-            wake.signal()
+            stream.keyframeWanted()
         }
         frames += 1
-        let now = CACurrentMediaTime()
-        if now - statsSince >= 30 {
-            let span = now - statsSince
-            let n = Double(max(captures, 1))
-            log(String(format: "%.1f fps over the last %.0f s: capture %.0f ms, convert %.0f ms a frame, paused %.0f%%, %d kbps",
-                       Double(frames) / span, span, captureTime / n * 1000, convertTime / n * 1000,
-                       pausedTime / span * 100, bitrate / 1000))
-            frames = 0
-            captures = 0
-            captureTime = 0
-            convertTime = 0
-            pausedTime = 0
-            statsSince = now
-        }
+    }
+
+    // MARK: From the system broadcast
+
+    /// What the extension should do for this lane; a keyframe asked for is
+    /// handed over with it.
+    func broadcastSpec() -> BroadcastWire.Lane {
+        let spec = BroadcastWire.Lane(id: UInt32(id), longSide: quality.longSide, fps: quality.fps, codec: codec.rawValue,
+                                      bitrate: bitrate, hold: RemoteSession.shared.paused || behind, key: forceKeyframe)
+        forceKeyframe = false
+        return spec
+    }
+
+    /// The extension's encoder (re)started.
+    func broadcastConfig(_ c: BroadcastWire.Config) {
+        let codecString = c.kind == "hvc" ? ScreenStreamSealer.codecString(hvcC: c.description)
+            : ScreenStreamSealer.codecString(sps: c.sps ?? Data())
+        let fresh: [String: Any] = [
+            "codec": codecString, "width": c.width, "height": c.height,
+            "point_width": c.pointWidth, "point_height": c.pointHeight,
+            "description": c.description.base64EncodedString(),
+        ]
+        guard config.map({ NSDictionary(dictionary: $0) != NSDictionary(dictionary: fresh) }) ?? true else { return }
+        config = fresh
+        for viewer in viewers { viewer.sendConfig(fresh) }
+    }
+
+    func broadcastFrame(_ unit: Data, keyframe: Bool, micros: UInt64) {
+        if RemoteSession.shared.paused || config == nil { return }
+        fanOut(unit, keyframe: keyframe, micros: micros)
     }
 
     /// The decoder configuration (avcC or hvcC) and its codec string.
@@ -555,10 +897,11 @@ final class ScreenStream {
             return nil
         }
         let dims = CMVideoFormatDescriptionGetDimensions(format)
+        let points = stream.currentPointSize
         return [
             "codec": codecString,
             "width": Int(dims.width), "height": Int(dims.height),
-            "point_width": pointSize.0, "point_height": pointSize.1,
+            "point_width": points.0, "point_height": points.1,
             "description": description.base64EncodedString(),
         ]
     }
@@ -569,16 +912,48 @@ final class ScreenStream {
         return !(first[kCMSampleAttachmentKey_NotSync] as? Bool ?? false)
     }
 
-    /// The largest even size with this aspect whose longer side is at most
-    /// `longSide`, never larger than the source.
-    /// Multiples of 16, the codecs' block size, so no decoder has to crop a
-    /// padded edge. 882 wide (an iPhone's 1206 at 1920 high) needed that, and
-    /// Edge's H.265 decoder on Windows drew such a stream wrong (the top half
-    /// of the screen stretched over all of it) — the likeliest reason.
-    static func fit(width: Int, height: Int, longSide: Int) -> (Int, Int) {
-        let scale = min(1, Double(longSide) / Double(max(width, height)))
-        func block(_ v: Double) -> Int { max(16, Int(v) & ~15) }
-        return (block(Double(width) * scale), block(Double(height) * scale))
+    // MARK: Bitrate
+
+    /// Once a second: down to what got through when a viewer fell behind,
+    /// back up by a quarter each second once two have passed calmly.
+    func adjustBitrate() {
+        let reports = viewers.compactMap { $0.takeReport() }
+        guard !reports.isEmpty else { return }
+        let ceiling = quality.bitsPerSecond
+        var target = bitrate
+        let congested = reports.filter(\.fellBehind)
+        if let slowest = congested.map(\.deliveredBitsPerSecond).min() {
+            // What got through understates the link while frames were held
+            // back, so never more than halve in one step.
+            calmTicks = 0
+            target = max(ScreenStream.minBitrate, bitrate / 2, min(bitrate, Int(Double(slowest) * 0.85)))
+        } else {
+            calmTicks += 1
+            if calmTicks >= 2 { target = min(ceiling, Int(Double(bitrate) * 1.25)) }
+        }
+        guard target != bitrate else { return }
+        let before = bitrate
+        bitrate = target
+        if let session {
+            VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFTypeRef)
+            Self.limitBursts(session, bitrate: bitrate)
+        }
+        if abs(target - before) * 10 >= before { stream.log("lane \(id): bitrate \(before / 1000) → \(target / 1000) kbps") }
+    }
+
+    /// At most half again the bitrate over a second, and twice it over any
+    /// 0.2 s. With only the one-second limit, fast motion (the app switcher
+    /// opening) spent a second's bytes in a tenth of one: the queue that built
+    /// paused capture for a second, and the viewer saw the animation stop and
+    /// jump. Bounded over 0.2 s, such frames come out softer instead. Encoders
+    /// that take one limit only get the one-second one.
+    private static func limitBursts(_ session: VTCompressionSession, bitrate: Int) {
+        let perSecond = bitrate / 8
+        let both = [perSecond * 3 / 2, 1, perSecond * 2 / 5, 0.2] as [Any] as CFArray
+        if VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: both) != noErr {
+            VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits,
+                                 value: [perSecond * 3 / 2, 1] as CFArray)
+        }
     }
 }
 
@@ -591,10 +966,14 @@ private final class Viewer {
     let acks: Bool
     /// The paired client watching (token id), when known.
     var client: String?
-    private var inFlight = false
+    weak var lane: Lane?
+    private var inFlightSince: CFTimeInterval?
     private var needsKeyframe = true
     private var closed = false
     private var onClose: (() -> Void)?
+    /// A frame still being written after this long: the other end has gone
+    /// without closing (a relay or Wi-Fi drop the phone never heard of).
+    static let stuckAfter: CFTimeInterval = 15
 
     // Acknowledgement bookkeeping, for viewers that send them.
     private struct Sent {
@@ -632,9 +1011,12 @@ private final class Viewer {
 
     func start(onClose: @escaping () -> Void) {
         self.onClose = onClose
+        // Readable from a page that came another way (the relay's page
+        // reaching the phone directly on the LAN); the ticket is the lock.
         let head = "HTTP/1.1 200 OK\r\n"
             + "Content-Type: application/vnd.loopctrl.stream\r\n"
             + "Cache-Control: no-store\r\n"
+            + "Access-Control-Allow-Origin: *\r\n"
             + "X-Accel-Buffering: no\r\n"
             + "Connection: close\r\n\r\n"
         write(Data(head.utf8) + sealer.hello(viewer: id))
@@ -651,7 +1033,12 @@ private final class Viewer {
     }
 
     /// Shows nothing new until a keyframe reaches it.
-    var waitingForKeyframe: Bool { !closed && needsKeyframe }
+    var waitingForKeyframe: Bool { !closed && needsKeyframe && !stuck }
+
+    var stuck: Bool {
+        guard !closed, let since = inFlightSince else { return false }
+        return CACurrentMediaTime() - since > Self.stuckAfter
+    }
 
     func wantKeyframe() { needsKeyframe = true }
 
@@ -672,7 +1059,7 @@ private final class Viewer {
     func send(_ unit: Data, keyframe: Bool, micros: UInt64) -> Bool {
         if closed { return false }
         if needsKeyframe && !keyframe { return true }
-        if inFlight {
+        if inFlightSince != nil {
             // Still writing the last frame: skip this one, and the deltas
             // that depend on it, until the next keyframe.
             needsKeyframe = true
@@ -689,7 +1076,7 @@ private final class Viewer {
     /// Whether frames are queueing on the way to this viewer. Always false
     /// for a viewer that doesn't acknowledge.
     func behind() -> Bool {
-        guard acks else { return false }
+        guard acks, !closed else { return false }
         let now = CACurrentMediaTime()
         if let oldest = sent.first, now - oldest.at > 3 {
             // Acknowledgements stopped coming (or got lost): start afresh
@@ -749,18 +1136,18 @@ private final class Viewer {
 
     private func write(_ data: Data, counted: Bool = true) {
         guard !closed else { return }
-        if counted { inFlight = true }
+        if counted { inFlightSince = CACurrentMediaTime() }
         connection.send(content: data, completion: .contentProcessed { [weak self] error in
             guard let self else { return }
-            ScreenStream.sharedQueueAsync {
-                if counted { self.inFlight = false }
+            ScreenStream.shared.queueAsync {
+                if counted { self.inFlightSince = nil }
                 if error != nil { self.close() }
             }
         })
     }
 
-    private func close() {
-        ScreenStream.sharedQueueAsync {
+    func close() {
+        ScreenStream.shared.queueAsync {
             guard !self.closed else { return }
             self.closed = true
             self.connection.cancel()
@@ -770,10 +1157,72 @@ private final class Viewer {
     }
 }
 
+/// The connection to the broadcast extension. On the stream's queue.
+private final class BroadcastLink {
+    private let connection: NWConnection
+    private let queue: DispatchQueue
+    private unowned let stream: ScreenStream
+    private var reader = BroadcastWire.Reader()
+    private var started = false
+    private var closed = false
+
+    init(connection: NWConnection, queue: DispatchQueue, stream: ScreenStream) {
+        self.connection = connection
+        self.queue = queue
+        self.stream = stream
+    }
+
+    func start() {
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .failed, .cancelled: self?.close()
+            default: break
+            }
+        }
+        connection.start(queue: queue)
+        receive()
+    }
+
+    private func receive() {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { [weak self] data, _, complete, error in
+            guard let self, !self.closed else { return }
+            if let data, !data.isEmpty {
+                for (kind, payload) in self.reader.feed(data) {
+                    if kind == .hello {
+                        if !self.started { self.started = true; self.stream.broadcastStarted(self) }
+                    } else if self.started {
+                        self.stream.broadcastMessage(kind, payload)
+                    }
+                }
+            }
+            if complete || error != nil { self.close() } else { self.receive() }
+        }
+    }
+
+    func send(lanes: [BroadcastWire.Lane]) {
+        guard let message = BroadcastWire.message(.lanes, json: lanes) else { return }
+        connection.send(content: message, completion: .contentProcessed { _ in })
+    }
+
+    /// The switch went off: the extension ends the broadcast.
+    func stop() {
+        connection.send(content: BroadcastWire.message(.stop), completion: .contentProcessed { [weak self] _ in
+            self?.queue.asyncAfter(deadline: .now() + 1) { self?.close() }
+        })
+    }
+
+    private func close() {
+        guard !closed else { return }
+        closed = true
+        connection.cancel()
+        if started { stream.broadcastEnded(self) }
+    }
+}
+
 extension ScreenStream {
-    /// Viewer callbacks arrive on Network's queue; their state belongs to
-    /// the stream's queue.
-    fileprivate static func sharedQueueAsync(_ work: @escaping () -> Void) {
-        shared.queue.async(execute: work)
+    /// Viewer and encoder callbacks arrive on other queues; their state
+    /// belongs to the stream's queue.
+    fileprivate func queueAsync(_ work: @escaping () -> Void) {
+        queue.async(execute: work)
     }
 }

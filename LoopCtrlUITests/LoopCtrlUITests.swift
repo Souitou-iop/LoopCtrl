@@ -1629,6 +1629,12 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         // Live screen for /stream: one capture loop and encoder for every
         // viewer, logged with the RPC calls.
         ScreenStream.onLog = { msg in Self.logBuffer.append(msg) }
+        // Where a page that came through the relay can reach the phone
+        // directly, when it is on the same LAN.
+        ScreenStream.lanEndpoints = { [weak self] in
+            guard let self, self.remoteAccessEnabled, let port = self.server?.port else { return [] }
+            return self.allReachableAddresses().map { "\($0.address):\(port)" }
+        }
         // Someone watching or driving from afar: say so on the phone, with a
         // way to pause it all from the notification.
         ScreenStream.onViewersChange = { [weak self] _ in

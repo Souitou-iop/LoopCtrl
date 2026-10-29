@@ -52,4 +52,8 @@ enum InProcessRunnerControl {
     /// The runner's own UserDefaults keys, which this process shares with it.
     static let remoteAccessKey = "allowRemoteAccess"
     static let nearbyKey = "nearbyDiscovery"
+    /// Whether the screen stream takes the system broadcast when one runs
+    /// (BroadcastWire). userInfo["on"]: Bool on `setBroadcast`.
+    static let broadcastKey = "systemBroadcast"
+    static let setBroadcast = Notification.Name("LoopCtrlInProcessSetBroadcast")
 }
