@@ -171,6 +171,16 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 #devices { grid-area: devices; } .stage { grid-area: stage; } #tools { grid-area: tools; } #tree-panel { grid-area: tree; }
 .card { background: var(--card); border-radius: var(--r-card); }
 .rail { display: flex; flex-direction: column; gap: 4px; padding: 6px; align-self: center; max-height: 100%; overflow-y: auto; scrollbar-width: none; }
+/* Narrow or short screens: six primary keys, everything else in "More".
+   A wide, tall window has room for the whole rail, so it shows it all. */
+.rail .more { display: none; }
+.rail [data-more] { display: none; }
+@media (min-width: 900px) and (min-height: 600px) {
+  .rail [data-more] { display: grid; }
+}
+@media (max-width: 899px), (max-height: 599px) {
+  .rail .more { display: grid; }
+}
 .stage { position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; }
 .screen { position: relative; height: 100%; max-width: 100%; aspect-ratio: var(--ar, 0.46); border-radius: 22px; overflow: hidden;
   background: #000; box-shadow: 0 0 0 1px var(--screen-edge), 0 12px 40px rgba(0,0,0,.18); touch-action: none; user-select: none; -webkit-user-select: none; }
@@ -329,6 +339,22 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .clipboard { align-self: stretch; width: 100%; box-sizing: border-box; min-height: 132px; padding: 12px 14px;
   border-radius: 14px; border: 0; background: var(--secondary-container); color: var(--on-surface);
   font-family: ui-monospace, Menlo, monospace; font-size: 14px; line-height: 1.5; resize: vertical; outline: 0; }
+.moregrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.moreitem { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 84px;
+  padding: 10px 6px; border: 0; border-radius: 16px; background: var(--secondary-container); color: var(--on-surface);
+  font: inherit; font-size: 12px; line-height: 1.3; text-align: center; cursor: pointer; }
+.moreitem svg { width: 22px; height: 22px; flex: none; }
+.moreitem:active { transform: scale(.96); }
+.sortlist { display: flex; flex-direction: column; gap: 6px; }
+.sortrow { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 4px 6px 4px 10px;
+  border-radius: 12px; background: var(--secondary-container); }
+.sortico svg { width: 20px; height: 20px; display: block; }
+.sortname { flex: 1; min-width: 0; font-size: 14px; }
+.sortmove { width: 36px; height: 36px; border: 0; border-radius: 10px; background: transparent;
+  color: var(--on-surface); font-size: 16px; cursor: pointer; }
+.sortmove:disabled { opacity: .28; }
+.sortcut { padding: 8px 2px 0; font-size: 12px; color: var(--summary); }
+.sortbtn { align-self: stretch; margin-top: 10px; }
 #kbd { position: fixed; left: -1000px; top: 0; width: 10px; height: 10px; opacity: 0; }
 
 /* Wide: the list folds away by its width, so the screen glides over rather
@@ -517,18 +543,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
         </div>
       </div>
     </section>
-    <nav class="rail card" id="tools">
-      <button class="iconbtn" data-act="home" data-tip="home"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></svg></button>
-      <button class="iconbtn" data-act="switcher" data-tip="switcher"><svg viewBox="0 0 24 24"><rect x="8" y="3" width="12" height="14" rx="2.5"/><path d="M4 7v11a3 3 0 0 0 3 3h9"/></svg></button>
-      <button class="iconbtn" data-act="notifications" data-tip="notifications"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg></button>
-      <button class="iconbtn" data-act="controls" data-tip="controls"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="8" rx="4"/><rect x="13" y="4" width="8" height="8" rx="2.5"/><rect x="3" y="14" width="8" height="6" rx="2.5"/><rect x="13" y="14" width="8" height="6" rx="3"/></svg></button>
-      <button class="iconbtn" data-act="rotate" data-tip="rotate"><svg viewBox="0 0 24 24"><rect x="3" y="10" width="14" height="10" rx="2.5"/><path d="M11 3.5a8 8 0 0 1 9 7.5"/><path d="M21 7.5l-1 3.5-3.4-1.3"/></svg></button>
-      <button class="iconbtn" data-act="app" data-tip="app"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1.8"/><rect x="14" y="4" width="6" height="6" rx="1.8"/><rect x="4" y="14" width="6" height="6" rx="1.8"/><path d="M17 14v6M14 17h6"/></svg></button>
-      <button class="iconbtn" data-act="keyboard" data-tip="keyboard"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg></button>
-      <button class="iconbtn" data-act="volup" data-tip="volup"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 8a5 5 0 0 1 0 8M18.5 5.5a9 9 0 0 1 0 13"/></svg></button>
-      <button class="iconbtn" data-act="voldown" data-tip="voldown"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg></button>
-      <button class="iconbtn" data-act="wire" data-tip="wire"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M4 9h16M10 9v12"/></svg></button>
-    </nav>
+    <nav class="rail card" id="tools"></nav>
     <aside class="side card" id="tree-panel" hidden>
       <div class="head"><b data-t="tree"></b>
         <button class="iconbtn" id="tree-refresh" data-tip="refresh"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
@@ -572,6 +587,14 @@ const T = {
   auto: ["Auto", "自动"], system: ["System", "跟随系统"], light: ["Light", "浅色"], dark: ["Dark", "深色"],
   replay: ["Replay a recording…", "回放录制…"], replayHint: ["Run the steps of a saved recording on this phone", "在这台手机上依次执行保存的录制步骤"],
   done: ["Done", "完成"],
+  more: ["More", "更多"],
+  sort: ["Sort buttons", "排序按钮"],
+  sortHint: ["Tap ↑ ↓ to move a button. The first five stay on the bar; the rest go to More.", "点 ↑ ↓ 调整顺序。前 5 个常驻工具栏，其余进「更多」。"],
+  sortCut: ["Below goes into “More”", "以下收入「更多」"],
+  moveUp: ["Move up", "上移"], moveDown: ["Move down", "下移"], reset: ["Reset", "恢复默认"],
+  reorder: ["Reorder", "排序"],
+  reorderHint: ["Drag a row to move it. The first five stay on the bar; More takes the last slot.", "拖动一行调整顺序。前五个常驻功能条，「更多」占最后一格。"],
+  resetOrder: ["Reset", "恢复默认"],
   keepAwake: ["Keep awake", "保持唤醒"], off: ["Off", "关闭"],
   clipboard: ["Clipboard", "剪贴板"],
   clipboardHint: ["Send text to the phone, or read what it copied", "把文字发到手机，或读取手机复制的内容"],
@@ -1807,32 +1830,39 @@ async function openApp() {
     act("launch_app", { bundle_id: app.bundle_id });
   } catch (e) { if (e instanceof AuthError) needPair(); else snack(e.message); }
 }
-for (const b of document.querySelectorAll("[data-act]")) {
-  b.addEventListener("click", () => {
-    switch (b.dataset.act) {
-      case "home": act("home", { manual: true }); break;
-      case "switcher": act("app_switcher", { manual: true }); break;
-      case "rotate": act("rotate", { manual: true }); break;
-      case "notifications": act("notification_center", { manual: true }); break;
-      case "controls": act("control_center", { manual: true }); break;
-      case "volup": act("volume", { direction: "up", manual: true }); break;
-      case "voldown": act("volume", { direction: "down", manual: true }); break;
-      // No lock / wake buttons: locking the phone suspends the app that holds
-      // the relay tunnel (the page simply loses the phone), and waking it is a
-      // Home press that cannot get past a passcode. Both stay available to
-      // agents over RPC, where screen_locked says what actually happened.
-      case "app": openApp(); break;
-      case "keyboard":
-        keyboardOn = !keyboardOn; b.classList.toggle("on", keyboardOn);
-        if (keyboardOn) kbd.focus({ preventScroll: true }); else kbd.blur();
-        break;
-      case "wire":
-        wireManual = !wireManual; b.classList.toggle("on", wireManual);
-        if (wireOn()) loadTree(); else draw();
-        break;
-    }
-  });
+// One ordered list of rail actions. The first RAIL_PRIMARY stay on the bar;
+// the rest live in "More". The order is per browser, and Sort changes it.
+function runRailAction(id, b) {
+  switch (id) {
+    case "home": act("home", { manual: true }); break;
+    case "switcher": act("app_switcher", { manual: true }); break;
+    case "rotate": act("rotate", { manual: true }); break;
+    case "notifications": act("notification_center", { manual: true }); break;
+    case "controls": act("control_center", { manual: true }); break;
+    case "volup": act("volume", { direction: "up", manual: true }); break;
+    case "voldown": act("volume", { direction: "down", manual: true }); break;
+    case "more": openMore(); break;
+    case "clipboard": openClipboard(); break;
+    case "shot": systemScreenshot(); break;
+    // No lock / wake buttons: locking the phone suspends the app that holds
+    // the relay tunnel (the page simply loses the phone), and waking it is a
+    // Home press that cannot get past a passcode. Both stay available to
+    // agents over RPC, where screen_locked says what actually happened.
+    case "app": openApp(); break;
+    case "keyboard":
+      keyboardOn = !keyboardOn; if (b) b.classList.toggle("on", keyboardOn);
+      if (keyboardOn) kbd.focus({ preventScroll: true }); else kbd.blur();
+      break;
+    case "wire":
+      wireManual = !wireManual; if (b) b.classList.toggle("on", wireManual);
+      if (wireOn()) loadTree(); else draw();
+      break;
+  }
 }
+$("tools").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-act]");
+  if (b) runRailAction(b.dataset.act, b);
+});
 
 // ───────────────────────────── view tree ─────────────────────────────
 const LINE = /^( *)([A-Za-z0-9]+)(?:, label: '(.*?)')?(?:, value: '(.*?)')?(?:, id: '(.*?)')?, \{\{(-?\d+), (-?\d+)\}, \{(-?\d+), (-?\d+)\}\}/;
@@ -1931,7 +1961,61 @@ $("btn-tree").addEventListener("click", () => setTree(!treeOpen()));
 $("tree-close").addEventListener("click", () => setTree(false));
 
 // ───────────────────────────── settings ─────────────────────────────
-for (const b of document.querySelectorAll(".rail [data-tip], .topbar .iconbtn[data-tip]")) {
+const RAIL_ACTIONS = [
+  ["home", "home", '<path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/>'],
+  ["switcher", "switcher", '<rect x="8" y="3" width="12" height="14" rx="2.5"/><path d="M4 7v11a3 3 0 0 0 3 3h9"/>'],
+  ["keyboard", "keyboard", '<rect x="3" y="6" width="18" height="12" rx="3"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/>'],
+  ["voldown", "voldown", '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9a4 4 0 0 1 0 6"/>'],
+  ["volup", "volup", '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 8a5 5 0 0 1 0 8M18.5 5.5a9 9 0 0 1 0 13"/>'],
+  ["notifications", "notifications", '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>'],
+  ["controls", "controls", '<rect x="3" y="4" width="8" height="8" rx="4"/><rect x="13" y="4" width="8" height="8" rx="2.5"/><rect x="3" y="14" width="8" height="6" rx="2.5"/><rect x="13" y="14" width="8" height="6" rx="3"/>'],
+  ["rotate", "rotate", '<rect x="3" y="10" width="14" height="10" rx="2.5"/><path d="M11 3.5a8 8 0 0 1 9 7.5"/><path d="M21 7.5l-1 3.5-3.4-1.3"/>'],
+  ["app", "app", '<rect x="4" y="4" width="6" height="6" rx="1.8"/><rect x="14" y="4" width="6" height="6" rx="1.8"/><rect x="4" y="14" width="6" height="6" rx="1.8"/><path d="M17 14v6M14 17h6"/>'],
+  ["clipboard", "clipboard", '<rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4.5V3h6v1.5M9 10h6M9 14h6"/>'],
+  ["shot", "systemShot", '<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>'],
+  ["wire", "wire", '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M4 9h16M10 9v12"/>'],
+];
+/// How many actions stay on the bar on a narrow screen; the rest go to More.
+const RAIL_PRIMARY = 5;
+const railDefaults = RAIL_ACTIONS.map(([id]) => id);
+let railOrder = (() => {
+  try {
+    const saved = JSON.parse(prefs.get("railOrder") || "null");
+    if (Array.isArray(saved)) {
+      const known = new Set(railDefaults);
+      const kept = saved.filter((id) => known.has(id));
+      for (const id of railDefaults) if (!kept.includes(id)) kept.push(id);
+      if (kept.length === railDefaults.length) return kept;
+    }
+  } catch (_) {}
+  return railDefaults.slice();
+})();
+const railSpec = (id) => RAIL_ACTIONS.find(([a]) => a === id);
+function saveRailOrder() { prefs.set("railOrder", JSON.stringify(railOrder)); }
+function railButton(id, inMore) {
+  const [, tip, path] = railSpec(id);
+  const b = el("button", { class: "iconbtn labeled", "data-act": id, "data-tip": tip });
+  if (inMore) b.dataset.more = "";
+  b.append(icon(path), el("span", { class: "lbl", text: t(tip) }));
+  return b;
+}
+function renderRail() {
+  const tools = $("tools");
+  tools.replaceChildren(...railOrder.map((id, i) => railButton(id, i >= RAIL_PRIMARY)));
+  const more = el("button", { class: "iconbtn more labeled", "data-act": "more", "data-tip": "more" });
+  more.append(icon('<path d="M6 12h.01M12 12h.01M18 12h.01"/>'), el("span", { class: "lbl", text: t("more") }));
+  tools.append(more);
+  applyLabels();
+}
+function moveRail(id, delta) {
+  const i = railOrder.indexOf(id), j = i + delta;
+  if (i < 0 || j < 0 || j >= railOrder.length) return;
+  railOrder.splice(j, 0, railOrder.splice(i, 1)[0]);
+  saveRailOrder();
+  renderRail();
+}
+renderRail();
+for (const b of document.querySelectorAll(".topbar .iconbtn[data-tip]")) {
   b.classList.add("labeled");
   b.append(el("span", { class: "lbl", text: b.title }));
 }
@@ -1965,10 +2049,6 @@ $("btn-settings").addEventListener("click", () => {
         .then((r) => snack(r.active ? t("keepAwake") : t("off")))
         .catch((e) => snack(e.message || String(e)));
     })),
-    (close) => el("div", { class: "comp", onclick: () => { close(null); openClipboard(); } },
-      el("div", { class: "t" }, el("div", { class: "title", text: t("clipboard") }), el("div", { class: "summary", text: t("clipboardHint") }))),
-    (close) => el("div", { class: "comp", onclick: () => { close(null); systemScreenshot(); } },
-      el("div", { class: "t" }, el("div", { class: "title", text: t("systemShot") }), el("div", { class: "summary", text: t("systemShotHint") }))),
     (close) => el("div", { class: "comp", onclick: () => { close(null); $("flow-file").click(); } },
       el("div", { class: "t" }, el("div", { class: "title", text: t("replay") }), el("div", { class: "summary", text: t("replayHint") }))),
     (close) => el("div", { class: "comp", onclick: () => { close(null); guide(); } },
@@ -1977,6 +2057,42 @@ $("btn-settings").addEventListener("click", () => {
       el("div", { class: "t" }, el("div", { class: "title", text: t("copyDiag") }), el("div", { class: "summary", text: t("copyDiagHint") }))),
   ], buttons: [[t("done"), null, true]] });
 });
+function openMore() {
+  const items = railOrder.slice(RAIL_PRIMARY);
+  modal({ title: t("more"), sheet: true,
+    body: [(close) => el("div", { class: "moregrid" }, ...items.map((id) => {
+      const [, tip, path] = railSpec(id);
+      return el("button", { class: "moreitem", onclick: () => {
+        close(null);
+        runRailAction(id, $("tools").querySelector('[data-act="' + id + '"]'));
+      } }, icon(path), el("span", { text: t(tip) }));
+    })),
+    (close) => el("button", { class: "btn sortbtn", onclick: () => { close(null); openSort(); } }, t("sort"))],
+    buttons: [[t("done"), null, true]] });
+}
+function openSort() {
+  const list = el("div", { class: "sortlist" });
+  const paint = () => {
+    const rows = railOrder.map((id, i) => {
+      const [, tip, path] = railSpec(id);
+      const up = el("button", { class: "sortmove", "aria-label": t("moveUp"), onclick: () => { moveRail(id, -1); paint(); } }, "↑");
+      const down = el("button", { class: "sortmove", "aria-label": t("moveDown"), onclick: () => { moveRail(id, 1); paint(); } }, "↓");
+      up.disabled = i === 0;
+      down.disabled = i === railOrder.length - 1;
+      return el("div", { class: "sortrow" }, el("span", { class: "sortico" }, icon(path)),
+        el("span", { class: "sortname", text: t(tip) }), up, down);
+    });
+    list.replaceChildren(...rows.slice(0, RAIL_PRIMARY),
+      el("div", { class: "sortcut", text: t("sortCut") }), ...rows.slice(RAIL_PRIMARY));
+  };
+  paint();
+  modal({ title: t("sort"), sheet: true,
+    body: [el("div", { class: "summary", text: t("sortHint") }), list],
+    buttons: [[t("reset"), "reset"], [t("done"), null, true]] })
+    .then((v) => {
+      if (v === "reset") { railOrder = railDefaults.slice(); saveRailOrder(); renderRail(); openSort(); }
+    });
+}
 async function openClipboard() {
   const area = el("textarea", { class: "clipboard", rows: "6", placeholder: t("clipboardPlaceholder") });
   const status = el("div", { class: "summary" });
@@ -2021,8 +2137,9 @@ new ResizeObserver(sizeOverlay).observe(overlay);
 // ───────────────────────────── guide ─────────────────────────────
 // Shown once per browser: a spotlight on each part of the page in turn.
 function guide() {
-  const legend = () => el("div", { class: "legend" }, ...[...document.querySelectorAll("#tools [data-tip]")].map((b) =>
-    el("div", {}, b.querySelector("svg").cloneNode(true), el("span", { text: b.title }))));
+  const legend = () => el("div", { class: "legend" }, ...[...document.querySelectorAll("#tools [data-tip]")]
+    .filter((b) => getComputedStyle(b).display !== "none").map((b) =>
+      el("div", {}, b.querySelector("svg").cloneNode(true), el("span", { text: b.title }))));
   const steps = [
     ["screen", "g1t", desktop ? "g1d" : "g1m"], ["tools", "g2t", "g2", legend],
     [wide.matches ? "devices" : ".titles", "g7t", "g7"], [".titles, #people", "g3t", "g3"],
