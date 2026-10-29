@@ -5,6 +5,8 @@ struct ActionCommand {
     var x: Double?
     var y: Double?
     var direction: String?
+    var action: String?
+    var seconds: Double?
     var distance: Double?
     var text: String?
     var duration: Double?
@@ -55,6 +57,8 @@ struct ActionCommand {
         self.x = params?["x"]?.doubleValue
         self.y = params?["y"]?.doubleValue
         self.direction = params?["direction"]?.stringValue
+        self.action = params?["action"]?.stringValue
+        self.seconds = params?["seconds"]?.doubleValue
         self.distance = params?["distance"]?.doubleValue
         self.text = params?["text"]?.stringValue
         self.duration = params?["duration"]?.doubleValue

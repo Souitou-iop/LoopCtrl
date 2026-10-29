@@ -326,6 +326,9 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .link { color: var(--primary); cursor: pointer; background: none; border: 0; padding: 0; font-size: 13px; }
 .keyfield { align-self: stretch; height: 48px; padding: 0 14px; border-radius: 14px; border: 0; background: var(--secondary-container);
   font-family: ui-monospace, Menlo, monospace; font-size: 14px; outline: 0; }
+.clipboard { align-self: stretch; width: 100%; box-sizing: border-box; min-height: 132px; padding: 12px 14px;
+  border-radius: 14px; border: 0; background: var(--secondary-container); color: var(--on-surface);
+  font-family: ui-monospace, Menlo, monospace; font-size: 14px; line-height: 1.5; resize: vertical; outline: 0; }
 #kbd { position: fixed; left: -1000px; top: 0; width: 10px; height: 10px; opacity: 0; }
 
 /* Wide: the list folds away by its width, so the screen glides over rather
@@ -522,6 +525,8 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
       <button class="iconbtn" data-act="rotate" data-tip="rotate"><svg viewBox="0 0 24 24"><rect x="3" y="10" width="14" height="10" rx="2.5"/><path d="M11 3.5a8 8 0 0 1 9 7.5"/><path d="M21 7.5l-1 3.5-3.4-1.3"/></svg></button>
       <button class="iconbtn" data-act="app" data-tip="app"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1.8"/><rect x="14" y="4" width="6" height="6" rx="1.8"/><rect x="4" y="14" width="6" height="6" rx="1.8"/><path d="M17 14v6M14 17h6"/></svg></button>
       <button class="iconbtn" data-act="keyboard" data-tip="keyboard"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg></button>
+      <button class="iconbtn" data-act="volup" data-tip="volup"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 8a5 5 0 0 1 0 8M18.5 5.5a9 9 0 0 1 0 13"/></svg></button>
+      <button class="iconbtn" data-act="voldown" data-tip="voldown"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg></button>
       <button class="iconbtn" data-act="wire" data-tip="wire"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M4 9h16M10 9v12"/></svg></button>
     </nav>
     <aside class="side card" id="tree-panel" hidden>
@@ -567,6 +572,17 @@ const T = {
   auto: ["Auto", "自动"], system: ["System", "跟随系统"], light: ["Light", "浅色"], dark: ["Dark", "深色"],
   replay: ["Replay a recording…", "回放录制…"], replayHint: ["Run the steps of a saved recording on this phone", "在这台手机上依次执行保存的录制步骤"],
   done: ["Done", "完成"],
+  keepAwake: ["Keep awake", "保持唤醒"], off: ["Off", "关闭"],
+  clipboard: ["Clipboard", "剪贴板"],
+  clipboardHint: ["Send text to the phone, or read what it copied", "把文字发到手机，或读取手机复制的内容"],
+  clipboardPlaceholder: ["Text to put on the phone's clipboard", "要放进手机剪贴板的文字"],
+  sendToPhone: ["Send to phone", "发到手机"], readPhone: ["Read from phone", "读取手机"],
+  copiedToPhone: ["Copied to the phone's clipboard", "已复制到手机剪贴板"],
+  readFromPhone: ["Read %s characters from the phone", "已读取手机剪贴板 %s 个字符"],
+  systemShot: ["System screenshot", "系统截图"],
+  systemShotHint: ["Ask iOS to take a screenshot (saved to Photos)", "让 iOS 截图并存入相册"],
+  systemShotSent: ["Screenshot requested — check Photos", "已请求截图，请在相册确认"],
+  volup: ["Volume up", "音量+"], voldown: ["Volume down", "音量-"],
   paused: ["The phone's owner paused remote control.\nNothing is visible or sent until they resume it on the phone.",
            "机主已在手机上暂停远程控制。\n在机主继续之前，看不到画面，也无法操作。"],
   hiddenTag: ["This screen blocks capture · showing outlines", "此画面禁止截屏 · 显示元素轮廓"],
@@ -628,6 +644,8 @@ const settings = {
   quality: prefs.get("quality") || "",   // filled in at start, once we know relay or direct
   codec: prefs.get("codec") || "auto",
   theme: prefs.get("theme") || "system",
+  // Seconds of keep-awake, kept as the segmented control's value.
+  keepAwake: prefs.get("keepAwake") || "0",
   // Words beside the icons where there is room for them.
   labels: prefs.get("labels") || (matchMedia("(pointer: fine) and (min-width: 900px)").matches ? "both" : "icon"),
 };
@@ -1508,6 +1526,7 @@ const actions = [];
 let acting = false;
 const LABELS = { tap: ["Tap", "点按"], long_press: ["Long press", "长按"], gesture: ["Gesture", "手势"], drag: ["Swipe", "滑动"],
   type: ["Typing", "输入"], home: ["Home", "主屏幕"], lock: ["Lock", "锁屏"], unlock: ["Wake", "唤醒"], launch_app: ["Opening the app", "打开 App"],
+  volume: ["Volume", "音量"], clipboard: ["Clipboard", "剪贴板"], keep_awake: ["Keep awake", "保持唤醒"], system_screenshot: ["Screenshot", "截图"],
   rotate: ["Rotate", "旋转屏幕"], app_switcher: ["App switcher", "多任务"],
   notification_center: ["Notification Center", "通知中心"], control_center: ["Control Center", "控制中心"], double_tap: ["Double tap", "双击"], swipe: ["Swipe", "滑动"],
   scroll: ["Scroll", "滚动"], clear_text: ["Clear text", "清空文本"], activate_app: ["Switching app", "切换 App"],
@@ -1796,6 +1815,8 @@ for (const b of document.querySelectorAll("[data-act]")) {
       case "rotate": act("rotate", { manual: true }); break;
       case "notifications": act("notification_center", { manual: true }); break;
       case "controls": act("control_center", { manual: true }); break;
+      case "volup": act("volume", { direction: "up", manual: true }); break;
+      case "voldown": act("volume", { direction: "down", manual: true }); break;
       // No lock / wake buttons: locking the phone suspends the app that holds
       // the relay tunnel (the page simply loses the phone), and waking it is a
       // Home press that cannot get past a passcode. Both stay available to
@@ -1938,6 +1959,16 @@ $("btn-settings").addEventListener("click", () => {
     row(t("labels"), segmented([["icon", t("icons")], ["text", t("words")], ["both", t("both")]], settings.labels, (v) => {
       settings.labels = v; prefs.set("labels", v); applyLabels();
     })),
+    row(t("keepAwake"), segmented([["0", t("off")], ["900", "15m"], ["1800", "30m"], ["3600", "60m"]], settings.keepAwake, (v) => {
+      settings.keepAwake = v; prefs.set("keepAwake", v);
+      rpc("keep_awake", { seconds: Number(v) })
+        .then((r) => snack(r.active ? t("keepAwake") : t("off")))
+        .catch((e) => snack(e.message || String(e)));
+    })),
+    (close) => el("div", { class: "comp", onclick: () => { close(null); openClipboard(); } },
+      el("div", { class: "t" }, el("div", { class: "title", text: t("clipboard") }), el("div", { class: "summary", text: t("clipboardHint") }))),
+    (close) => el("div", { class: "comp", onclick: () => { close(null); systemScreenshot(); } },
+      el("div", { class: "t" }, el("div", { class: "title", text: t("systemShot") }), el("div", { class: "summary", text: t("systemShotHint") }))),
     (close) => el("div", { class: "comp", onclick: () => { close(null); $("flow-file").click(); } },
       el("div", { class: "t" }, el("div", { class: "title", text: t("replay") }), el("div", { class: "summary", text: t("replayHint") }))),
     (close) => el("div", { class: "comp", onclick: () => { close(null); guide(); } },
@@ -1946,6 +1977,25 @@ $("btn-settings").addEventListener("click", () => {
       el("div", { class: "t" }, el("div", { class: "title", text: t("copyDiag") }), el("div", { class: "summary", text: t("copyDiagHint") }))),
   ], buttons: [[t("done"), null, true]] });
 });
+async function openClipboard() {
+  const area = el("textarea", { class: "clipboard", rows: "6", placeholder: t("clipboardPlaceholder") });
+  const status = el("div", { class: "summary" });
+  const send = el("button", { class: "btn primary", text: t("sendToPhone"), onclick: async () => {
+    try { const r = await rpc("clipboard", { action: "set", text: area.value }); status.textContent = t("copiedToPhone") + " (" + r.length + ")"; }
+    catch (e) { status.textContent = e.message || String(e); }
+  }});
+  const read = el("button", { class: "btn", text: t("readPhone"), onclick: async () => {
+    try { const r = await rpc("clipboard", { action: "get" }); area.value = r.text || ""; status.textContent = t("readFromPhone", String(r.length || 0)); }
+    catch (e) { status.textContent = e.message || String(e); }
+  }});
+  modal({ title: t("clipboard"), sheet: true,
+    body: [area, status, el("div", { class: "btnrow" }, read, send)],
+    buttons: [[t("done"), null, true]] });
+}
+async function systemScreenshot() {
+  try { await rpc("system_screenshot"); snack(t("systemShotSent")); }
+  catch (e) { snack(e.message || String(e)); }
+}
 async function copyDiagnostics() {
   const text = JSON.stringify({
     page: pageVersion, browser: navigator.userAgent, secure: window.isSecureContext,
@@ -2021,7 +2071,7 @@ function guide() {
 let recording = null, replaying = null;
 // "wait" is never recorded, but a recording may be edited to wait for a text
 // ({method:"wait", params:{text, timeout}}) before its next step.
-const RECORDED = new Set(["tap", "long_press", "gesture", "drag", "type", "home", "lock", "unlock", "launch_app", "rotate", "app_switcher", "notification_center", "control_center", "wait"]);
+const RECORDED = new Set(["tap", "long_press", "gesture", "drag", "type", "home", "lock", "unlock", "launch_app", "rotate", "app_switcher", "notification_center", "control_center", "volume", "wait"]);
 function record(method, params) {
   if (!recording || replaying || !RECORDED.has(method)) return;
   const now = performance.now();

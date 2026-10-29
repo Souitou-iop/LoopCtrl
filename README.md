@@ -316,7 +316,7 @@ plaintext mode. `GET /schema` lists every method and parameter, and
 - **Touch**: `tap`, `double_tap`, `long_press`, `tap_element`, `find_and_tap`, `swipe`, `scroll`, `scroll_to_element`, `page`, `drag`
 - **Type**: `type`, `clear_text`
 - **Apps**: `resolve_app`, `launch_app`, `activate_app`, `terminate_app`, `list_apps`, `open_url`
-- **Device**: `device_info`, `home`, `lock`, `unlock`, `is_locked`, `wait`
+- **Device**: `device_info`, `home`, `lock`, `unlock`, `is_locked`, `volume`, `clipboard`, `keep_awake`, `system_screenshot`, `wait`
 - **Server**: `config`, `logs`, `reset`, `stream_ticket`
 
 `device_info` reports a `capabilities` list, so a client checks features

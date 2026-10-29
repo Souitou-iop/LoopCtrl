@@ -241,7 +241,7 @@ JSON-RPC 2.0，走 `POST /rpc`，装在加密信封里，没有明文模式。`G
 - **点和滑**：`tap`、`double_tap`、`long_press`、`tap_element`、`find_and_tap`、`swipe`、`scroll`、`scroll_to_element`、`page`、`drag`
 - **输入**：`type`、`clear_text`
 - **App**：`resolve_app`、`launch_app`、`activate_app`、`terminate_app`、`list_apps`、`open_url`
-- **设备**：`device_info`、`home`、`lock`、`unlock`、`is_locked`、`wait`
+- **设备**：`device_info`、`home`、`lock`、`unlock`、`is_locked`、`volume`、`clipboard`、`keep_awake`、`system_screenshot`、`wait`
 - **服务**：`config`、`logs`、`reset`、`stream_ticket`
 
 `device_info` 会给出 `capabilities` 列表，客户端按能力判断功能，不必比较版本号。普通 HTTP：`/skill`、`/schema`、

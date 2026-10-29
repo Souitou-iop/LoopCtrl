@@ -297,6 +297,37 @@ struct RPCMethodRegistry {
             returns: "Lock state boolean"
         ),
         RPCMethodDef(
+            name: "volume",
+            description: "Press the phone's real volume button: direction 'up' or 'down'. This is XCUIDevice's public volume button, so it changes the media volume and shows the system HUD; the reply confirms the press was accepted, not the resulting level. Not available on the Simulator.",
+            params: [
+                RPCParamDef(name: "direction", type: "string", required: true, description: "'up' or 'down'"),
+            ],
+            returns: "{message, direction, outcome}"
+        ),
+        RPCMethodDef(
+            name: "clipboard",
+            description: "Read or write the phone's system clipboard. action:'set' with text copies text onto the phone so it can be pasted there; action:'get' returns what the phone copied (up to 100000 characters). Reading another app's text may show iOS's Allow Paste prompt on the phone. The text is never written to LoopCtrl's log.",
+            params: [
+                RPCParamDef(name: "action", type: "string", required: false, description: "'get' (default) or 'set'"),
+                RPCParamDef(name: "text", type: "string", required: false, description: "Text to put on the phone's clipboard (with action:'set')"),
+            ],
+            returns: "get: {text, length, truncated}; set: {message, length, outcome}"
+        ),
+        RPCMethodDef(
+            name: "keep_awake",
+            description: "Keep Auto-Lock away for a long unattended run: every 10 s sends F13, a key iOS ignores, through the private XCDeviceEvent API. seconds 0 stops it (default 1800, max 3600). It does not unlock a locked phone and skips its beats while locked; for hours-long runs set Auto-Lock to Never instead. Returns the current state either way.",
+            params: [
+                RPCParamDef(name: "seconds", type: "number", required: false, description: "How long to keep it awake; 0 stops (default 1800, max 3600)"),
+            ],
+            returns: "{active, remaining_ms, beats, skipped_locked, capability}"
+        ),
+        RPCMethodDef(
+            name: "system_screenshot",
+            description: "Trigger the system screenshot key (the same Consumer Snapshot event as the hardware shortcut). iOS saves it to Photos and shows its preview; the reply means the event was dispatched, NOT that the file reached Photos. Check Photos before claiming it saved. Unavailable when XCDeviceEvent is missing.",
+            params: [],
+            returns: "{invoked, acknowledged, saved_verified:false, hint}"
+        ),
+        RPCMethodDef(
             name: "list_apps",
             description: "List installed apps with their bundle_id and name. The system enumeration is a private API that newer iOS refuses; when it does, this returns source:'opened_history' instead — apps previously opened successfully through LoopCtrl on THIS device, most recent first (every entry is installed, but the list is incomplete). An empty list never means 'not installed'. Prefer resolve_app to get a bundle_id from an app name. Pass text to filter by name or bundle substring (case-insensitive). By default only user apps are returned; pass element_type:\"all\" to include system apps.",
             params: [
@@ -507,6 +538,10 @@ struct RPCMethodRegistry {
         "screen_text",         // Vision OCR fallback when the AX tree has no on-screen rows
         "cli_binary",          // GET /skill/clients/cli — static aarch64-musl client
         "nearby_discovery",    // Bonjour over peer-to-peer Wi-Fi (AWDL) on port+1, when turned on
+        "volume_buttons",      // volume{direction} — XCUIDevice's public volume buttons
+        "clipboard",           // clipboard{action:'get'|'set'} — the phone's system pasteboard
+        "keep_awake",          // keep_awake{seconds} — F13 HID beats, private XCDeviceEvent
+        "system_screenshot",   // system_screenshot — Consumer Snapshot key
     ]
 
     static func generateSchemaDocument() -> [String: Any] {

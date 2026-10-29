@@ -31,6 +31,13 @@ class ActionHandler {
     private let app: XCUIApplication
     private let fastHandler: FastActionHandler
 
+    /// Keep-awake: a no-op HID key every 10 s, while a deadline is in the
+    /// future. State lives on the main queue; the RPC queue reads it there.
+    private var keepAwakeTimer: DispatchSourceTimer?
+    private var keepAwakeUntil: TimeInterval = 0
+    private var keepAwakeBeats = 0
+    private var keepAwakeSkippedLocked = 0
+
     /// A resolvable element reference. Re-queries the LIVE tree each time it's
     /// used, so it stays valid across small layout changes (unlike a coordinate).
     struct ElementRef {
@@ -54,6 +61,13 @@ class ActionHandler {
     private var refCounter = 0
 
     private var nowMonotonic: TimeInterval { ProcessInfo.processInfo.systemUptime }
+
+    /// UIKit/pasteboard/HID calls belong on the main thread. The RPC queue is
+    /// off it; the in-process client may already be on it.
+    private func onMain<T>(_ work: () throws -> T) rethrows -> T {
+        if Thread.isMainThread { return try work() }
+        return try DispatchQueue.main.sync(execute: work)
+    }
 
     private func makeRef(_ ref: ElementRef) -> String {
         pruneRefs()
@@ -1253,6 +1267,14 @@ class ActionHandler {
             return unlock()
         case "is_locked":
             return isLocked()
+        case "volume":
+            return volume(cmd)
+        case "clipboard":
+            return clipboard(cmd)
+        case "keep_awake":
+            return keepAwake(cmd)
+        case "system_screenshot":
+            return systemScreenshot()
         case "logs", "recent_logs":
             // An RPC, not just the GET /logs byte stream. The timeout messages
             // tell a caller to "check the logs to see whether the action
@@ -2715,6 +2737,180 @@ class ActionHandler {
     private func isLocked() -> ([String: JSONValue]?, JSONRPCError?) {
         let locked = LockStateMonitor.shared().isLocked
         return (["locked": .bool(locked)], nil)
+    }
+
+    // MARK: - Hardware keys, clipboard, keep-awake
+
+    /// `volume {direction:"up"|"down"}`: the real volume buttons, through
+    /// XCTest's public XCUIDevice API. It changes the phone's media volume;
+    /// the reply says the press was accepted, not what the level became.
+    private func volume(_ cmd: ActionCommand) -> ([String: JSONValue]?, JSONRPCError?) {
+        let direction = (cmd.direction ?? "").lowercased()
+        let button: XCUIDevice.Button
+        switch direction {
+        case "up", "volume_up": button = .volumeUp
+        case "down", "volume_down": button = .volumeDown
+        default:
+            return (nil, JSONRPCError(code: -32602, message:
+                "volume needs direction:'up' or 'down'.", data: [
+                    "outcome": .string("not_sent"), "retry_safe": .bool(true),
+                ]))
+        }
+        #if targetEnvironment(simulator)
+        return (nil, JSONRPCError(code: -32603, message:
+            "The Simulator has no volume buttons.", data: [
+                "outcome": .string("not_sent"), "retry_safe": .bool(true),
+            ]))
+        #else
+        if let raised = ObjCException.catching({ XCUIDevice.shared.press(button) }) {
+            return (nil, .serverError("Volume press failed: \(raised)"))
+        }
+        return ([
+            "message": .string("Pressed volume \(direction)"),
+            "direction": .string(direction),
+            "outcome": .string("applied"),
+        ], nil)
+        #endif
+    }
+
+    /// `clipboard {action:"get"|"set", text}`: the phone's system pasteboard.
+    /// Reading someone else's text may make iOS ask "Allow Paste" on the
+    /// phone; writing never prompts. The text is never written to the log.
+    private func clipboard(_ cmd: ActionCommand) -> ([String: JSONValue]?, JSONRPCError?) {
+        let action = (cmd.action ?? "get").lowercased()
+        switch action {
+        case "get":
+            var text = ""
+            var raised: String?
+            onMain {
+                raised = ObjCException.catching { text = UIPasteboard.general.string ?? "" }
+            }
+            if let raised { return (nil, .serverError("Clipboard read failed: \(raised)")) }
+            let limit = 100_000
+            let truncated = text.count > limit
+            let shown = truncated ? String(text.prefix(limit)) : text
+            return ([
+                "text": .string(shown),
+                "length": .int(text.count),
+                "truncated": .bool(truncated),
+            ], nil)
+        case "set":
+            guard let text = cmd.text else {
+                return (nil, JSONRPCError(code: -32602, message:
+                    "clipboard set needs text.", data: [
+                        "outcome": .string("not_sent"), "retry_safe": .bool(true),
+                    ]))
+            }
+            var raised: String?
+            onMain {
+                raised = ObjCException.catching { UIPasteboard.general.string = text }
+            }
+            if let raised { return (nil, .serverError("Clipboard write failed: \(raised)")) }
+            return ([
+                "message": .string("Copied \(text.count) characters to the phone's clipboard"),
+                "length": .int(text.count),
+                "outcome": .string("applied"),
+            ], nil)
+        default:
+            return (nil, JSONRPCError(code: -32602, message:
+                "clipboard action is 'get' or 'set'.", data: [
+                    "outcome": .string("not_sent"), "retry_safe": .bool(true),
+                ]))
+        }
+    }
+
+    /// `keep_awake {seconds}`: press F13 every 10 s so Auto-Lock stays away
+    /// while a long job runs. 0 stops it. F13 is a key iOS maps to nothing;
+    /// the event needs the private XCDeviceEvent class, probed at runtime.
+    private func keepAwake(_ cmd: ActionCommand) -> ([String: JSONValue]?, JSONRPCError?) {
+        let action = (cmd.action ?? "").lowercased()
+        let seconds = cmd.seconds ?? (action == "stop" ? 0 : 1800)
+        if seconds > 0 && !DeviceKeys.available() {
+            return (nil, JSONRPCError(code: -32603, message:
+                "Keep-awake is unavailable on this OS: XCDeviceEvent is missing.", data: [
+                    "outcome": .string("not_sent"), "retry_safe": .bool(true),
+                ]))
+        }
+        var out: [String: JSONValue] = [:]
+        out = onMain {
+            if seconds <= 0 {
+                stopKeepAwakeLocked()
+            } else {
+                keepAwakeUntil = nowMonotonic + min(max(seconds, 5), 3600)
+                keepAwakeBeats = 0
+                keepAwakeSkippedLocked = 0
+                if keepAwakeTimer == nil {
+                    let timer = DispatchSource.makeTimerSource(queue: .main)
+                    timer.schedule(deadline: .now() + 10, repeating: 10)
+                    timer.setEventHandler { [weak self] in self?.keepAwakeBeat() }
+                    timer.resume()
+                    keepAwakeTimer = timer
+                }
+                keepAwakeBeat()
+            }
+            return keepAwakeStateLocked()
+        }
+        return (out, nil)
+    }
+
+    private func keepAwakeBeat() {
+        guard nowMonotonic < keepAwakeUntil else {
+            stopKeepAwakeLocked()
+            return
+        }
+        if LockStateMonitor.shared().isLocked {
+            keepAwakeSkippedLocked += 1
+            return
+        }
+        do {
+            try DeviceKeys.sendPage(0x07, usage: 0x68, duration: 0.005)
+            keepAwakeBeats += 1
+        } catch {
+            LoopCtrlUITests.logBuffer.append("⏰ keep-awake beat failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func stopKeepAwakeLocked() {
+        keepAwakeTimer?.cancel()
+        keepAwakeTimer = nil
+        keepAwakeUntil = 0
+    }
+
+    private func keepAwakeStateLocked() -> [String: JSONValue] {
+        let remaining = max(0, keepAwakeUntil - nowMonotonic)
+        return [
+            "active": .bool(remaining > 0),
+            "remaining_ms": .int(Int(remaining * 1000)),
+            "beats": .int(keepAwakeBeats),
+            "skipped_locked": .int(keepAwakeSkippedLocked),
+            "capability": .bool(DeviceKeys.available()),
+        ]
+    }
+
+    /// `system_screenshot`: the Consumer "Snapshot" key, which is what the
+    /// hardware shortcut sends. iOS saves it to Photos and shows its preview;
+    /// the acknowledgement only means the event was dispatched.
+    private func systemScreenshot() -> ([String: JSONValue]?, JSONRPCError?) {
+        guard DeviceKeys.available() else {
+            return (nil, JSONRPCError(code: -32603, message:
+                "System screenshot is unavailable on this OS: XCDeviceEvent is missing.", data: [
+                    "outcome": .string("not_sent"), "retry_safe": .bool(true),
+                ]))
+        }
+        do {
+            try onMain { try DeviceKeys.sendPage(0x0C, usage: 0x65, duration: 0.005) }
+        } catch {
+            return (nil, JSONRPCError(code: -32603, message:
+                "System screenshot failed: \(error.localizedDescription)", data: [
+                    "outcome": .string("not_sent"), "retry_safe": .bool(true),
+                ]))
+        }
+        return ([
+            "invoked": .bool(true),
+            "acknowledged": .bool(true),
+            "saved_verified": .bool(false),
+            "hint": .string("Check Photos (or the screenshot preview) before saying it was saved."),
+        ], nil)
     }
 
     // MARK: - App Control
