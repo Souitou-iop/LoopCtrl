@@ -199,6 +199,11 @@ struct RemoteConnectionMachine: Equatable {
             phase = .connecting
         case (.enrolling, .established), (.connecting, .established):
             phase = .connected(since: now)
+        case (.failed(.serverUnreachable), .established):
+            // The channel kept trying after giving the card up, and got through.
+            reconnects.append(now)
+            reconnects.removeAll { now.timeIntervalSince($0) >= Self.reconnectWindow }
+            phase = .connected(since: now)
         case (.reconnecting(_, let since), .established):
             reconnects.append(now)
             reconnects.removeAll { now.timeIntervalSince($0) >= Self.reconnectWindow }

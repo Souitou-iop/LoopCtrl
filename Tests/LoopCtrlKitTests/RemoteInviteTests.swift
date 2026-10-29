@@ -281,6 +281,20 @@ final class RemoteConnectionMachineTests: XCTestCase {
         XCTAssertEqual(m.phase, .failed(.serverUnreachable))
     }
 
+    func testComesBackAfterUnreachable() {
+        var m = RemoteConnectionMachine()
+        m.handle(.open, now: t0)
+        m.handle(.established, now: t0)
+        m.handle(.fail(.serverUnreachable), now: t0 + 10)
+        // The channel keeps trying after the card gave up, and gets through.
+        XCTAssertTrue(m.handle(.established, now: t0 + 90))
+        XCTAssertEqual(m.phase, .connected(since: t0 + 90))
+        XCTAssertEqual(m.reconnectCount(now: t0 + 91), 1)
+        // A failure for good stays one.
+        m.handle(.fail(.disconnectedByServer), now: t0 + 100)
+        XCTAssertFalse(m.handle(.established, now: t0 + 110))
+    }
+
     func testServerClosesWhileOperated() {
         var m = RemoteConnectionMachine()
         m.handle(.open, now: t0)

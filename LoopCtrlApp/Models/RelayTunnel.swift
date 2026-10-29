@@ -26,6 +26,18 @@ final class RelayChannel {
     private var lastActivity = Date.distantPast
     private static let operatorIdle: TimeInterval = 120
 
+    /// The network path: bumped on every change, with the interface in use.
+    /// A retry waiting out its backoff goes at once on a change, and a tunnel
+    /// whose interface went away (Wi-Fi to cellular) is replaced at once,
+    /// rather than when a ping finally fails.
+    private let pathMonitor = NWPathMonitor()
+    private var pathChanges = 0
+    private var interface: NWInterface.InterfaceType?
+    /// After this many failed tries the card says 无法连接服务器, and the
+    /// channel keeps trying at this pace: a phone that was off the network
+    /// for a minute comes back by itself.
+    private static let slowRetry: Double = 30
+
     init(connection: RemoteConnection, key: Curve25519.Signing.PrivateKey,
          emit: @escaping (RemoteChannelEvent) -> Void) {
         self.connection = connection
@@ -37,6 +49,15 @@ final class RelayChannel {
     func run() async {
         let ticker = Task { await self.tick() }
         defer { ticker.cancel() }
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            guard let self, path.status == .satisfied else { return }
+            self.state.lock()
+            self.pathChanges += 1
+            self.interface = path.availableInterfaces.first?.type
+            self.state.unlock()
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "top.ebato.loopctrl.relay.path"))
+        defer { pathMonitor.cancel() }
         while !Task.isCancelled {
             do {
                 let (token, rtt) = try await authenticate()
@@ -58,18 +79,35 @@ final class RelayChannel {
                 }
                 failures += 1
                 // Five tries with backoff, then 无法连接服务器 (the store's
-                // machine counts the same drops for its reconnect state).
-                if failures > RemoteConnectionMachine.maxReconnectAttempts {
+                // machine counts the same drops for its reconnect state), and
+                // on trying, slower, until the network is back.
+                if failures == RemoteConnectionMachine.maxReconnectAttempts + 1 {
                     emit(.failed(.serverUnreachable))
-                    return
                 }
-                let delay = min(16, pow(2, Double(failures - 1)))
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                let delay = failures > RemoteConnectionMachine.maxReconnectAttempts
+                    ? Self.slowRetry : min(16, pow(2, Double(failures - 1)))
+                await waitForRetry(delay)
             }
         }
     }
 
     private struct TokenLapsed: Error {}
+
+    private var path: (changes: Int, interface: NWInterface.InterfaceType?) {
+        state.lock()
+        defer { state.unlock() }
+        return (pathChanges, interface)
+    }
+
+    /// Sleep `seconds`, or less if the network changes meanwhile.
+    private func waitForRetry(_ seconds: Double) async {
+        let start = path.changes
+        var waited = 0.0
+        while waited < seconds, !Task.isCancelled, path.changes == start {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            waited += 0.5
+        }
+    }
 
     /// Challenge, signature, device token; the round trip is the latency.
     private func authenticate() async throws -> (String, Int) {
@@ -129,6 +167,21 @@ final class RelayChannel {
             }
         }
         defer { pinger.cancel() }
+        // The interface this tunnel went out on is gone: its socket is dead
+        // even if nothing says so yet. A new tunnel, now.
+        let opened = path
+        let watcher = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                let now = self.path
+                if opened.interface != nil, now.changes != opened.changes, now.interface != opened.interface {
+                    task.cancel(with: .goingAway, reason: nil)
+                    return
+                }
+            }
+        }
+        defer { watcher.cancel() }
         while true {
             try Task.checkCancellation()
             let message = try await task.receive()

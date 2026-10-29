@@ -14,7 +14,11 @@ import (
 )
 
 const (
-	pingInterval    = 20 * time.Second
+	pingInterval = 20 * time.Second
+	// The phone's pong waits behind the video already queued on its uplink;
+	// on a busy cellular link that can take longer than 10 s, and a tunnel
+	// dropped for it cuts every viewer at once.
+	pingTimeout     = 30 * time.Second
 	writeTimeout    = 15 * time.Second
 	maxStreams      = 64
 	creditThreshold = 32 * 1024
@@ -86,7 +90,7 @@ func (t *tunnel) run(touch func()) {
 			case <-t.ctx.Done():
 				return
 			case <-tick.C:
-				ctx, cancel := context.WithTimeout(t.ctx, 10*time.Second)
+				ctx, cancel := context.WithTimeout(t.ctx, pingTimeout)
 				err := t.conn.Ping(ctx)
 				cancel()
 				if err != nil {

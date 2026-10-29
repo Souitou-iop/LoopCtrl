@@ -355,7 +355,9 @@ final class RemoteServiceStore: ObservableObject {
         case .failed(let error):
             update(id, .fail(error))
             append(id, .error, RemoteServiceText.error(error))
-            setAutoConnect(id, false)
+            // Out of reach is passing: the channel keeps trying, and the phone
+            // should do so again after a restart. Anything else is for good.
+            if error != .serverUnreachable { setAutoConnect(id, false) }
         }
     }
 
