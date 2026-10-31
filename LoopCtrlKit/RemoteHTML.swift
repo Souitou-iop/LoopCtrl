@@ -184,6 +184,9 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 }
 @media (max-width: 899px), (max-height: 599px) {
   .rail .more { display: grid; }
+  /* Same cascade trap as the wide rail above: this grid comes after the
+     .labels-* rules and stacks the More button's icon over its label. */
+  .labels-text .rail .more, .labels-both .rail .more { display: flex; }
 }
 .stage { position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; }
 .screen { position: relative; height: 100%; max-width: 100%; aspect-ratio: var(--ar, 0.46); border-radius: 22px; overflow: hidden;
