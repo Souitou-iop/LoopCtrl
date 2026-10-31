@@ -19,7 +19,7 @@ extension L10n {
         case capViewScreen, capControl, capLaunchApps, capReadText, codeExpires
         // Detail
         case connectionsSection, server, organization, deviceID, operators, connectedFor, reconnects24h
-        case controlPage, shareControlPage
+        case controlPage
         case recentLog, noLog, advanced, certificateSPKI, pinnedSPKI, spkiMatches, spkiDiffers, loadSPKI
         case preApproved, preApprovalPending, preApprovalPendingFooter, syncNow, notPreApproved
         case unbindConfirm, unbindBody, disconnectFooter, mockSection, mockFooter
@@ -134,7 +134,6 @@ extension L10n {
         .organization: [.en: "Organization", .zhHans: "组织", .zhHant: "組織"],
         .deviceID: [.en: "Device ID", .zhHans: "设备 ID", .zhHant: "裝置 ID"],
         .controlPage: [.en: "Control page", .zhHans: "网页控制", .zhHant: "網頁控制"],
-        .shareControlPage: [.en: "Share", .zhHans: "分享", .zhHant: "分享"],
         .operators: [.en: "Authorized Operators", .zhHans: "已授权操作员", .zhHant: "已授權操作員"],
         .connectedFor: [.en: "Connected for", .zhHans: "已连接时长", .zhHant: "已連線時長"],
         .reconnects24h: [.en: "Reconnects (24 h)", .zhHans: "24 小时内重连", .zhHant: "24 小時內重連"],

@@ -493,8 +493,8 @@ private struct AddressRow: View {
     }
 }
 
-/// The browser's address of the control page, and the two things a person does
-/// with it: copy it, or hand it to another device. The URL gets a line of its
+/// The browser's address of the control page, and the one thing a person does
+/// with it: copy it. The URL gets a line of its
 /// own because the address is the thing to read — squeezed onto the title line
 /// it truncates in the middle, which is the one part of a URL nobody can guess.
 /// Same word and same affordances as the relay's row, so 「网页控制」 means one
@@ -519,11 +519,6 @@ private struct ControlPageRow: View {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
                         .frame(width: 20)
                 }
-                ShareLink(item: url) {
-                    Image(systemName: "square.and.arrow.up")
-                        .frame(width: 20)
-                }
-                .accessibilityLabel(L10n.ui(.shareControlPage))
             }
             .buttonStyle(.borderless)
             Text(verbatim: url.absoluteString)

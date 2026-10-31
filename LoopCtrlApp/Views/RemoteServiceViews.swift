@@ -1163,27 +1163,28 @@ struct RemoteConnectionDetailView: View {
                     NoticeLabel(text: RemoteServiceText.error(error))
                 }
                 HStack(spacing: 12) {
-                    Label(L10n.rs(.server), systemImage: c.serverURL.scheme == "https" ? "lock.fill" : "lock.open")
+                    DetailTitle(title: L10n.rs(.server),
+                                systemImage: c.serverURL.scheme == "https" ? "lock.fill" : "lock.open")
                     Spacer(minLength: 8)
                     Text(verbatim: c.serverDisplay).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    ValueRow(title: L10n.rs(.organization), systemImage: "building.2", value: c.organization)
+                    DetailValueRow(title: L10n.rs(.organization), systemImage: "building.2", value: c.organization)
                     Text(L10n.rs(.providedByServer)).font(.caption2).foregroundColor(.secondary)
                         .padding(.leading, DetailRow.indent)
                 }
                 if let page = c.controlPageURL {
                     ControlPageRow(url: page)
                 }
-                CopyRow(title: L10n.rs(.deviceID), systemImage: "iphone", value: c.deviceID)
+                DetailCopyRow(title: L10n.rs(.deviceID), systemImage: "iphone", value: c.deviceID)
                 if let since = m.connectedSince {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
-                        ValueRow(title: L10n.rs(.connectedFor), systemImage: "clock",
-                                 value: Self.duration(context.date.timeIntervalSince(since)))
+                        DetailValueRow(title: L10n.rs(.connectedFor), systemImage: "clock",
+                                       value: Self.duration(context.date.timeIntervalSince(since)))
                     }
                 }
-                ValueRow(title: L10n.rs(.reconnects24h), systemImage: "arrow.triangle.2.circlepath",
-                         value: "\(m.reconnectCount(now: Date()))")
+                DetailValueRow(title: L10n.rs(.reconnects24h), systemImage: "arrow.triangle.2.circlepath",
+                               value: "\(m.reconnectCount(now: Date()))")
             }
 
             Section {
@@ -1301,7 +1302,7 @@ struct RemoteConnectionDetailView: View {
 /// browser, pair, and drive the phone (docs/remote-control.md).
 ///
 /// On the same grid as the rows above and below it: the address sits under the
-/// title's left edge (as the 「由服务器提供」 note does), and copy/share sit on
+/// title's left edge (as the 「由服务器提供」 note does), and copy sits on
 /// the title line at the trailing edge, which is where every other row in this
 /// list puts its value. Nothing floats under the icon.
 private struct ControlPageRow: View {
@@ -1311,7 +1312,7 @@ private struct ControlPageRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 12) {
-                Label(L10n.rs(.controlPage), systemImage: "safari")
+                DetailTitle(title: L10n.rs(.controlPage), systemImage: "safari")
                 Spacer(minLength: 8)
                 Button {
                     UIPasteboard.general.url = url
@@ -1324,11 +1325,6 @@ private struct ControlPageRow: View {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
                         .frame(width: 20)
                 }
-                ShareLink(item: url) {
-                    Image(systemName: "square.and.arrow.up")
-                        .frame(width: 20)
-                }
-                .accessibilityLabel(L10n.rs(.shareControlPage))
             }
             .buttonStyle(.borderless)
             Text(verbatim: url.absoluteString)
@@ -1343,10 +1339,93 @@ private struct ControlPageRow: View {
 }
 
 /// Where a row's second line starts: the title's left edge, past the icon
-/// column. Shared so the 「由服务器提供」 note and the control address line up
-/// with each other instead of each carrying its own number.
+/// column. `Label` lets every symbol set its own width, so titles sat at a
+/// different x on each row and the second lines could not line up with their
+/// titles — the crooked look. The rows here draw the icon in a fixed column
+/// at one shared size, and the indent is exactly that column: one number for
+/// the 「由服务器提供」 note and the control address, and one title axis.
 private enum DetailRow {
-    static let indent: CGFloat = 36
+    static let iconWidth: CGFloat = 24
+    static let iconSpacing: CGFloat = 10
+    /// SF Symbols ship at different natural sizes even at one font size
+    /// (13–17 pt for the six symbols here), so each glyph is scaled to fit
+    /// this box instead of being trusted at its natural size. 18 pt puts the
+    /// drawn glyphs at the same ~17 pt the 最近操作记录 rows render at; the
+    /// symbol's own optical padding would make a 17 pt box draw small.
+    static let iconSize: CGFloat = 18
+    static var indent: CGFloat { iconWidth + iconSpacing }
+}
+
+/// A row title in the fixed icon column: every icon fills the same box, so
+/// all six render at one size, and every title starts at DetailRow.indent.
+private struct DetailTitle: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: DetailRow.iconSpacing) {
+            Image(systemName: systemImage)
+                .resizable()
+                .scaledToFit()
+                .frame(width: DetailRow.iconSize, height: DetailRow.iconSize)
+                .foregroundColor(.accentColor)
+                .frame(width: DetailRow.iconWidth)
+            Text(title)
+        }
+    }
+}
+
+/// A detail row: fixed icon column, title, right-aligned value.
+private struct DetailValueRow: View {
+    let title: String
+    let systemImage: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            DetailTitle(title: title, systemImage: systemImage)
+            Spacer(minLength: 8)
+            Text(verbatim: value)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+}
+
+/// The same row for a value worth copying, e.g. the device ID.
+private struct DetailCopyRow: View {
+    let title: String
+    let systemImage: String
+    let value: String
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            DetailTitle(title: title, systemImage: systemImage)
+            Spacer(minLength: 8)
+            Text(verbatim: value)
+                .font(.system(.body, design: .monospaced))
+                .foregroundColor(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Button {
+                UIPasteboard.general.string = value
+                copied = true
+                Task {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    copied = false
+                }
+            } label: {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .frame(width: 20)
+            }
+            // .borderless keeps the tap on the button, not the whole row.
+            .buttonStyle(.borderless)
+            .accessibilityLabel(copied ? L10n.ui(.copied) : value)
+        }
+    }
 }
 
 private struct SPKIRow: View {

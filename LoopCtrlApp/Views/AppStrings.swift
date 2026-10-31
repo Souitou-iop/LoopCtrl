@@ -15,7 +15,7 @@ extension L10n {
         case mountDiskImage, setupRow
         case runnerOpenFailed, runnerStartFailed
         case localAddress, lanAddress, noWiFi, copied
-        case controlPage, shareControlPage
+        case controlPage
         case broadcastToggle, broadcastFooter, broadcastStart, broadcastRunning
         case remoteAccess, remoteAccessOnFooter, remoteAccessOffFooter, remoteAccessApproveFooter
         case portLabel, portFooter, portRunningFooter, portInvalid, portReset, portApply
@@ -92,13 +92,11 @@ extension L10n {
         .noWiFi: [.en: "Not on Wi-Fi", .zhHans: "未连接 Wi-Fi", .zhHant: "未連接 Wi-Fi"],
         .controlPage: [.en: "Control page", .zhHans: "网页控制", .zhHant: "網頁控制"],
         .broadcastToggle: [.en: "System Broadcast", .zhHans: "系统录屏推流", .zhHant: "系統錄影推流"],
-        .broadcastFooter: [.en: "The remote screen comes from iOS screen recording instead of screenshots: up to 60 fps, less delay, cooler phone. Start it on the home screen each time; it shows the red recording indicator, and screenshots take over again when it ends.",
-                           .zhHans: "远程画面改由 iOS 系统录屏提供，不再逐帧截图：最高 60 帧、延迟更低、手机更凉。每次需在首页点一下开始；运行时会显示红色录屏标记，结束后自动回到截图。",
-                           .zhHant: "遠端畫面改由 iOS 系統錄影提供，不再逐格截圖：最高 60 格、延遲更低、手機更涼。每次需在首頁點一下開始；執行時會顯示紅色錄影標記，結束後自動回到截圖。"],
+        .broadcastFooter: [.en: "The remote screen comes from iOS screen recording instead of screenshots: up to 60 fps, less delay, cooler phone. Start it on the home screen each time; it shows the red recording indicator, and screenshots take over again when it ends. Limit: some apps block being recorded, so nothing can be captured while they're on screen.",
+                           .zhHans: "远程画面改由 iOS 系统录屏提供，不再逐帧截图：最高 60 帧、延迟更低、手机更凉。每次需在首页点一下开始；运行时会显示红色录屏标记，结束后自动回到截图。局限：部分 App 会限制被录屏，切到这类 App 时画面抓取不到。",
+                           .zhHant: "遠端畫面改由 iOS 系統錄影提供，不再逐格截圖：最高 60 格、延遲更低、手機更涼。每次需在首頁點一下開始；執行時會顯示紅色錄影標記，結束後自動回到截圖。侷限：部分 App 會限制被錄影，切到這類 App 時畫面擷取不到。"],
         .broadcastStart: [.en: "Start", .zhHans: "开始", .zhHant: "開始"],
         .broadcastRunning: [.en: "Broadcasting", .zhHans: "推流中", .zhHant: "推流中"],
-        .shareControlPage: [.en: "Share the control page link",
-                            .zhHans: "分享网页控制链接", .zhHant: "分享網頁控制連結"],
         .copied: [.en: "Copied", .zhHans: "已复制", .zhHant: "已複製"],
         .portLabel: [.en: "Port", .zhHans: "端口", .zhHant: "連接埠"],
         .portFooter: [.en: "The port automation clients connect to. Default %d. Don't share it with another automation app.",
