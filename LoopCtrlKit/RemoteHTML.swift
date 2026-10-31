@@ -177,6 +177,10 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .rail [data-more] { display: none; }
 @media (min-width: 900px) and (min-height: 600px) {
   .rail [data-more] { display: grid; }
+  /* In the labels modes the primaries are flex rows; this rule sits later in
+     the sheet than the .labels-* rules, so restate the row here or the
+     expanded secondary buttons fall back to stacked grid and overflow. */
+  .labels-text .rail [data-more], .labels-both .rail [data-more] { display: flex; }
 }
 @media (max-width: 899px), (max-height: 599px) {
   .rail .more { display: grid; }
