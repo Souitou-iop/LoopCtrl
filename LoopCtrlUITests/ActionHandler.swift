@@ -8349,11 +8349,16 @@ class ActionHandler {
         var lastSeen: [String] = []
         var lastForeground: String?
         var lastReadOK = false
+        // Text conditions need the tree every round; a foreground-only wait
+        // skips it — each read costs 0.1–0.35s and the pid check is nearly free.
+        let readsTree = !present.isEmpty || !absent.isEmpty
         while true {
             rounds += 1
             var texts: [String]?
-            DispatchQueue.main.sync { texts = self.visibleTexts() }
-            if let texts { lastSeen = texts; lastReadOK = true } else { lastReadOK = false }
+            if readsTree {
+                DispatchQueue.main.sync { texts = self.visibleTexts() }
+                if let texts { lastSeen = texts; lastReadOK = true } else { lastReadOK = false }
+            }
             DispatchQueue.main.sync { lastForeground = self.resolveForegroundBundleId() }
 
             // An unreadable tree can neither confirm present (can't claim what
@@ -8365,8 +8370,7 @@ class ActionHandler {
                 texts.map { t in t.contains { Self.squash($0).contains(Self.squash(a)) } } ?? false
             }
             let fgWrong = foreground.map { lastForeground != $0 } ?? false
-            let readsDecide = !present.isEmpty || !absent.isEmpty
-            if missing.isEmpty, lingering.isEmpty, !fgWrong, (!readsDecide || lastReadOK) {
+            if missing.isEmpty, lingering.isEmpty, !fgWrong, (!readsTree || lastReadOK) {
                 var out: [String: JSONValue] = [
                     "met": .bool(true),
                     "elapsed": .double(((nowMonotonic - start) * 100).rounded() / 100),
@@ -8382,7 +8386,7 @@ class ActionHandler {
                 if !missing.isEmpty { why.append("still missing: " + missing.joined(separator: ", ")) }
                 if !lingering.isEmpty { why.append("still on screen: " + lingering.joined(separator: ", ")) }
                 if fgWrong { why.append("foreground is \(lastForeground ?? "?"), not \(foreground ?? "?")") }
-                if readsDecide, !lastReadOK { why.append("the screen could not be read (no accessibility tree)") }
+                if readsTree, !lastReadOK { why.append("the screen could not be read (no accessibility tree)") }
                 let sample = lastSeen.prefix(12).map { "'\($0)'" }.joined(separator: ", ")
                 return (nil, JSONRPCError(code: -32000, message:
                     "wait_for conditions not met within \(Int(timeout.rounded()))s (\(rounds) looks) — "

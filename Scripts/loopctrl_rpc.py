@@ -1022,8 +1022,28 @@ def main() -> int:
         if not isinstance(steps, list) or not steps or not all(isinstance(s, dict) for s in steps):
             raise SystemExit("run expects a non-empty JSON array of step objects")
 
+        # One wait_for call per expect when the device supports it; the
+        # per-condition fallback below costs 1-3 extra round trips each.
+        supports_wait_for = False
+        if any(step.get("expect") for step in steps):
+            info = rpc("device_info", {})
+            supports_wait_for = "wait_for" in (info.get("result", {}).get("capabilities") or [])
+
         def expect_outcome(exp: dict) -> tuple[bool, str]:
             """Check one expect object with cheap follow-up calls."""
+            if supports_wait_for:
+                params: dict = {"timeout": 1}
+                if "present" in exp:
+                    params["present"] = [exp["present"]]
+                if "absent" in exp:
+                    params["absent"] = [exp["absent"]]
+                if "foreground" in exp:
+                    params["foreground"] = exp["foreground"]
+                out = rpc("wait_for", params)
+                if out.get("result", {}).get("met") is True:
+                    return True, ""
+                err = out.get("error", {})
+                return False, f"expect not confirmed: {(err.get('message') or '')[:140]}"
             if "present" in exp:
                 out = rpc("wait", {"text": exp["present"], "timeout": 1})
                 if out.get("result", {}).get("met") is not True:

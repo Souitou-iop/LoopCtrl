@@ -243,6 +243,7 @@ targets:
       - path: LoopCtrlKit/KeychainStore.swift
       - path: LoopCtrlKit/TokenFileStore.swift
       - path: LoopCtrlKit/BroadcastWire.swift
+      - path: LoopCtrlUITests/ObserveFormat.swift
       - path: Tests/LoopCtrlKitTests
     settings:
       base:

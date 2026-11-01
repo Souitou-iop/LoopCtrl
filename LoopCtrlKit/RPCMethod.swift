@@ -7,6 +7,15 @@ struct RPCParamDef: Encodable {
     let description: String
 }
 
+
+/// Shared param definitions: the same text used to be pasted into every
+/// settle-capable method def (11 copies each).
+private let quietWindowParam = RPCParamDef(
+    name: "quiet_window", type: "number", required: false, description: "Overrides the settle quiet window in seconds (0.2-3; default 0.6, 1.2 for control taps). Shorter = faster replies, but too short can miss a navigation that arrives late.")
+
+private let observeParam = RPCParamDef(
+    name: "observe", type: "string", required: false, description: "'visible' (full tree) or 'compact' (same tree, coordinate frames stripped, ~3x smaller - use over slow links) attaches the settled screen under `observe`, saving the following page_source call. Skipped when the action used most of its call budget.")
+
 struct RPCMethodDef: Encodable {
     let name: String
     let description: String
@@ -129,8 +138,8 @@ struct RPCMethodRegistry {
                 RPCParamDef(name: "manual", type: "boolean", required: false, description: "For a person driving the live screen (the /remote page): skip the agent safety checks (system alert, what is under the point, anti-bot, same page) and send the touch at once. Agents: leave it out."),
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
-                RPCParamDef(name: "quiet_window", type: "number", required: false, description: "Overrides the settle quiet window in seconds (0.2-3; default 0.6, 1.2 for control taps). Shorter = faster replies, but too short can miss a navigation that arrives late."),
-                RPCParamDef(name: "observe", type: "string", required: false, description: "'visible' (full tree) or 'compact' (same tree, coordinate frames stripped, ~3x smaller - use over slow links) attaches the settled screen under `observe`, saving the following page_source call. Skipped when the action used most of its call budget."),
+                quietWindowParam,
+                observeParam,
                 RPCParamDef(name: "ref", type: "string", required: false, description: "Element ref from find_element/scroll_to_element (preferred over x,y)"),
                 RPCParamDef(name: "x", type: "number", required: false, description: "X in points (0..point_width) — required if no ref"),
                 RPCParamDef(name: "y", type: "number", required: false, description: "Y in points (0..point_height) — required if no ref"),
@@ -144,8 +153,8 @@ struct RPCMethodRegistry {
             params: [
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
-                RPCParamDef(name: "quiet_window", type: "number", required: false, description: "Overrides the settle quiet window in seconds (0.2-3; default 0.6, 1.2 for control taps). Shorter = faster replies, but too short can miss a navigation that arrives late."),
-                RPCParamDef(name: "observe", type: "string", required: false, description: "'visible' (full tree) or 'compact' (same tree, coordinate frames stripped, ~3x smaller - use over slow links) attaches the settled screen under `observe`, saving the following page_source call. Skipped when the action used most of its call budget."),
+                quietWindowParam,
+                observeParam,
                 RPCParamDef(name: "ref", type: "string", required: false, description: "Element ref (preferred over x,y)"),
                 RPCParamDef(name: "x", type: "number", required: false, description: "X in points — required if no ref"),
                 RPCParamDef(name: "y", type: "number", required: false, description: "Y in points — required if no ref"),
@@ -159,8 +168,8 @@ struct RPCMethodRegistry {
                 RPCParamDef(name: "manual", type: "boolean", required: false, description: "For a person driving the live screen (the /remote page): skip the agent safety checks (system alert, what is under the point, anti-bot, same page) and send the touch at once. Agents: leave it out."),
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
-                RPCParamDef(name: "quiet_window", type: "number", required: false, description: "Overrides the settle quiet window in seconds (0.2-3; default 0.6, 1.2 for control taps). Shorter = faster replies, but too short can miss a navigation that arrives late."),
-                RPCParamDef(name: "observe", type: "string", required: false, description: "'visible' (full tree) or 'compact' (same tree, coordinate frames stripped, ~3x smaller - use over slow links) attaches the settled screen under `observe`, saving the following page_source call. Skipped when the action used most of its call budget."),
+                quietWindowParam,
+                observeParam,
                 RPCParamDef(name: "ref", type: "string", required: false, description: "Element ref (preferred over x,y)"),
                 RPCParamDef(name: "x", type: "number", required: false, description: "X in points — required if no ref"),
                 RPCParamDef(name: "y", type: "number", required: false, description: "Y in points — required if no ref"),
@@ -174,8 +183,8 @@ struct RPCMethodRegistry {
             params: [
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
-                RPCParamDef(name: "quiet_window", type: "number", required: false, description: "Overrides the settle quiet window in seconds (0.2-3; default 0.6, 1.2 for control taps). Shorter = faster replies, but too short can miss a navigation that arrives late."),
-                RPCParamDef(name: "observe", type: "string", required: false, description: "'visible' (full tree) or 'compact' (same tree, coordinate frames stripped, ~3x smaller - use over slow links) attaches the settled screen under `observe`, saving the following page_source call. Skipped when the action used most of its call budget."),
+                quietWindowParam,
+                observeParam,
                 RPCParamDef(name: "x", type: "number", required: false, description: "Start X (default: screen center)"),
                 RPCParamDef(name: "y", type: "number", required: false, description: "Start Y (default: screen center)"),
                 RPCParamDef(name: "direction", type: "string", required: false, description: "Finger direction: up/down/left/right (default: up). 'up' reveals content below."),
@@ -191,8 +200,8 @@ struct RPCMethodRegistry {
             params: [
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
-                RPCParamDef(name: "quiet_window", type: "number", required: false, description: "Overrides the settle quiet window in seconds (0.2-3; default 0.6, 1.2 for control taps). Shorter = faster replies, but too short can miss a navigation that arrives late."),
-                RPCParamDef(name: "observe", type: "string", required: false, description: "'visible' (full tree) or 'compact' (same tree, coordinate frames stripped, ~3x smaller - use over slow links) attaches the settled screen under `observe`, saving the following page_source call. Skipped when the action used most of its call budget."),
+                quietWindowParam,
+                observeParam,
                 RPCParamDef(name: "direction", type: "string", required: false, description: "'down' (default, reveal below) or 'up'"),
                 RPCParamDef(name: "distance", type: "number", required: false, description: "Number of screenfuls (default 1; e.g. 0.5 = half a page, 2 = two pages). One screenful travels two thirds of the height, leaving a third overlapping so nothing falls between consecutive reads. Raising this past 1 trades that safety for fewer calls — on a feed, items can then pass between reads with no way to notice."),
             ],
@@ -229,8 +238,8 @@ struct RPCMethodRegistry {
             params: [
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
-                RPCParamDef(name: "quiet_window", type: "number", required: false, description: "Overrides the settle quiet window in seconds (0.2-3; default 0.6, 1.2 for control taps). Shorter = faster replies, but too short can miss a navigation that arrives late."),
-                RPCParamDef(name: "observe", type: "string", required: false, description: "'visible' (full tree) or 'compact' (same tree, coordinate frames stripped, ~3x smaller - use over slow links) attaches the settled screen under `observe`, saving the following page_source call. Skipped when the action used most of its call budget."),
+                quietWindowParam,
+                observeParam,
                 RPCParamDef(name: "direction", type: "string", required: false, description: "Direction: up/down/left/right (default: down)"),
             ],
             returns: "{message}"
@@ -242,8 +251,8 @@ struct RPCMethodRegistry {
                 RPCParamDef(name: "manual", type: "boolean", required: false, description: "For a person driving the live screen (the /remote page): skip the agent safety checks (system alert, what is under the point, anti-bot, same page) and send the touch at once. Agents: leave it out."),
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
-                RPCParamDef(name: "quiet_window", type: "number", required: false, description: "Overrides the settle quiet window in seconds (0.2-3; default 0.6, 1.2 for control taps). Shorter = faster replies, but too short can miss a navigation that arrives late."),
-                RPCParamDef(name: "observe", type: "string", required: false, description: "'visible' (full tree) or 'compact' (same tree, coordinate frames stripped, ~3x smaller - use over slow links) attaches the settled screen under `observe`, saving the following page_source call. Skipped when the action used most of its call budget."),
+                quietWindowParam,
+                observeParam,
                 RPCParamDef(name: "text", type: "string", required: true, description: "Text to type (optional if clear:true — then it just empties the field)"),
                 RPCParamDef(name: "clear", type: "boolean", required: false, description: "Empty the field before typing. Use whenever you are REPLACING contents — typing alone APPENDS, so a search box still holding the last query silently searches the concatenation (measured: '椰子汁' typed into a box holding '黄桃' searched '黄桃椰子汁'). The response carries append_warning when this is detected, but detection needs a readable focused field, so prefer clear:true over relying on it. Field must be focused first."),
                 RPCParamDef(name: "submit", type: "boolean", required: false, description: "Append Return/Search to submit the field (recommended for search boxes)"),
@@ -257,8 +266,8 @@ struct RPCMethodRegistry {
             name: "clear_text",
             description: "Empty the currently-focused text field (delete its existing contents) without typing anything new. The field must already have keyboard focus — tap a real textfield first. Equivalent to type{clear:true} with no text. Sends backspaces sized to the field's value (falls back to a generous default when the length can't be read). If no focused keyboard could be confirmed the response includes an advisory 'warning'.",
             params: [
-                RPCParamDef(name: "quiet_window", type: "number", required: false, description: "Overrides the settle quiet window in seconds (0.2-3; default 0.6, 1.2 for control taps). Shorter = faster replies, but too short can miss a navigation that arrives late."),
-                RPCParamDef(name: "observe", type: "string", required: false, description: "'visible' (full tree) or 'compact' (same tree, coordinate frames stripped, ~3x smaller - use over slow links) attaches the settled screen under `observe`, saving the following page_source call. Skipped when the action used most of its call budget."),
+                quietWindowParam,
+                observeParam,
             ],
             returns: "{message, warning?} — warning present when a focused keyboard couldn't be confirmed"
         ),
@@ -436,8 +445,8 @@ struct RPCMethodRegistry {
             params: [
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
-                RPCParamDef(name: "quiet_window", type: "number", required: false, description: "Overrides the settle quiet window in seconds (0.2-3; default 0.6, 1.2 for control taps). Shorter = faster replies, but too short can miss a navigation that arrives late."),
-                RPCParamDef(name: "observe", type: "string", required: false, description: "'visible' (full tree) or 'compact' (same tree, coordinate frames stripped, ~3x smaller - use over slow links) attaches the settled screen under `observe`, saving the following page_source call. Skipped when the action used most of its call budget."),
+                quietWindowParam,
+                observeParam,
                 RPCParamDef(name: "element_id", type: "string", required: true, description: "Accessibility label or identifier"),
                 RPCParamDef(name: "match", type: "string", required: false, description: "'exact' (default) or 'contains'"),
                 RPCParamDef(name: "element_type", type: "string", required: false, description: "Element type filter"),
@@ -450,8 +459,8 @@ struct RPCMethodRegistry {
             params: [
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
-                RPCParamDef(name: "quiet_window", type: "number", required: false, description: "Overrides the settle quiet window in seconds (0.2-3; default 0.6, 1.2 for control taps). Shorter = faster replies, but too short can miss a navigation that arrives late."),
-                RPCParamDef(name: "observe", type: "string", required: false, description: "'visible' (full tree) or 'compact' (same tree, coordinate frames stripped, ~3x smaller - use over slow links) attaches the settled screen under `observe`, saving the following page_source call. Skipped when the action used most of its call budget."),
+                quietWindowParam,
+                observeParam,
                 RPCParamDef(name: "element_id", type: "string", required: true, description: "Accessibility label or identifier (see page_source)"),
                 RPCParamDef(name: "match", type: "string", required: false, description: "'exact' (default) or 'contains' (substring)"),
                 RPCParamDef(name: "element_type", type: "string", required: false, description: "Restrict to type: button/textfield/label/image/cell/switch/icon"),
@@ -467,8 +476,8 @@ struct RPCMethodRegistry {
                 RPCParamDef(name: "manual", type: "boolean", required: false, description: "For a person driving the live screen (the /remote page): skip the agent safety checks (system alert, what is under the point, anti-bot, same page) and send the touch at once. Agents: leave it out."),
                 RPCParamDef(name: "settle", type: "boolean", required: false, description: "Default true: after the action, wait until the screen stops changing (compares low-res frames; up to settle_timeout) and report it in `settle`. false = return right after the action."),
                 RPCParamDef(name: "settle_timeout", type: "number", required: false, description: "Max seconds to wait for the screen to settle (default 2, max 3)."),
-                RPCParamDef(name: "quiet_window", type: "number", required: false, description: "Overrides the settle quiet window in seconds (0.2-3; default 0.6, 1.2 for control taps). Shorter = faster replies, but too short can miss a navigation that arrives late."),
-                RPCParamDef(name: "observe", type: "string", required: false, description: "'visible' (full tree) or 'compact' (same tree, coordinate frames stripped, ~3x smaller - use over slow links) attaches the settled screen under `observe`, saving the following page_source call. Skipped when the action used most of its call budget."),
+                quietWindowParam,
+                observeParam,
                 RPCParamDef(name: "from_ref", type: "string", required: false, description: "Start element ref (alternative to from_x/from_y)"),
                 RPCParamDef(name: "to_ref", type: "string", required: false, description: "End element ref (alternative to to_x/to_y)"),
                 RPCParamDef(name: "from_x", type: "number", required: false, description: "Start X (points)"),
@@ -529,7 +538,7 @@ struct RPCMethodRegistry {
     /// release that added the encrypted auth channel plus the docs/Skill,
     /// clear-text, page-source, and reliability improvements. Single source of
     /// truth for /schema AND device_info.
-    static let serverVersion = "1.98.12"
+    static let serverVersion = "1.98.13"
 
     /// When this binary was built, as "YYYY-MM-DD HH:MM".
     ///
@@ -576,6 +585,9 @@ struct RPCMethodRegistry {
         "clipboard",           // clipboard{action:'get'|'set'} — the phone's system pasteboard
         "keep_awake",          // keep_awake{seconds} — F13 HID beats, private XCDeviceEvent
         "system_screenshot",   // system_screenshot — Consumer Snapshot key
+        "wait_for",            // wait_for{present,absent,foreground}: several conditions polled on the device in one call
+        "action_observe",      // actions accept observe:'visible'|'compact' — the reply carries the settled screen (compact strips frames)
+        "quiet_window",        // actions accept quiet_window — explicit settle override for pages whose timing the caller knows
     ]
 
     static func generateSchemaDocument() -> [String: Any] {
