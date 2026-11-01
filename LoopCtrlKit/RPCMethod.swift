@@ -511,6 +511,15 @@ struct RPCMethodRegistry {
             ],
             returns: "{met:true, foreground, elapsed, rounds} or error with met:false, which condition failed, and what was on screen"
         ),
+        RPCMethodDef(
+            name: "run_steps",
+            description: "Device-side batch: run several steps in ONE call — no network round trip between steps, which is where a client-side batch pays on a relay or cellular link. Each step is {method, params, expect?} in the same format the Python client's `run` uses; expect{present|absent|foreground} is checked after its step with a 1s wait_for. The first error or failed expect stops the batch; steps that never ran are listed in not_sent. The reply lists every step's result, failed_step, elapsed_ms and — observe (default 'visible', 'compact' strips coordinate frames, 'none' skips it) — the settled screen, so the next read is already in hand. Each step still passes its own safety checks (system alert, anti-bot, payment stop).",
+            params: [
+                RPCParamDef(name: "steps", type: "array", required: true, description: "1-20 steps, each {method, params, expect?}; expect is {present: text} | {absent: text} | {foreground: bundle_id}"),
+                RPCParamDef(name: "observe", type: "string", required: false, description: "'visible' (default), 'compact' (~3x smaller, no frames), or 'none' — the settled screen attached to the reply"),
+            ],
+            returns: "{completed, failed_step, not_sent, steps:[{i, method, ok, result|error}], elapsed_ms, observe?, hint}"
+        ),
     ]
 
     static func generateJSONSchema() -> [[String: Any]] {
@@ -538,7 +547,7 @@ struct RPCMethodRegistry {
     /// release that added the encrypted auth channel plus the docs/Skill,
     /// clear-text, page-source, and reliability improvements. Single source of
     /// truth for /schema AND device_info.
-    static let serverVersion = "1.98.13"
+    static let serverVersion = "1.98.14"
 
     /// When this binary was built, as "YYYY-MM-DD HH:MM".
     ///
@@ -586,6 +595,7 @@ struct RPCMethodRegistry {
         "keep_awake",          // keep_awake{seconds} — F13 HID beats, private XCDeviceEvent
         "system_screenshot",   // system_screenshot — Consumer Snapshot key
         "wait_for",            // wait_for{present,absent,foreground}: several conditions polled on the device in one call
+        "run_steps",           // run_steps{steps}: a whole client `run` batch consumed on the device in one call
         "action_observe",      // actions accept observe:'visible'|'compact' — the reply carries the settled screen (compact strips frames)
         "quiet_window",        // actions accept quiet_window — explicit settle override for pages whose timing the caller knows
     ]

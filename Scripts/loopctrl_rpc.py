@@ -944,7 +944,7 @@ def main() -> int:
     def rpc(method: str, params: dict | None = None) -> dict:
         if args.nearby:
             return nearby_call(args.nearby, method, params, client_name)
-        return call(args.host, method, params)
+        return call(args.host, method, params, timeout=getattr(args, "_rpc_timeout", None) or 60.0)
 
     if args.cmd == "scan":
         devices = nearby_scan(wait=args.wait)
@@ -1022,12 +1022,35 @@ def main() -> int:
         if not isinstance(steps, list) or not steps or not all(isinstance(s, dict) for s in steps):
             raise SystemExit("run expects a non-empty JSON array of step objects")
 
-        # One wait_for call per expect when the device supports it; the
-        # per-condition fallback below costs 1-3 extra round trips each.
-        supports_wait_for = False
-        if any(step.get("expect") for step in steps):
-            info = rpc("device_info", {})
-            supports_wait_for = "wait_for" in (info.get("result", {}).get("capabilities") or [])
+        # Prefer the device-side batch: one round trip instead of one per step
+        # (the win is biggest over a relay or cellular). No capability → the
+        # per-step fallback below, unchanged.
+        info = rpc("device_info", {})
+        caps = (info.get("result") or {}).get("capabilities") or []
+        if "run_steps" in caps:
+            args._rpc_timeout = 320
+            out = rpc("run_steps", {"steps": steps,
+                                    "observe": "none" if args.no_observe else "visible"})
+            res = out.get("result")
+            if res is None:
+                print(json.dumps({"error": out.get("error")}, ensure_ascii=False))
+                return 1
+            for s in res.get("steps") or []:
+                ok = s.get("ok") is True
+                print(json.dumps({"step": s.get("i"), "method": s.get("method"), "ok": ok,
+                                  **({"result": s["result"]} if ok and s.get("result") else {}),
+                                  **({} if ok else {"error": s.get("error")})},
+                                 ensure_ascii=False))
+            if not args.no_observe and res.get("observe"):
+                print(json.dumps({"step": len(steps), "method": "page_source", "ok": True,
+                                  "observe": res["observe"]}, ensure_ascii=False))
+            failed_at = res.get("failed_step")
+            print(json.dumps({"summary": {"steps": len(steps), "failed_at": failed_at,
+                                          "not_sent": res.get("not_sent") or [],
+                                          "elapsed_ms": res.get("elapsed_ms")}}, ensure_ascii=False))
+            return 2 if failed_at is not None else 0
+
+        supports_wait_for = "wait_for" in caps
 
         def expect_outcome(exp: dict) -> tuple[bool, str]:
             """Check one expect object with cheap follow-up calls."""

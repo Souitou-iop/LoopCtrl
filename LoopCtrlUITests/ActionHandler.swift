@@ -629,6 +629,7 @@ class ActionHandler {
         if method == "rotate" { return rotate(params) }
         if method == "wait" { return wait(cmd, params: params) }
         if method == "wait_for" { return waitFor(cmd, params: params) }
+        if method == "run_steps" { return runSteps(cmd, params: params) }
         if method == "read_value" { return readValue(cmd, params: params) }
         if method == "launch_app", cmd.bundleId == nil,
            let name = (params?["name"]?.stringValue ?? cmd.text)?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
@@ -8401,6 +8402,111 @@ class ActionHandler {
     private static func stringArray(_ v: JSONValue?) -> [String] {
         guard case .array(let items)? = v else { return [] }
         return items.compactMap { if case .string(let s) = $0 { return s } else { return nil } }
+    }
+
+    /// Device-side batch: run several steps in ONE call, serially, on the
+    /// batch lane. Same step format the client `run` already sends — the
+    /// device consumes the list without a network round trip between steps,
+    /// which is where the client version pays (0.3–0.5s a hop over a relay).
+    /// First failure or failed expect stops the batch; the reply carries every
+    /// step's result, the not_sent list and (by default) the settled screen.
+    private func runSteps(_ cmd: ActionCommand, params: [String: JSONValue]?) -> ([String: JSONValue]?, JSONRPCError?) {
+        guard case .array(let raw)? = params?["steps"], !raw.isEmpty else {
+            return (nil, JSONRPCError(code: -32602, message:
+                "run_steps needs steps: a non-empty array of {method, params} objects.", data: nil))
+        }
+        guard raw.count <= 20 else {
+            return (nil, JSONRPCError(code: -32602, message:
+                "run_steps takes at most 20 steps (got \(raw.count)). Split the task across calls.", data: nil))
+        }
+        let observe = params?["observe"]?.stringValue ?? "visible"
+        guard ["visible", "compact", "none"].contains(observe) else {
+            return (nil, JSONRPCError(code: -32602, message: "observe is 'visible', 'compact' or 'none'.", data: nil))
+        }
+        let startedAt = nowMonotonic
+        var stepResults: [JSONValue] = []
+        var failedAt: Int?
+        for (i, item) in raw.enumerated() {
+            guard case .object(let step) = item, let m = step["method"]?.stringValue, !m.isEmpty else {
+                return (nil, JSONRPCError(code: -32602, message: "steps[\(i)] needs a \"method\".", data: nil))
+            }
+            guard m != "run_steps" else {
+                return (nil, JSONRPCError(code: -32602, message: "steps[\(i)]: run_steps cannot nest.", data: nil))
+            }
+            let stepParams: [String: JSONValue]? = step["params"]?.objectValue
+            var result: ([String: JSONValue]?, JSONRPCError?) = (nil, nil)
+            let work = {
+                let reason = ObjCException.catching { result = self.dispatch(method: m, params: stepParams) }
+                if let reason {
+                    result = (nil, JSONRPCError(code: -32000, message:
+                        "\(m) failed: \(reason). The element may be gone/off-screen/not hittable, or the UI changed — re-check with page_source and retry.",
+                        data: ["outcome": .string("failed"), "retry_safe": .bool(true)]))
+                }
+            }
+            if LoopCtrlUITests.mainThreadMethods.contains(m), !Thread.isMainThread {
+                DispatchQueue.main.sync(execute: work)
+            } else {
+                work()
+            }
+            var res = result.0
+            var err = result.1
+            var entry: [String: JSONValue] = ["i": .int(i), "method": .string(m), "ok": .bool(err == nil)]
+            // expect{present|absent|foreground}: the same semantics as the
+            // client's `run`, evaluated here with one wait_for (1s, like the
+            // client). A failed expect stops the batch.
+            if err == nil, let exp = step["expect"]?.objectValue, !exp.isEmpty {
+                func cond(_ key: String) -> [String]? {
+                    switch exp[key] {
+                    case .string(let s)?: return [s]
+                    case .array(let a)?: return a.compactMap({ if case .string(let s) = $0 { return s } else { return nil } })
+                    default: return nil
+                    }
+                }
+                var wp: [String: JSONValue] = ["timeout": .double(1)]
+                if let p = cond("present") { wp["present"] = .array(p.map { .string($0) }) }
+                if let a = cond("absent") { wp["absent"] = .array(a.map { .string($0) }) }
+                if let f = cond("foreground") { wp["foreground"] = .string(f[0]) }
+                if wp.count > 1 {
+                    let (wres, werr) = waitFor(ActionCommand(method: "wait_for", params: wp), params: wp)
+                    if wres?["met"] != .bool(true) {
+                        err = werr ?? JSONRPCError(code: -32000, message: "expect not confirmed.", data: nil)
+                        entry["expect_failed"] = .bool(true)
+                    }
+                }
+            }
+            entry["ok"] = .bool(err == nil)
+            if let res { entry["result"] = .object(res) }
+            if let err { entry["error"] = .object(["code": .int(err.code), "message": .string(err.message)]) }
+            stepResults.append(.object(entry))
+            if err != nil { failedAt = i; break }
+        }
+        var out: [String: JSONValue] = [
+            "completed": .int(failedAt ?? raw.count),
+            "failed_step": failedAt.map { .int($0) } ?? .null,
+            "not_sent": .array((failedAt.map { Array(($0 + 1)..<raw.count) } ?? []).map { .int($0) }),
+            "steps": .array(stepResults),
+        ]
+        if let f = failedAt, case .object(let last)? = stepResults.last,
+           case .object(let e)? = last["error"] {
+            out["hint"] = .string("Step \(f) failed: \(e["message"]?.stringValue ?? "?") Steps before it ran; later ones did not. " +
+                "The screen as it stands is attached under `observe` — read it there before retrying anything.")
+        } else {
+            out["hint"] = .string("All \(raw.count) steps completed — the settled screen is attached under `observe`; don't re-read it.")
+        }
+        if observe != "none" {
+            var read = ActionCommand(method: "page_source", params: nil)
+            read.visibleOnly = true
+            read.maxChildren = 50
+            if read.maxElements == nil { read.maxElements = 800 }
+            var (obs, obsErr) = pageSource(read)
+            if obs != nil, observe == "compact", case .string(let body)? = obs!["source"] {
+                obs!["source"] = .string(ObserveFormat.compact(body))
+                obs!["format"] = .string("compact-text")
+            }
+            out["observe"] = obs != nil ? .object(obs!) : .object(["error": .string(obsErr?.message ?? "the final read failed")])
+        }
+        out["elapsed_ms"] = .int(Int((nowMonotonic - startedAt) * 1000))
+        return (out, nil)
     }
 
     /// Every label and value on screen, from the bounded snapshot (main thread).

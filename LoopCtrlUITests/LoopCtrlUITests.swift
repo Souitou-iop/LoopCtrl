@@ -1284,7 +1284,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     /// Anything else (config, resolve_app, device_info, list_apps, is_locked, …)
     /// runs directly on the RPC queue — no main-thread hop, so it can't be delayed
     /// by (or delay) a slow UI action.
-    private static let mainThreadMethods: Set<String> = [
+    static let mainThreadMethods: Set<String> = [
         "tap", "double_tap", "long_press", "swipe", "scroll", "drag", "gesture",
         "page", "page_down", "page_up", "collect",
         "type", "clear_text", "screenshot", "page_source", "view_tree", "ui_tree",
@@ -1350,6 +1350,12 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     /// XCUITest call can't freeze the network listener (which would drop the whole
     /// service). Serial so actions still run one-at-a-time in order.
     private let rpcQueue = DispatchQueue(label: "top.ebato.loopctrl.rpc")
+
+    /// Serial lane for `run_steps` batches: like the UI lane it must be serial
+    /// (two batches would interleave actions), but it can never BE the main
+    /// thread — run_steps hops each step to the main itself, and a main.sync
+    /// dispatched from the main thread would deadlock.
+    private let batchQueue = DispatchQueue(label: "top.ebato.loopctrl.rpc.batch")
 
     /// Consecutive UI-method timeouts. Reset by any UI method that completes.
     private var uiTimeoutStreak = 0
@@ -1464,6 +1470,19 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     private static let extendedRpcTimeout: TimeInterval = 15
 
     private static func rpcBudget(for method: String, params: [String: JSONValue]?) -> TimeInterval {
+        if method == "run_steps", case .array(let items)? = params?["steps"] {
+            // Each step pays its own leash (a wait pays what it asked for);
+            // the extra 15s cover the final screen read the batch attaches.
+            var budget = 10.0
+            for item in items {
+                if case .object(let s) = item {
+                    budget += Self.rpcBudget(for: s["method"]?.stringValue ?? "",
+                                             params: s["params"]?.objectValue)
+                }
+            }
+            if params?["observe"]?.stringValue != "none" { budget += 15 }
+            return min(budget, 300)
+        }
         if method == "wait" || method == "wait_for" {
             // As long as it was asked to wait, and a slow last look (OCR).
             let asked = method == "wait"
@@ -1516,7 +1535,12 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             // Non-UI methods take their own lane so diagnosis and recovery stay
             // available while the serial UI queue is wedged.
             let isUIMethod = !Self.nonUIMethods.contains(method)
-            let queue = isUIMethod ? self.rpcQueue : self.nonUIQueue
+            let queue: DispatchQueue
+            if method == "run_steps" {
+                queue = self.batchQueue
+            } else {
+                queue = isUIMethod ? self.rpcQueue : self.nonUIQueue
+            }
             // Read-only polls (a log viewer pulling `logs`, a client list
             // re-reading `config`) would otherwise fill the very log being
             // read with their own request lines. They still count in timing

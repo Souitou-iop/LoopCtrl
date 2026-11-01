@@ -1,7 +1,7 @@
 ---
 name: loopctrl-phone-control
 description: Control an iPhone over HTTP to automate real apps — tap, type, swipe, read the screen's view tree, launch apps, take screenshots. Use when the user asks to operate a phone, drive an iOS app, automate a mobile task (search a product, check an order, fill a form, carry data from one app to another), or inspect what's on a device's screen. The service is LoopCtrl, JSON-RPC 2.0 on port 8300; requests are encrypted, so drive it with a client downloaded from the device (a static CLI needing no interpreter, or a Python one) rather than hand-written HTTP.
-skill_version: "1.98.13"
+skill_version: "1.98.14"
 ---
 
 # LoopCtrl — control an iPhone over HTTP
@@ -63,7 +63,7 @@ r find_and_tap '{"element_id":"General"}' && r find_and_tap '{"element_id":"Abou
 ```bash
 python3 loopctrl_rpc.py run '[{"method":"find_and_tap","params":{"element_id":"搜索"}},{"method":"type","params":{"text":"快递","submit":true}}]'
 ```
-Each step may carry `"expect":{"present":"<text>"}` (or `absent` / `foreground":"<bundle_id>"`), checked right after it; a failed expect stops the batch. `--no-observe` skips the final read.
+Each step may carry `"expect":{"present":"<text>"}` (or `absent` / `foreground":"<bundle_id>"`), checked right after it; a failed expect stops the batch. `--no-observe` skips the final read. When the device advertises `run_steps` in its capabilities, `run` hands the whole batch to the phone — ONE round trip, no per-step network hops (the win is biggest over a relay or cellular); otherwise it runs the steps one by one from the client.
 
 ## Deep menus and going back
 
@@ -105,6 +105,7 @@ Each step may carry `"expect":{"present":"<text>"}` (or `absent` / `foreground":
 | `resolve_app` | `text` | `country` |
 | `wait` | `text` (or `duration`) | `until:"absent"`, `timeout` (≤60s), `source:"tree"\|"ocr"` |
 | `wait_for` | `present` and/or `absent` (arrays of texts), or `foreground` | `timeout` (≤60s) |
+| `run_steps` | `steps` (1–20: {method, params, expect?}) | `observe:"visible"\|"compact"\|"none"` |
 | `read_value` | `element_id` or `ref` | `match`, `max_length` (≤65536) — a long text's whole value, read-only |
 | `launch_app` | `bundle_id` or `name` | — |
 | `activate_app` / `terminate_app` | `bundle_id` | — |
