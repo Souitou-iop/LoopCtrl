@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 
 final class RemoteSessionTests: XCTestCase {
@@ -78,5 +79,32 @@ final class RemoteSessionTests: XCTestCase {
         XCTAssertEqual(raw[4], 3)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: raw.subdata(in: 5..<raw.count)) as? [String: Any])
         XCTAssertEqual(json["paused"] as? Bool, true)
+    }
+
+    /// Someone's touch, for pages to draw: type 4, sealed like the rest, so
+    /// a page that predates it still keeps its counter in step.
+    func testActionMessageSeals() throws {
+        let fields: [String: JSONValue] = [
+            "tok": .string("a1"), "kind": .string("agent"), "phase": .string("touch"), "touch": .string("tap"),
+            "fingers": .array([.array([.array([.double(10), .double(20), .double(0)])])]),
+        ]
+        let raw = try XCTUnwrap(ScreenStreamSealer(pairingKey: nil).action(fields))
+        XCTAssertEqual(raw[4], 4)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: raw.subdata(in: 5..<raw.count)) as? [String: Any])
+        XCTAssertEqual(json["kind"] as? String, "agent")
+        XCTAssertEqual((json["fingers"] as? [[[Double]]])?.first?.first, [10, 20, 0])
+
+        let key = Data(repeating: 7, count: 32), salt = Data(repeating: 1, count: 16)
+        let sealer = ScreenStreamSealer(pairingKey: key, salt: salt)
+        _ = sealer.state(["paused": .bool(false)])
+        let sealed = try XCTUnwrap(sealer.action(fields))
+        XCTAssertEqual(sealed[4], 4)
+        let derived = SymmetricKey(data: SecureEnvelope.hmac(key, Data("loopctrl-stream-v1".utf8) + salt))
+        var iv = Data(count: 4)
+        iv.append(SecureEnvelope.be64(1))
+        let body = sealed.subdata(in: 5..<sealed.count)
+        let box = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: iv), ciphertext: body.dropLast(16), tag: body.suffix(16))
+        let plain = try AES.GCM.open(box, using: derived, authenticating: Data([4]))
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: plain) as? [String: Any])?["tok"] as? String, "a1")
     }
 }

@@ -91,6 +91,15 @@ final class ScreenStream {
     /// stream still on screenshots).
     private var pendingBroadcast: BroadcastLink?
     private var broadcastListener: NWListener?
+    /// The switch: whether to take the extension's connections at all.
+    private var broadcastOn = false
+    /// Failed listens in a row, for the backoff before the next.
+    private var listenFailures = 0
+    /// Which of `BroadcastWire.ports` the listener is on; each new listener
+    /// takes the next one.
+    private var portIndex = BroadcastWire.ports.count - 1
+    /// Looks at the listener every few seconds while the switch is on.
+    private var listenerWatch: DispatchSourceTimer?
     private var broadcastSync: DispatchSourceTimer?
     private var lastLanes: [BroadcastWire.Lane] = []
     private var lastHeartbeat: CFTimeInterval = 0
@@ -114,7 +123,15 @@ final class ScreenStream {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] note in
                 let into = note.name == UIApplication.didEnterBackgroundNotification ? "background" : "foreground"
                 self?.restartEncoders("LoopCtrl went to the \(into)")
+                // iOS may have taken the listening socket while LoopCtrl was
+                // suspended; listen again now rather than at the next look.
+                if into == "foreground" { self?.queue.async { self?.checkBroadcastListener() } }
             }
+        }
+        NotificationCenter.default.addObserver(forName: UIScreen.capturedDidChangeNotification, object: nil, queue: .main) {
+            [weak self] _ in
+            guard UIScreen.main.isCaptured else { return }
+            self?.queue.async { self?.captureBegan() }
         }
         NotificationCenter.default.addObserver(forName: InProcessRunnerControl.setBroadcast, object: nil, queue: nil) {
             [weak self] note in
@@ -215,6 +232,15 @@ final class ScreenStream {
         }
     }
 
+    /// Someone's action to every viewer, as it happens, for the page to draw
+    /// (docs/remote-control.md, "Actions on screen"). Each page leaves out
+    /// its own: it drew those already.
+    func showAction(_ fields: [String: JSONValue]) {
+        queue.async {
+            for viewer in self.viewers.values { viewer.sendAction(fields) }
+        }
+    }
+
     private func stateFields() -> [String: JSONValue] {
         var fields = RemoteSession.shared.state()
         fields["hidden"] = .bool(screenHidden)
@@ -297,47 +323,125 @@ final class ScreenStream {
     /// Take the extension's connections, or stop taking them (and end a
     /// broadcast that is running).
     private func setBroadcast(_ on: Bool) {
+        broadcastOn = on
         if !on {
+            listenerWatch?.cancel()
+            listenerWatch = nil
             broadcastListener?.cancel()
             broadcastListener = nil
             broadcast?.stop()
             return
         }
-        guard broadcastListener == nil, let port = NWEndpoint.Port(rawValue: BroadcastWire.port) else { return }
+        checkBroadcastListener()
+        guard listenerWatch == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 5, repeating: 5)
+        timer.setEventHandler { [weak self] in self?.checkBroadcastListener() }
+        timer.resume()
+        listenerWatch = timer
+    }
+
+    /// Listen, unless a listener is already up or on its way up (`fresh`:
+    /// listen anew even then). A listener that failed, was taken by iOS
+    /// while LoopCtrl was suspended, or never bound is replaced; once it was
+    /// simply left there, and the extension's every connection was refused
+    /// until LoopCtrl was killed and opened again.
+    ///
+    /// Each new listener takes the next of `BroadcastWire.ports`, and none
+    /// shares its port: the socket of a listener lost while suspended can
+    /// keep its port, completing connections nobody ever takes, and a new
+    /// listener sharing that port did not get them either. A port still
+    /// held that way is simply skipped.
+    private func checkBroadcastListener(fresh: Bool = false) {
+        guard broadcastOn else { return }
+        if let listener = broadcastListener {
+            switch listener.state {
+            case .ready, .setup: if !fresh { return }
+            default: break
+            }
+            listener.stateUpdateHandler = nil
+            listener.newConnectionHandler = nil
+            listener.cancel()
+            broadcastListener = nil
+        }
+        portIndex = (portIndex + 1) % BroadcastWire.ports.count
+        let number = BroadcastWire.ports[portIndex]
+        guard let port = NWEndpoint.Port(rawValue: number) else { return }
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: port)
-        params.allowLocalEndpointReuse = true
+        params.allowLocalEndpointReuse = false
         guard let listener = try? NWListener(using: params) else {
-            log("system broadcast: could not listen on \(BroadcastWire.port)")
+            log("system broadcast: could not listen on \(number)")
+            listenAgainLater()
             return
         }
         listener.newConnectionHandler = { [weak self] connection in self?.offered(connection) }
-        listener.stateUpdateHandler = { [weak self] state in
-            if case .failed(let error) = state { self?.log("system broadcast: listener failed (\(error))") }
+        listener.stateUpdateHandler = { [weak self, weak listener] state in
+            guard let self, let listener, self.broadcastListener === listener else { return }
+            switch state {
+            case .ready:
+                self.log("system broadcast: listening on \(number)")
+                self.listenFailures = 0
+            case .failed(let error), .waiting(let error):
+                self.log("system broadcast: listener on \(number) down (\(error)), listening again")
+                listener.stateUpdateHandler = nil
+                listener.cancel()
+                self.broadcastListener = nil
+                self.listenAgainLater()
+            case .cancelled:
+                self.broadcastListener = nil
+                self.listenAgainLater()
+            default:
+                break
+            }
         }
         listener.start(queue: queue)
         broadcastListener = listener
+    }
+
+    /// iOS started recording the screen: the extension is about to connect.
+    /// Unless one is connected already, listen anew, on a port no listener
+    /// of an earlier spell (one lost while LoopCtrl was suspended) can hold.
+    private func captureBegan() {
+        guard broadcastOn, broadcast == nil else { return }
+        log("system broadcast: the screen is being recorded, listening anew")
+        checkBroadcastListener(fresh: true)
+    }
+
+    /// 0.5, 1, 2, 4, then every 5 seconds.
+    private func listenAgainLater() {
+        let delay = min(0.5 * pow(2, Double(listenFailures)), 5)
+        listenFailures += 1
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in self?.checkBroadcastListener() }
     }
 
     /// A connection to the extension's port. Only one, and only while iOS
     /// says the screen is being captured: another app on the phone could
     /// reach a loopback port too, but it can't make the screen be recorded.
     /// The extension connects the moment the broadcast starts, a little
-    /// before iOS counts the screen as captured: wait for that, a few seconds
-    /// at most.
+    /// before iOS counts the screen as captured: wait for that. With LoopCtrl
+    /// in the background iOS may say so late, so wait up to 15 seconds.
     private func offered(_ connection: NWConnection, since: CFTimeInterval = CACurrentMediaTime()) {
         DispatchQueue.main.async {
             let captured = UIScreen.main.isCaptured
             self.queue.async {
                 let waited = CACurrentMediaTime() - since
-                if !captured && waited < 5 {
+                if !captured && waited < 15 {
                     self.queue.asyncAfter(deadline: .now() + 0.2) { self.offered(connection, since: since) }
                     return
                 }
-                guard captured, self.broadcast == nil, self.broadcastListener != nil else {
-                    self.log("system broadcast: refused a connection (\(captured ? "one is already open" : "the screen is not being captured"))")
+                guard captured, self.broadcastOn else {
+                    self.log("system broadcast: refused a connection (\(captured ? "the switch is off" : "the screen is not being captured"))")
                     connection.cancel()
                     return
+                }
+                // Only one extension runs at a time, and it connects again only
+                // once it has lost its connection: a new one means the old one
+                // is gone, even if its close never reached us. Refusing it here
+                // kept the stream on screenshots until LoopCtrl was killed.
+                if let old = self.broadcast {
+                    self.log("system broadcast: a new connection replaces the open one")
+                    old.cancel()
                 }
                 self.log(String(format: "system broadcast: connected (screen captured after %.1f s)", waited))
                 // A retry can arrive before the previous connection's close
@@ -354,6 +458,7 @@ final class ScreenStream {
         guard broadcast == nil else { return link.stop() }
         if pendingBroadcast === link { pendingBroadcast = nil }
         broadcast = link
+        link.welcome()
         log("system broadcast started: the screen now comes from iOS")
         for lane in lanes { lane.restart(nil) }
         lastLanes = []
@@ -1064,6 +1169,11 @@ private final class Viewer {
         write(message, counted: false)
     }
 
+    func sendAction(_ fields: [String: JSONValue]) {
+        guard let message = sealer.action(fields) else { return }
+        write(message, counted: false)
+    }
+
     func sendConfig(_ config: [String: Any]) {
         guard let message = sealer.config(config) else { return }
         // Configuration always goes out, behind whatever is in flight.
@@ -1214,6 +1324,11 @@ private final class BroadcastLink {
             }
             if complete || error != nil { self.close() } else { self.receive() }
         }
+    }
+
+    /// The answer to the extension's hello: it counts as connected now.
+    func welcome() {
+        connection.send(content: BroadcastWire.message(.welcome), completion: .contentProcessed { _ in })
     }
 
     func send(lanes: [BroadcastWire.Lane]) {

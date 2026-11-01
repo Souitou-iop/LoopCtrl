@@ -106,6 +106,7 @@ len u32 (big-endian, covers type + payload) | type u8 | payload
 | 1 | `CONFIG` | JSON: `{"codec": "avc1.64002a" \| "hvc1.1.6.L120.B0", "width", "height", "point_width", "point_height", "description": "<base64 avcC or hvcC>"}` |
 | 2 | `FRAME` | `flags u8` (bit 0: keyframe) `| ts u64` (microseconds) `| access unit` (length-prefixed NAL units) |
 | 3 | `STATE` | JSON: `{"paused", "people": [{"tok", "name", "kind", "watching", "operating", "since", "actions"}], "hidden", "lan": ["<ip:port>"]}`, first after `HELLO` and again whenever it changes (see [Control](#control)); `lan` lists where the phone answers on the LAN, when it does (see [Direct on the LAN](#direct-on-the-lan)) |
+| 4 | `ACTION` | JSON: someone's action as it happens, for the page to draw (see [Actions on screen](#actions-on-screen)) |
 
 With `enc=1` the runner derives `key = HMAC-SHA256(K, "loopctrl-stream-v1" || salt)`
 from the pairing key `K` the ticket was minted for, and every message after
@@ -222,11 +223,34 @@ gets back to that lane's viewers. The format between them is in
 only the newest picture (for a keyframe on a still screen, or a viewer who
 joins one) and drops frames the runner hasn't taken yet.
 
-They meet on loopback port 48300. No App Group is needed, so re-signing stays
+They meet on loopback, on one of ports 48300–48307: the runner listens on
+one (another each time it listens anew) and answers the extension's `hello`
+with `welcome`; the extension tries the ports in turn and counts as
+connected only once welcomed. No App Group is needed, so re-signing stays
 as it is. The runner takes one connection at a time, and only while the
 screen is being captured (`UIScreen.isCaptured`): another app could reach a
 loopback port, but not make the screen be recorded. Turning the switch off
 ends a running broadcast.
+
+Starting a broadcast must work however long LoopCtrl has been running, so
+the runner keeps its side up by itself:
+
+- **A port nobody answers on is left behind.** Seen on an iPhone 17: after
+  LoopCtrl had spent a while suspended, iOS showed the broadcast running,
+  the extension's connection went through, and the runner never heard of
+  it; turning the switch off and on didn't help, killing LoopCtrl did. The
+  socket of the listener lost while suspended still held the port, the
+  kernel still completed connections to it, and nothing took them. So the
+  runner listens anew, on the next port and never sharing one, the moment
+  iOS starts recording the screen (and whenever a listener fails: after
+  0.5, 1, 2, 4, then every 5 s; it also looks every 5 s while the switch is
+  on, and when LoopCtrl comes to the front), and the extension drops a
+  connection that isn't welcomed within 5 s for the next port.
+- **A new connection wins.** The extension connects again only after it
+  lost its connection, so a new one replaces any the runner still holds,
+  even if that one's close never arrived.
+- **iOS may report the capture late** while LoopCtrl is in the background;
+  the runner waits up to 15 s for `isCaptured` before refusing.
 
 ## Direct on the LAN
 
@@ -320,6 +344,20 @@ in points, `t` in seconds), up to five fingers, synthesized as one event so
 a curved drag, a pinch or a two-finger hold arrives as drawn. With a mouse,
 holding Alt/Option while dragging adds a mirrored second finger: a pinch.
 
+Each finger's path is sent as the browser sampled it, every coalesced
+sample included. The phone moves a finger in a straight line from one sample
+to the next over the time between them, so where the finger paused the page
+adds a sample at the pause's start (otherwise the pause would play back as a
+slow drift), and a rest before lifting counts for at most 0.35 s (longer only
+delays the phone; the finger leaves with no speed either way).
+
+The wheel and a trackpad scroll gather what turns while the previous scroll
+is on its way and send it as the next `gesture`, so a long scroll never queues
+up behind itself. Up and down, the finger rests before lifting, and the
+content moves by what the wheel turned (a trackpad's momentum arrives as more
+wheel); sideways, it lifts while moving, so pages and carousels turn. Less
+than 12 points waits for more rather than becoming a tap.
+
 The toolbar also has **App switcher** (`app_switcher`: up from the bottom
 edge and a short hold, as a person does), **Notification Center**
 (`notification_center`: down from the top edge), **Control Center**
@@ -327,6 +365,32 @@ edge and a short hold, as a person does), **Notification Center**
 phone with a Home button) and **Rotate** (`rotate`: between portrait and
 landscape, or to a given `orientation`). Whether the interface turns is
 up to the app in front; the reply gives the screen size afterwards.
+
+### Actions on screen
+
+Every page draws who is doing what, over the live screen, in two hands told
+apart at a glance:
+
+- **A person** (the page's own touches, drawn as they happen): a contact
+  under the finger, a tail behind it, a ring filling toward a long press, a
+  ripple on release. A sent swipe waits as a dotted line, then a bead runs
+  along it at the pace the phone replays it. Other people's touches come in
+  a colour of their own.
+- **An agent**: the pointer browser agents show, a rounded blue arrowhead
+  with a white rim in a soft glow, glides in an arc to where it acts,
+  presses with a ripple, drags a trail behind a swipe, rings the element it
+  aims at, and shows dots while it types; the screen's edge glows softly,
+  brightest along the bottom, while an agent operates.
+
+The stream carries the actions as `ACTION` messages: `phase: "begin"` and
+`"end"` (with `outcome`) around every controlled RPC, and `phase: "touch"`
+for each touch the runner synthesizes, with where it really went:
+`{"tok", "kind": "person" | "agent", "id", "touch": "tap" | "double_tap" |
+"long_press" | "path", "fingers": [[[x, y, t], …], …], "frame": [x, y, w, h]}`
+(`frame`: the element a ref or element tap aimed at). The server tags each
+controlled request with its sender (`_actor`, overwriting any the caller
+sent), so a touch is attributed to whoever's action made it. A page skips
+its own.
 
 ## View tree
 

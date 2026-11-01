@@ -1197,6 +1197,9 @@ class ActionHandler {
     }
 
     /// The element a ref/find tap aimed at, for the fine look.
+    private var tapTargetFrame: CGRect? {
+        didSet { fastHandler.targetFrame = tapTargetFrame }
+    }
     /// Where to look closely after a tap: ±120pt around a coordinate tap; for
     /// a tapped element its own frame plus a margin — a row's checkmark sits
     /// at its right edge, ~150pt from the centre a ref tap lands on.
@@ -2130,6 +2133,9 @@ class ActionHandler {
             let label = el!.label
             // Native: a synthesized hold is not recognised as a long press (see
             // the coordinate path below).
+            let f = el!.frame
+            tapTargetFrame = f
+            fastHandler.show("long_press", [[(CGPoint(x: f.midX, y: f.midY), 0), (CGPoint(x: f.midX, y: f.midY), duration)]])
             el!.press(forDuration: duration)
             return (["message": .string("Long pressed ref \(refId) ('\(label)') for \(duration)s")], nil)
         }
@@ -2155,6 +2161,7 @@ class ActionHandler {
 
         let normalized = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
         let coordinate = normalized.withOffset(CGVector(dx: x, dy: y))
+        fastHandler.show("long_press", [[(CGPoint(x: x, y: y), 0), (CGPoint(x: x, y: y), duration)]])
         coordinate.press(forDuration: duration)
 
         return (["message": .string("Long pressed at (\(x), \(y)) for \(duration)s (native)"), "screen": coordinateHint], nil)
@@ -2339,6 +2346,8 @@ class ActionHandler {
         let normalized = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
         let start = normalized.withOffset(CGVector(dx: x, dy: y))
         let end = normalized.withOffset(CGVector(dx: clampedEndX, dy: clampedEndY))
+        fastHandler.show("path", [[(CGPoint(x: x, y: y), 0), (CGPoint(x: x, y: y), 0.1),
+                                   (CGPoint(x: clampedEndX, y: clampedEndY), 0.4)]])
         start.press(forDuration: 0.1, thenDragTo: end)
 
         return ([
@@ -2450,6 +2459,7 @@ class ActionHandler {
             if let err = validateCoordinate(x: x, y: y, context: "type focus tap") { return (nil, err) }
             let normalized = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
             let coordinate = normalized.withOffset(CGVector(dx: x, dy: y))
+            fastHandler.show("tap", [[(CGPoint(x: x, y: y), 0), (CGPoint(x: x, y: y), 0.05)]])
             coordinate.tap()
             usleep(500_000)
             focusedByTap = true
@@ -8233,6 +8243,7 @@ class ActionHandler {
         let eventRecord = XCSynthesizedEventRecord(name: "Drag")
         let startPoint = CGPoint(x: fromX, y: fromY)
         let endPoint = CGPoint(x: toX, y: toY)
+        fastHandler.show("path", [[(startPoint, 0), (endPoint, duration), (endPoint, duration + 0.05)]])
         let eventPath = XCPointerEventPath(forTouchAt: startPoint, offset: 0.0)
         eventPath.pressDown(atOffset: 0.0)
         eventPath.move(to: endPoint, atOffset: duration)

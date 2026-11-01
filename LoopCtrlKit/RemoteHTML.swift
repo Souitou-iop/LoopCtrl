@@ -194,6 +194,24 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .screen > canvas, .screen > video { position: absolute; inset: 0; width: 100%; height: 100%; }
 #video, #mse { object-fit: fill; }
 #overlay { cursor: pointer; }
+/* A phone browser greys out a tapped element that looks clickable; on the
+   screen that flashed the whole picture with every tap. */
+.screen, .screen * { -webkit-tap-highlight-color: transparent; }
+/* An agent at work: the screen's edge glows softly, brightest along the
+   bottom, breathing (see overlay). */
+.ai-glow { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0;
+  transition: opacity .7s var(--ease); }
+.ai-glow.on { opacity: 1; }
+.ai-glow i { position: absolute; inset: 0; border-radius: inherit; }
+.ai-glow .ring, .ai-glow .halo > i { padding: 1.5px;
+  background: linear-gradient(to top, rgba(255,255,255,.95), rgba(190,212,255,.55) 18%, rgba(160,190,255,.22) 55%, rgba(160,190,255,.3));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); }
+.ai-glow .halo { filter: blur(10px); opacity: .85; animation: ai-breathe 2.6s var(--ease) infinite alternate; }
+.ai-glow .halo > i { padding: 8px; }
+.ai-glow.pulse .halo { animation: ai-pulse .8s var(--ease); }
+@keyframes ai-breathe { from { opacity: .55; } to { opacity: .95; } }
+@keyframes ai-pulse { 30% { opacity: 1; filter: blur(16px); } }
 .msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; color: rgba(255,255,255,.75);
   font-size: 15px; line-height: 1.5; pointer-events: none; }
 .msg .box { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 18em; }
@@ -526,6 +544,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
         <canvas id="video"></canvas>
         <video id="mse" muted playsinline autoplay disablepictureinpicture hidden></video>
         <canvas id="overlay"></canvas>
+        <div class="ai-glow" id="ai-glow"><i class="halo"><i></i></i><i class="ring"></i></div>
         <div class="tag" id="hidden-tag" hidden></div>
         <div class="msg" id="screen-msg"><div class="box"><div class="spin"></div><span></span></div></div>
         <div class="msg paused" id="paused-msg" hidden><div class="box">
@@ -1318,6 +1337,7 @@ async function readStream(reader, gen) {
       }
       if (type === 1) await onConfig(JSON.parse(dec.decode(payload)));
       else if (type === 3) onState(JSON.parse(dec.decode(payload)));
+      else if (type === 4) onAction(JSON.parse(dec.decode(payload)));
       else if (type === 2 && player) {
         const view = new DataView(payload.buffer, payload.byteOffset);
         const ts = view.getUint32(1) * 4294967296 + view.getUint32(5);
@@ -1461,14 +1481,438 @@ function bump(node) {
 }
 
 // ───────────────────────────── overlay ─────────────────────────────
-let trails = [], ripple = null, hot = null, wireManual = false, hiddenScreen = false, nodes = [], trailFade = 0;
-const easeOut = (x) => 1 - Math.pow(1 - Math.min(Math.max(x, 0), 1), 3);
+// Everything drawn over the screen, in two hands told apart at a glance.
+// A person's touches are white glass: a contact that settles under the
+// finger, a comet tail behind it, a ring that fills toward a long press and
+// a ripple on release; once a swipe is sent, a bead runs along its path at
+// the pace the phone replays it. An agent is a blue pointer, as browser
+// agents show theirs: it glides to where it acts, presses with a ripple,
+// drags a trail behind it, rings the element it aims at, and the screen's
+// edge glows while it works.
+// Other people's touches come in a hue of their own.
+let hot = null, wireManual = false, hiddenScreen = false, nodes = [];
+let fx = [];          // effects in flight: each draw(now) says whether it goes on
+const clamp01 = (x) => Math.min(Math.max(x, 0), 1);
+const easeOut = (x) => 1 - Math.pow(1 - clamp01(x), 3);
+const easeInOut = (x) => { x = clamp01(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+const springOut = (x) => { x = clamp01(x); return 1 - Math.exp(-7 * x) * Math.cos(10 * x); };
 const wireOn = () => wireManual || hiddenScreen;
+// The agent's colours: one blue in a few lights, as browser agents draw their pointer.
+const RAINBOW = ["#8ab8ff", "#5d9bff", "#3b7ff2", "#2f6fe0", "#3b7ff2", "#5d9bff", "#b3d0ff"];
+const WHITE = [255, 255, 255];
+const rgba = (c, a) => "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + Math.max(0, Math.min(1, a)).toFixed(3) + ")";
+// Someone else's colour, the same on every page.
+function hueOf(id) {
+  let h = 0;
+  for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const hue = h % 360, s = .78, l = .66;
+  const f = (n) => { const k = (n + hue / 30) % 12; return Math.round(255 * (l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+  return [f(0), f(8), f(4)];
+}
 function sizeOverlay() {
   const r = overlay.getBoundingClientRect(), dpr = devicePixelRatio || 1;
   overlay.width = Math.round(r.width * dpr); overlay.height = Math.round(r.height * dpr);
   draw();
 }
+// Screen points to canvas pixels, and effect sizes to canvas pixels, for the
+// frame being drawn. Effects keep to the screen they are drawn on: full size
+// on a desktop's tall screen, down to about half on a phone's small one.
+let SX = 1, SY = 1, DPR = 1, FIT = 1;
+const cx = (x) => x * SX, cy = (y) => y * SY, px = (n) => n * DPR * FIT;
+// Where a path is at `s` seconds from its start.
+function pathAt(path, s) {
+  if (s <= path[0].t) return path[0];
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1], b = path[i];
+    if (s <= b.t) { const k = b.t > a.t ? (s - a.t) / (b.t - a.t) : 1; return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, t: s }; }
+  }
+  return path[path.length - 1];
+}
+const pathEnd = (path) => path[path.length - 1].t;
+
+// ── a person's hand ──
+// The contact under a finger: a soft disc, a bright rim, a dot at its heart.
+function drawContact(x, y, grow, color, alpha = 1) {
+  const r = px(6 + 3.5 * grow);
+  octx.save();
+  octx.shadowColor = "rgba(0,0,0,.35)"; octx.shadowBlur = px(10);
+  octx.fillStyle = rgba(color, .2 * alpha);
+  octx.beginPath(); octx.arc(cx(x), cy(y), r, 0, Math.PI * 2); octx.fill();
+  octx.shadowBlur = px(4);
+  octx.strokeStyle = rgba(color, .95 * alpha); octx.lineWidth = px(1.6);
+  octx.stroke();
+  octx.shadowBlur = 0;
+  octx.fillStyle = rgba(color, .95 * alpha);
+  octx.beginPath(); octx.arc(cx(x), cy(y), px(2.4), 0, Math.PI * 2); octx.fill();
+  octx.restore();
+}
+// A comet along a path: the whole path faint, and the last `tail` seconds of
+// it bright, fading toward the tail. `head`: seconds into the path.
+function drawComet(path, head, color, alpha = 1, tail = .28) {
+  if (path.length < 2) return;
+  const h = pathAt(path, head), pts = [];
+  octx.save();
+  octx.lineCap = "round"; octx.lineJoin = "round";
+  octx.strokeStyle = rgba(color, .16 * alpha); octx.lineWidth = px(3);
+  octx.beginPath(); octx.moveTo(cx(path[0].x), cy(path[0].y));
+  for (const p of path) { if (p.t > head) break; octx.lineTo(cx(p.x), cy(p.y)); if (head - p.t < tail) pts.push(p); }
+  octx.lineTo(cx(h.x), cy(h.y)); octx.stroke();
+  if (pts.length && pts[0] !== path[0]) pts.unshift(pathAt(path, Math.max(head - tail, 0)));
+  pts.push(h);
+  const a = pts[0];
+  if (pts.length > 1 && Math.hypot(cx(h.x) - cx(a.x), cy(h.y) - cy(a.y)) > 1) {
+    const fade = clamp01(1 - (head - a.t) / tail);   // how bright the tail end still is
+    const shade = octx.createLinearGradient(cx(a.x), cy(a.y), cx(h.x), cy(h.y));
+    shade.addColorStop(0, "rgba(0,0,0," + (.2 * alpha * fade).toFixed(3) + ")"); shade.addColorStop(1, "rgba(0,0,0," + (.2 * alpha).toFixed(3) + ")");
+    const light = octx.createLinearGradient(cx(a.x), cy(a.y), cx(h.x), cy(h.y));
+    light.addColorStop(0, rgba(color, .9 * alpha * fade)); light.addColorStop(1, rgba(color, .95 * alpha));
+    octx.beginPath(); octx.moveTo(cx(a.x), cy(a.y));
+    for (const p of pts) octx.lineTo(cx(p.x), cy(p.y));
+    octx.strokeStyle = shade; octx.lineWidth = px(7); octx.stroke();
+    octx.strokeStyle = light; octx.lineWidth = px(4); octx.stroke();
+  }
+  octx.restore();
+}
+// A press filling toward a long press, around a contact.
+function drawHoldRing(x, y, k, color, done) {
+  octx.save();
+  octx.lineCap = "round"; octx.lineWidth = px(2.6);
+  octx.strokeStyle = "rgba(0,0,0,.2)";
+  octx.beginPath(); octx.arc(cx(x), cy(y), px(15), 0, Math.PI * 2); octx.stroke();
+  octx.strokeStyle = done ? "rgba(52,130,255,.98)" : rgba(color, .95);
+  octx.beginPath(); octx.arc(cx(x), cy(y), px(15), -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * easeOut(k)); octx.stroke();
+  octx.restore();
+}
+// Release: a ring opening out and the contact letting go.
+function rippleFx(x, y, color, delay = 0) {
+  const at = performance.now() + delay;
+  return (now) => {
+    const k = (now - at) / 480;
+    if (k < 0) return true;
+    if (k >= 1) return false;
+    const e = easeOut(k);
+    octx.save();
+    octx.shadowColor = "rgba(0,0,0,.3)"; octx.shadowBlur = px(6);
+    octx.strokeStyle = rgba(color, .9 * (1 - k)); octx.lineWidth = px(1.8 * (1 - k) + .5);
+    octx.beginPath(); octx.arc(cx(x), cy(y), px(7 + 11 * e), 0, Math.PI * 2); octx.stroke();
+    octx.shadowBlur = 0;
+    const d = clamp01(k * 2);
+    octx.fillStyle = rgba(color, .32 * (1 - d));
+    octx.beginPath(); octx.arc(cx(x), cy(y), px(7 * (1 - d * .6)), 0, Math.PI * 2); octx.fill();
+    octx.restore();
+    return true;
+  };
+}
+// A sent swipe: its path waits faint, then a bead runs along it as the
+// phone replays it, and it fades. `hooks` hears from the action queue.
+function replayFx(paths, color) {
+  const dur = Math.max(...paths.map(pathEnd));
+  const r = { start: 0, end: 0, gone: 0 };
+  const fade = 320;
+  r.draw = (now) => {
+    if (r.gone && now - r.gone > fade) return false;
+    if (r.start && now - r.start > dur * 1000 + fade + 200) return false;
+    const playing = r.start && now >= r.start;
+    const s = playing ? (now - r.start) / 1000 : 0;
+    const out = r.gone ? 1 - (now - r.gone) / fade : playing && s > dur ? 1 - (s - dur) * 1000 / fade : 1;
+    for (const path of paths) {
+      if (!playing) {
+        octx.save();
+        octx.setLineDash([px(2), px(6)]); octx.lineCap = "round";
+        octx.strokeStyle = rgba(color, .55 * out); octx.lineWidth = px(2.4);
+        octx.beginPath(); octx.moveTo(cx(path[0].x), cy(path[0].y));
+        for (const p of path) octx.lineTo(cx(p.x), cy(p.y));
+        octx.stroke(); octx.restore();
+        continue;
+      }
+      drawComet(path, Math.min(s, pathEnd(path)), color, out, .22);
+      const h = pathAt(path, Math.min(s, pathEnd(path)));
+      if (s <= pathEnd(path) + .05) drawContact(h.x, h.y, .4, color, .9 * out);
+    }
+    return true;
+  };
+  r.hooks = {
+    // The phone starts it about half a round trip after it is sent.
+    start: () => { r.start = performance.now() + 120; draw(); },
+    drop: () => { r.gone = performance.now(); draw(); },
+  };
+  return r;
+}
+
+// ── an agent's hand ──
+const ai = { x: 0, y: 0, shown: 0, from: null, to: null, glideAt: 0, glideDur: 0, act: null, actAt: 0,
+             lastAt: 0, typing: 0, frame: null, frameAt: 0, frameOut: 0 };
+const conic = !!octx.createConicGradient;
+// Colour turning around (x, y); `r`: how far it reaches where conic
+// gradients are missing and a linear one stands in.
+function rainbowAround(x, y, now, r = px(20)) {
+  const a = (now / 1400) % (Math.PI * 2);
+  let g;
+  if (conic) g = octx.createConicGradient(a, x, y);
+  else g = octx.createLinearGradient(x - r * Math.cos(a), y - r * Math.sin(a), x + r * Math.cos(a), y + r * Math.sin(a));
+  RAINBOW.forEach((c, i) => g.addColorStop(i / RAINBOW.length, c));
+  g.addColorStop(1, RAINBOW[0]);
+  return g;
+}
+const hueAt = (i, now) => RAINBOW[(Math.floor(now / 160) + i) % RAINBOW.length];
+// The cursor itself: a rounded blue arrowhead with a white rim, in a wide
+// soft glow, the pointer browser agents show while they act.
+const ARROW = [[0, 0], [21, 8.6], [10.2, 11.2], [7.6, 22]];
+function drawCursor(x, y, scale, alpha, now) {
+  if (alpha <= 0) return;
+  const X = cx(x), Y = cy(y), breathe = 1 + .06 * Math.sin(now / 520);
+  octx.save();
+  octx.globalAlpha = alpha;
+  const hx = X + px(8 * scale), hy = Y + px(9 * scale), hr = px(24 * breathe);
+  const glow = octx.createRadialGradient(hx, hy, 0, hx, hy, hr);
+  glow.addColorStop(0, "rgba(120,160,235,.34)");
+  glow.addColorStop(.45, "rgba(100,140,220,.14)");
+  glow.addColorStop(1, "rgba(100,140,220,0)");
+  octx.fillStyle = glow;
+  octx.beginPath(); octx.arc(hx, hy, hr, 0, Math.PI * 2); octx.fill();
+  octx.translate(X, Y); octx.scale(px(scale), px(scale));
+  octx.beginPath();
+  ARROW.forEach(([a, b], i) => (i ? octx.lineTo(a, b) : octx.moveTo(a, b)));
+  octx.closePath();
+  octx.lineJoin = "round";
+  octx.shadowColor = "rgba(0,0,0,.4)"; octx.shadowBlur = px(5); octx.shadowOffsetY = px(1);
+  octx.lineWidth = 4.2; octx.strokeStyle = "#fff"; octx.stroke();   // the rim, and its rounded corners
+  octx.shadowColor = "transparent";
+  const fill = octx.createLinearGradient(0, 0, 14, 18);
+  fill.addColorStop(0, "#5a96ff"); fill.addColorStop(1, "#2f6fe6");
+  octx.fillStyle = fill; octx.fill();
+  octx.lineWidth = 1.2; octx.strokeStyle = fill; octx.stroke();     // round the fill's corners too
+  octx.restore();
+}
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return "rgba(" + (n >> 16) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")";
+}
+// A press: a ring of colour opening out and sparks flying off it.
+function burstFx(x, y, delay = 0) {
+  const at = performance.now() + delay, sparks = 8, spin = Math.random() * Math.PI;
+  return (now) => {
+    const k = (now - at) / 620;
+    if (k < 0) return true;
+    if (k >= 1) return false;
+    const e = easeOut(k), X = cx(x), Y = cy(y);
+    octx.save();
+    octx.lineWidth = px(2.2 * (1 - k) + .6);
+    octx.strokeStyle = rainbowAround(X, Y, now); octx.globalAlpha = 1 - k;
+    octx.beginPath(); octx.arc(X, Y, px(5 + 12 * e), 0, Math.PI * 2); octx.stroke();
+    const k2 = clamp01((now - at - 90) / 560);
+    if (k2 > 0 && k2 < 1) {
+      octx.globalAlpha = .5 * (1 - k2); octx.lineWidth = px(1.4);
+      octx.beginPath(); octx.arc(X, Y, px(5 + 18 * easeOut(k2)), 0, Math.PI * 2); octx.stroke();
+    }
+    octx.globalAlpha = 1;
+    for (let i = 0; i < sparks; i++) {
+      const a = spin + i * Math.PI * 2 / sparks, d = px(6 + 10 * e), s = px(1.6 * (1 - k));
+      octx.fillStyle = hexA(RAINBOW[i % RAINBOW.length], 1 - k);
+      octx.beginPath(); octx.arc(X + d * Math.cos(a), Y + d * Math.sin(a), s, 0, Math.PI * 2); octx.fill();
+    }
+    octx.restore();
+    return true;
+  };
+}
+// A ribbon of colour along a path, behind the cursor, fading after it: one
+// stroke, its colours running from the tail to the head and on with time.
+function drawRibbon(path, head, alpha, now) {
+  if (path.length < 2 || alpha <= 0) return;
+  const pts = [];
+  for (const p of path) { if (p.t > head) break; pts.push(p); }
+  pts.push(pathAt(path, head));
+  const a = pts[0], b = pts[pts.length - 1];
+  if (Math.hypot(cx(b.x) - cx(a.x), cy(b.y) - cy(a.y)) < 1) return;
+  const g = octx.createLinearGradient(cx(a.x), cy(a.y), cx(b.x), cy(b.y)), shift = Math.floor(now / 140);
+  for (let i = 0; i < RAINBOW.length; i++) {
+    const k = i / (RAINBOW.length - 1);
+    g.addColorStop(k, hexA(RAINBOW[(i + shift) % RAINBOW.length], .25 + .75 * k));
+  }
+  octx.save();
+  octx.lineCap = "round"; octx.lineJoin = "round"; octx.strokeStyle = g;
+  octx.beginPath(); octx.moveTo(cx(a.x), cy(a.y));
+  for (const p of pts) octx.lineTo(cx(p.x), cy(p.y));
+  octx.globalAlpha = .3 * alpha; octx.lineWidth = px(14); octx.stroke();
+  octx.globalAlpha = .95 * alpha; octx.lineWidth = px(4.5); octx.stroke();
+  octx.globalAlpha = .9 * alpha; octx.strokeStyle = "rgba(255,255,255,.85)"; octx.lineWidth = px(1.2); octx.stroke();
+  octx.restore();
+}
+// The element the agent aims at: a rounded frame in moving colour.
+function drawAim(f, alpha, now) {
+  if (!f || alpha <= 0) return;
+  const pad = px(3), x = cx(f[0]) - pad, y = cy(f[1]) - pad, w = f[2] * SX + pad * 2, h = f[3] * SY + pad * 2;
+  const r = Math.min(px(12), w / 2, h / 2);
+  octx.save();
+  octx.globalAlpha = alpha;
+  octx.lineWidth = px(2);
+  octx.strokeStyle = rainbowAround(x + w / 2, y + h / 2, now);
+  octx.shadowColor = hexA(hueAt(0, now), .6); octx.shadowBlur = px(12);
+  octx.beginPath();
+  if (octx.roundRect) octx.roundRect(x, y, w, h, r); else octx.rect(x, y, w, h);
+  octx.stroke();
+  octx.restore();
+}
+// Typing: three dots by the cursor, bobbing in turn.
+function drawTyping(x, y, now) {
+  for (let i = 0; i < 3; i++) {
+    const b = Math.sin(now / 140 - i * .9);
+    octx.fillStyle = hexA(RAINBOW[(i * 2 + Math.floor(now / 300)) % RAINBOW.length], .95);
+    octx.beginPath(); octx.arc(cx(x) + px(20 + i * 8), cy(y) + px(28 - Math.max(b, 0) * 4), px(2.8), 0, Math.PI * 2); octx.fill();
+  }
+}
+// Where the cursor is now, and how pressed.
+function aiPose(now) {
+  if (ai.to && now < ai.actAt) {
+    const k = easeInOut((now - ai.glideAt) / ai.glideDur), a = ai.from, b = ai.to;
+    // A slight arc, as a hand moves, not a straight line.
+    const mx = (a.x + b.x) / 2 - (b.y - a.y) * .18, my = (a.y + b.y) / 2 + (b.x - a.x) * .18;
+    const q = 1 - k;
+    return { x: q * q * a.x + 2 * q * k * mx + k * k * b.x, y: q * q * a.y + 2 * q * k * my + k * k * b.y, scale: 1 };
+  }
+  const act = ai.act;
+  if (!act) return { x: ai.x, y: ai.y, scale: 1 };
+  const s = (now - ai.actAt) / 1000, f = act.fingers[0];
+  const p = act.touch === "path" ? pathAt(f, s) : f[0];
+  let scale = 1;
+  const pressEnds = act.touch === "path" || act.touch === "long_press" ? pathEnd(f) : act.touch === "double_tap" ? .2 : .06;
+  if (s >= 0 && s <= pressEnds) scale = .84;
+  else if (s > pressEnds) scale = .84 + .16 * springOut((s - pressEnds) / .35);
+  if (act.touch === "double_tap" && s > .06 && s < .12) scale = 1;
+  return { x: p.x, y: p.y, scale };
+}
+function aiTouch(ev) {
+  const fingers = (ev.fingers || []).map((f) => f.map(([x, y, t]) => ({ x, y, t })))
+    .filter((f) => f.length);
+  if (!fingers.length || !points.w) return;
+  const now = performance.now(), here = aiPose(now), start = fingers[0][0];
+  const dist = Math.hypot(start.x - here.x, start.y - here.y);
+  const fresh = ai.shown < .05;
+  ai.from = fresh ? start : { x: here.x, y: here.y };
+  ai.to = start;
+  ai.glideAt = now;
+  ai.glideDur = fresh ? 1 : Math.min(Math.max(dist * 1.1, 200), 460);
+  ai.actAt = now + ai.glideDur;
+  ai.act = { touch: ev.touch, fingers };
+  ai.x = start.x; ai.y = start.y;
+  ai.lastAt = ai.actAt + pathEnd(fingers[0]) * 1000;
+  if (ev.frame) { ai.frame = ev.frame; ai.frameAt = now; ai.frameOut = ai.lastAt + 700; }
+  const end = fingers[0][fingers[0].length - 1];
+  ai.x = end.x; ai.y = end.y;
+  const delay = ai.actAt - now;
+  if (ev.touch === "tap") fx.push(burstFx(start.x, start.y, delay));
+  else if (ev.touch === "double_tap") { fx.push(burstFx(start.x, start.y, delay)); fx.push(burstFx(start.x, start.y, delay + 120)); }
+  else if (ev.touch === "long_press") fx.push(aiHoldFx(start, pathEnd(fingers[0]), ai.actAt));
+  else fx.push(aiPathFx(fingers, ai.actAt));
+  aiActive(true);
+  draw();
+}
+function aiHoldFx(p, dur, at) {
+  return (now) => {
+    const s = (now - at) / 1000;
+    if (s < 0) return true;
+    if (s > dur) { fx.push(burstFx(p.x, p.y)); return false; }
+    octx.save();
+    octx.lineCap = "round"; octx.lineWidth = px(3);
+    octx.strokeStyle = rainbowAround(cx(p.x), cy(p.y), now);
+    octx.beginPath(); octx.arc(cx(p.x), cy(p.y), px(14), -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * easeOut(s / dur)); octx.stroke();
+    octx.restore();
+    return true;
+  };
+}
+function aiPathFx(fingers, at) {
+  const dur = Math.max(...fingers.map(pathEnd)), fade = 600;
+  return (now) => {
+    const s = (now - at) / 1000;
+    if (s < 0) return true;
+    if (s > dur + fade / 1000) return false;
+    const out = s > dur ? 1 - (s - dur) * 1000 / fade : 1;
+    fingers.forEach((f, i) => {
+      drawRibbon(f, Math.min(s, pathEnd(f)), out, now);
+      // The other fingers of a pinch: a ring each.
+      if (i && s <= pathEnd(f)) {
+        const p = pathAt(f, s);
+        octx.save(); octx.lineWidth = px(2.4); octx.strokeStyle = rainbowAround(cx(p.x), cy(p.y), now);
+        octx.beginPath(); octx.arc(cx(p.x), cy(p.y), px(10), 0, Math.PI * 2); octx.stroke(); octx.restore();
+      }
+    });
+    return true;
+  };
+}
+// An agent's action with no touch of its own (typing, Home, opening an app):
+// the cursor shows it's typing; the screen's edge brightens for the rest.
+function aiPhase(ev) {
+  if (ev.phase === "begin") {
+    aiActive(true);
+    if (ev.method === "type") { ai.typing = ev.id; ai.lastAt = performance.now() + 600; }
+    else if (!/tap|press|swipe|drag|gesture|scroll|page|collect/.test(ev.method)) pulseGlow();
+    if (ev.method === "home") fx.push(homeFx());
+  } else if (ev.phase === "end") {
+    if (ai.typing === ev.id) ai.typing = 0;
+    ai.lastAt = Math.max(ai.lastAt, performance.now());
+  }
+  draw();
+}
+// Home: a band of colour sweeping up from the bottom edge.
+function homeFx() {
+  const at = performance.now();
+  return (now) => {
+    const k = (now - at) / 700;
+    if (k >= 1) return false;
+    const W = overlay.width, H = overlay.height, y = H * (1 - .45 * easeOut(k));
+    const g = octx.createLinearGradient(0, H, 0, y - px(40));
+    g.addColorStop(0, hexA(RAINBOW[4], .0));
+    g.addColorStop(.6, hexA(RAINBOW[5], .28 * (1 - k)));
+    g.addColorStop(1, hexA(RAINBOW[6], 0));
+    octx.fillStyle = g; octx.fillRect(0, y - px(40), W, H - y + px(40));
+    return true;
+  };
+}
+// The edge glow while an agent works: on with its actions, off a while
+// after the last one (or when the phone says it stopped operating).
+let glowTimer = 0, aiSeenAt = -Infinity;
+function aiActive(now) {
+  if (now) aiSeenAt = performance.now();
+  clearTimeout(glowTimer);
+  const left = aiSeenAt + 8000 - performance.now();
+  const on = !state.paused && (left > 0 || state.people.some((p) => p.kind === "agent" && p.operating && p.tok !== tok));
+  $("ai-glow").classList.toggle("on", on);
+  if (left > 0) glowTimer = setTimeout(() => aiActive(false), left + 50);
+}
+function pulseGlow() {
+  const g = $("ai-glow");
+  g.classList.remove("pulse"); void g.offsetWidth; g.classList.add("pulse");
+}
+// Someone else's touch, as their page drew it, in their colour.
+function personTouch(ev) {
+  const fingers = (ev.fingers || []).map((f) => f.map(([x, y, t]) => ({ x, y, t }))).filter((f) => f.length);
+  if (!fingers.length || !points.w) return;
+  const color = hueOf(ev.tok), at = performance.now(), p = fingers[0][0];
+  if (ev.touch === "tap" || ev.touch === "double_tap") {
+    fx.push(rippleFx(p.x, p.y, color));
+    if (ev.touch === "double_tap") fx.push(rippleFx(p.x, p.y, color, 120));
+  } else if (ev.touch === "long_press") {
+    const dur = pathEnd(fingers[0]);
+    fx.push((now) => {
+      const s = (now - at) / 1000;
+      if (s > dur) { fx.push(rippleFx(p.x, p.y, color)); return false; }
+      drawContact(p.x, p.y, easeOut(s / .12), color);
+      drawHoldRing(p.x, p.y, s / dur, color, false);
+      return true;
+    });
+  } else {
+    const r = replayFx(fingers, color);
+    r.hooks.start();
+    fx.push(r.draw);
+  }
+  draw();
+}
+function onAction(ev) {
+  if (!ev || ev.tok === tok || state.paused) return;
+  if (ev.kind === "agent") { if (ev.phase === "touch") aiTouch(ev); else aiPhase(ev); }
+  else if (ev.phase === "touch") personTouch(ev);
+}
+
 // One frame at a time. A frame asked for while the tab was hidden may never
 // come; after half a second without it, ask again rather than stay stuck.
 let drawQueued = 0;
@@ -1480,7 +1924,9 @@ function draw() {
     const W2 = overlay.width, H2 = overlay.height;
     octx.clearRect(0, 0, W2, H2);
     if (!points.w) return;
-    const sx = W2 / points.w, sy = H2 / points.h, dpr = devicePixelRatio || 1;
+    SX = W2 / points.w; SY = H2 / points.h; DPR = devicePixelRatio || 1;
+    FIT = Math.min(Math.max(W2 / DPR / 420, .5), 1);
+    const sx = SX, sy = SY, dpr = DPR;
     if (wireOn()) {
       octx.lineWidth = dpr; octx.font = (10 * dpr) + "px -apple-system, system-ui, sans-serif";
       for (const n of nodes) {
@@ -1500,51 +1946,41 @@ function draw() {
     }
     const now = performance.now();
     let again = false;
-    octx.lineCap = "round"; octx.lineJoin = "round";
-    // Drag paths, fading out once the fingers lift.
-    const trailAlpha = trailFade ? 1 - (now - trailFade) / 300 : 1;
-    if (trailFade && trailAlpha <= 0) { trails = []; trailFade = 0; }
-    for (const trail of trails) {
-      if (trail.length < 2) continue;
-      octx.strokeStyle = "rgba(255,255,255," + (0.7 * trailAlpha) + ")"; octx.lineWidth = 6 * dpr;
-      octx.beginPath(); octx.moveTo(trail[0].x * sx, trail[0].y * sy);
-      for (const p of trail) octx.lineTo(p.x * sx, p.y * sy);
-      octx.stroke();
-      const end = trail[trail.length - 1];
-      octx.fillStyle = "rgba(255,255,255," + (0.85 * trailAlpha) + ")";
-      octx.beginPath(); octx.arc(end.x * sx, end.y * sy, 5 * dpr, 0, Math.PI * 2); octx.fill();
+    // The agent's aim, under everything else.
+    if (ai.frame) {
+      const a = now < ai.frameOut ? easeOut((now - ai.frameAt) / 250) : 1 - (now - ai.frameOut) / 400;
+      if (a <= 0 && now > ai.frameOut) ai.frame = null;
+      else { drawAim(ai.frame, a, now); again = true; }
     }
-    if (trailFade) again = true;
-    // A finger on the screen: a soft spot at once, and for one that stays
-    // put a ring that fills toward the long press (full at 0.5 s).
+    // Effects in flight; each says whether it goes on.
+    if (fx.length) {
+      fx = fx.filter((f) => f(now));
+      again = again || fx.length > 0;
+    }
+    // Fingers on the screen: a comet behind each, the contact under it, and
+    // for one that stays put a ring filling toward the long press (0.5 s).
     for (const f of fingers.values()) {
       if (f.up) continue;
+      const head = (now - gestureStart) / 1000;
+      const live = f.path.concat([{ ...f.path[f.path.length - 1], t: head }]);
+      if (f.moved) drawComet(live, head, WHITE);
+      if (pinch && f.moved) drawComet(mirror(live), head, WHITE, .7);
       const p = f.path[f.path.length - 1], held = (now - f.down) / 1000;
-      const grow = easeOut(held / 0.12);
-      octx.fillStyle = "rgba(255,255,255," + (0.28 * grow) + ")";
-      octx.beginPath(); octx.arc(p.x * sx, p.y * sy, (8 + 8 * grow) * dpr, 0, Math.PI * 2); octx.fill();
-      if (!f.moved && fingers.size === 1 && held > 0.15) {
-        const k = Math.min((held - 0.15) / 0.35, 1);
-        octx.strokeStyle = k >= 1 ? "rgba(52,130,255,.95)" : "rgba(255,255,255,.85)";
-        octx.lineWidth = 3 * dpr;
-        octx.beginPath();
-        octx.arc(p.x * sx, p.y * sy, 22 * dpr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * easeOut(k));
-        octx.stroke();
-      }
+      drawContact(p.x, p.y, springOut(held / .25), WHITE);
+      if (pinch) { const m = mirror([f.path[0], p])[1]; drawContact(m.x, m.y, 1, WHITE, .7); }
+      if (!f.moved && fingers.size === 1 && held > .15) drawHoldRing(p.x, p.y, (held - .15) / .35, WHITE, held >= .5);
       again = true;
     }
-    // The tap itself: a filled circle and a ring spreading out, fading.
-    if (ripple) {
-      const age = (now - ripple.at) / 450;
-      if (age < 1) {
-        const e = easeOut(age);
-        octx.fillStyle = "rgba(255,255,255," + (0.3 * (1 - age)) + ")";
-        octx.beginPath(); octx.arc(ripple.x * sx, ripple.y * sy, (12 + 14 * e) * dpr, 0, Math.PI * 2); octx.fill();
-        octx.strokeStyle = "rgba(255,255,255," + (0.85 * (1 - age)) + ")"; octx.lineWidth = 2.5 * dpr;
-        octx.beginPath(); octx.arc(ripple.x * sx, ripple.y * sy, (12 + 30 * e) * dpr, 0, Math.PI * 2); octx.stroke();
-        again = true;
-      } else ripple = null;
-    }
+    // The agent's cursor, on top: shown while it acts, fading once idle.
+    const idle = now - ai.lastAt;
+    const want = ai.act && idle < 6000 && !state.paused ? 1 : 0;
+    ai.shown += (want - ai.shown) * (want ? .25 : .06);
+    if (ai.shown > .01) {
+      const pose = aiPose(now);
+      drawCursor(pose.x, pose.y, (.6 + .05 * ai.shown) * pose.scale, ai.shown, now);
+      if (ai.typing) drawTyping(pose.x, pose.y, now);
+      again = true;
+    } else if (!want) ai.act = null;
     if (again) draw();
   });
 }
@@ -1562,31 +1998,37 @@ const LABELS = { tap: ["Tap", "点按"], long_press: ["Long press", "长按"], g
   scroll: ["Scroll", "滚动"], clear_text: ["Clear text", "清空文本"], activate_app: ["Switching app", "切换 App"],
   terminate_app: ["Closing the app", "关闭 App"], open_url: ["Opening a link", "打开链接"], tap_element: ["Tap", "点按"], find_and_tap: ["Tap", "点按"] };
 const label = (m) => (LABELS[m] || [m, m])[zh ? 1 : 0];
-function act(method, params = {}) {
-  if (actions.length > 6) actions.length = 0;
-  actions.push([method, params]);
+// `hooks` hears what became of it: start (sent now), done, drop (never sent).
+function act(method, params = {}, hooks = {}) {
+  if (actions.length > 6) dropActions();
+  actions.push([method, params, hooks]);
   record(method, params);
   pumpActions();
+}
+function dropActions() {
+  for (const [, , hooks] of actions.splice(0)) if (hooks.drop) hooks.drop();
 }
 async function pumpActions() {
   if (acting) return;
   acting = true;
   while (actions.length) {
-    const [method, params] = actions.shift();
+    const [method, params, hooks] = actions.shift();
+    if (hooks.start) hooks.start();
     try { await rpc(method, params); expectFrame(); }
-    catch (e) { if (!actionFailed(method, e)) break; }
+    catch (e) { if (hooks.drop) hooks.drop(); if (!actionFailed(method, e)) { if (hooks.done) hooks.done(); break; } }
+    if (hooks.done) hooks.done();
     if (treeOpen() || wireOn()) scheduleTree(500);
   }
   acting = false;
 }
 // What to tell the person, and whether the queue may go on.
 function actionFailed(method, e) {
-  if (e instanceof AuthError) { actions.length = 0; needPair(); return false; }
+  if (e instanceof AuthError) { dropActions(); needPair(); return false; }
   const d = (e && e.data) || {};
-  if (d.code === "paused_by_owner") { actions.length = 0; onState({ ...state, paused: true }); return false; }
+  if (d.code === "paused_by_owner") { dropActions(); onState({ ...state, paused: true }); return false; }
   if (d.outcome === "unknown" || d.outcome === "queued" || !e.code) {
     // A dropped connection or a late reply: it may have landed. Stop, don't resend.
-    actions.length = 0;
+    dropActions();
     snack(t("unknownOutcome", label(method)));
     return false;
   }
@@ -1619,6 +2061,7 @@ function onState(s) {
   $("hidden-tag").textContent = t("hiddenTag");
   renderPeople();
   if (peopleView) peopleView();
+  aiActive(false);
   // The phone repeats its state every few seconds: read the tree again only
   // when the outlines just came on or the pause just ended.
   if (wireOn() && !state.paused && (was.paused || was.hidden !== state.hidden)) loadTree();
@@ -1706,26 +2149,35 @@ overlay.addEventListener("pointerdown", (ev) => {
   if (!fingers.size) { gestureStart = performance.now(); pinch = ev.altKey && ev.pointerType === "mouse"; }
   const p = toPoint(ev);
   fingers.set(ev.pointerId, { path: [{ x: p.x, y: p.y, t: since() }], moved: false, px: ev.clientX, py: ev.clientY, down: performance.now(), up: false });
-  trails = [...fingers.values()].map((f) => f.path);
-  trailFade = 0;
   draw();
 });
+// Every sample the browser has (a touch screen or a fast mouse reports
+// several per frame). The phone moves a finger in a straight line from one
+// sample to the next over the time between them, so a pause would play
+// back as a slow drift: one that ends gets a sample where it began.
 overlay.addEventListener("pointermove", (ev) => {
   const f = fingers.get(ev.pointerId);
   if (!f) { if (treeOpen() || wireOn()) hover(toPoint(ev)); return; }
   if (!f.moved && Math.hypot(ev.clientX - f.px, ev.clientY - f.py) > 6) f.moved = true;
   if (!f.moved) return;
-  const p = toPoint(ev), tt = since(), last = f.path[f.path.length - 1];
-  if (tt - last.t >= 0.012) f.path.push({ x: p.x, y: p.y, t: tt });
-  if (pinch) trails = [f.path, mirror(f.path)];
+  const list = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [];
+  for (const e of list.length ? list : [ev]) {
+    const p = toPoint(e), tt = Math.round(e.timeStamp && e.timeStamp >= gestureStart ? e.timeStamp - gestureStart : performance.now() - gestureStart) / 1000;
+    const last = f.path[f.path.length - 1];
+    if (tt - last.t < 0.008 || (p.x === last.x && p.y === last.y)) continue;
+    if (tt - last.t > 0.05 && f.path.length > 1) f.path.push({ x: last.x, y: last.y, t: Math.round((tt - 0.016) * 1000) / 1000 });
+    f.path.push({ x: p.x, y: p.y, t: tt });
+  }
   draw();
 });
 function lift(ev, cancelled) {
   const f = fingers.get(ev.pointerId);
   if (!f) return;
-  if (cancelled) { fingers.clear(); trails = []; draw(); return; }
-  const p = toPoint(ev);
-  f.path.push({ x: p.x, y: p.y, t: Math.max(since(), f.path[f.path.length - 1].t + 0.01) });
+  if (cancelled) { fingers.clear(); draw(); return; }
+  const p = toPoint(ev), last = f.path[f.path.length - 1];
+  // A finger that rested before lifting leaves with no speed; past a third
+  // of a second more rest changes nothing but how long the phone waits.
+  f.path.push({ x: p.x, y: p.y, t: Math.max(Math.min(since(), last.t + 0.35), last.t + 0.01) });
   f.up = true;
   if ([...fingers.values()].every((g) => g.up)) finishGesture();
   if (ev.pointerType === "mouse") focusKeyboard();
@@ -1750,8 +2202,7 @@ function finishGesture() {
   const single = list.length === 1 && !list[0].moved && !pinch;
   if (single) {
     const p = list[0].path[0], held = (performance.now() - list[0].down) / 1000;
-    trails = [];
-    ripple = { x: p.x, y: p.y, at: performance.now() };
+    fx.push(rippleFx(p.x, p.y, WHITE));
     if (held >= 0.5) act("long_press", { x: p.x, y: p.y, duration: Math.min(held, 5), settle: false, manual: true });
     else act("tap", { x: p.x, y: p.y, settle: false, manual: true });
     draw();
@@ -1759,36 +2210,72 @@ function finishGesture() {
   }
   let paths = list.map((f) => f.path);
   if (pinch && paths.length === 1) paths.push(mirror(paths[0]));
-  act("gesture", { fingers: paths.map(thin), manual: true });
-  trailFade = performance.now();
+  paths = paths.map(thin);
+  const replay = replayFx(paths, WHITE);
+  fx.push(replay.draw);
+  act("gesture", { fingers: paths, manual: true }, replay.hooks);
   draw();
 }
 overlay.addEventListener("contextmenu", (ev) => {
   ev.preventDefault();
   if (state.paused) return;
   const p = toPoint(ev);
+  fx.push(rippleFx(p.x, p.y, WHITE));
   act("long_press", { x: p.x, y: p.y, duration: 1, settle: false, manual: true });
 });
-// Wheel and trackpad: gathered briefly, then one drag of that distance.
-let wheel = null;
+// Wheel and trackpad. What turns while one scroll is on its way is gathered
+// and sent as the next, so a long scroll never piles up behind itself (it
+// used to: a queue of drags, then all of them dropped at once). Vertical
+// scrolls rest before lifting, so the content moves by what the wheel
+// turned and no more (a trackpad sends its own momentum as more wheel);
+// sideways ones lift while moving, so pages and carousels turn.
+let wheel = null, wheeling = false, wheelTimer = 0;
 overlay.addEventListener("wheel", (ev) => {
   ev.preventDefault();
   if (!points.w || state.paused) return;
   const r = overlay.getBoundingClientRect(), scale = points.h / r.height;
-  if (!wheel) {
-    wheel = { at: toPoint(ev), dx: 0, dy: 0 };
-    setTimeout(() => {
-      const w = wheel; wheel = null;
-      const dy = Math.max(-points.h * 0.6, Math.min(points.h * 0.6, -w.dy * scale));
-      const dx = Math.max(-points.w * 0.6, Math.min(points.w * 0.6, -w.dx * scale));
-      if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
-      const fx = Math.min(Math.max(w.at.x, 10), points.w - 10), fy = Math.min(Math.max(w.at.y - dy / 2, 10), points.h - 10);
-      act("drag", { from_x: fx, from_y: fy, to_x: Math.min(Math.max(fx + dx, 1), points.w - 1),
-                    to_y: Math.min(Math.max(fy + dy, 1), points.h - 1), duration: 0.25, settle: false, manual: true });
-    }, 120);
-  }
-  wheel.dx += ev.deltaX; wheel.dy += ev.deltaY * (ev.deltaMode === 1 ? 16 : 1);
+  const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? r.height : 1;
+  if (!wheel) wheel = { at: toPoint(ev), dx: 0, dy: 0, since: performance.now() };
+  wheel.dx -= ev.deltaX * unit * scale; wheel.dy -= ev.deltaY * unit * scale;
+  if (ev.shiftKey && !ev.deltaX) { wheel.dx += wheel.dy; wheel.dy = 0; }
+  if (!wheelTimer) wheelTimer = setTimeout(sendWheel, 50);
 }, { passive: false });
+function sendWheel() {
+  wheelTimer = 0;
+  if (wheeling || !wheel) return;
+  const w = wheel, side = Math.abs(w.dx) > Math.abs(w.dy);
+  const d = side ? w.dx : w.dy, len = side ? points.w : points.h;
+  // Too little for the phone to count as a scroll: wait for more, a while.
+  if (Math.abs(d) < 12) {
+    if (performance.now() - w.since > 600) wheel = null;
+    else wheelTimer = setTimeout(sendWheel, 80);
+    return;
+  }
+  wheel = null;
+  const span = Math.min(Math.abs(d), len * 0.7) * Math.sign(d), margin = Math.min(40, len * .1);
+  const at = side ? w.at.x : w.at.y;
+  // Start where the whole drag stays on the screen, centred on the pointer.
+  const from = Math.min(Math.max(at - span / 2, margin + Math.max(0, -span)), len - margin - Math.max(0, span));
+  const other = Math.min(Math.max(side ? w.at.y : w.at.x, margin), (side ? points.h : points.w) - margin);
+  const dur = Math.min(Math.max(Math.abs(span) / 1600, 0.1), 0.3), n = Math.max(4, Math.round(dur / 0.016));
+  const path = [];
+  for (let i = 0; i <= n; i++) {
+    const k = easeInOut(i / n), v = Math.round((from + span * (side ? i / n : k)) * 10) / 10;
+    path.push(side ? { x: v, y: other, t: Math.round(dur * i / n * 1000) / 1000 } : { x: other, y: v, t: Math.round(dur * i / n * 1000) / 1000 });
+  }
+  const end = path[path.length - 1];
+  if (!side) for (const s of [.04, .08, .12]) path.push({ ...end, t: Math.round((dur + s) * 1000) / 1000 });
+  else path.push({ ...end, t: Math.round((dur + .01) * 1000) / 1000 });
+  wheeling = true;
+  const replay = replayFx([path], WHITE);
+  fx.push(replay.draw);
+  const next = () => { wheeling = false; if (wheel && !wheelTimer) wheelTimer = setTimeout(sendWheel, 0); };
+  act("gesture", { fingers: [path], manual: true }, {
+    start: replay.hooks.start, done: next,
+    drop: () => { replay.hooks.drop(); next(); },
+  });
+  draw();
+}
 
 // Typing: a hidden field takes the keys (and the input method's composed
 // text), and they go to the phone in short batches.
@@ -1929,7 +2416,7 @@ $("tree").addEventListener("click", (ev) => {
   const n = nodes[+row.dataset.i];
   if (n.w <= 0 || n.h <= 0) return;
   const x = n.x + n.w / 2, y = n.y + n.h / 2;
-  ripple = { x, y, at: performance.now() }; draw();
+  fx.push(rippleFx(x, y, WHITE)); draw();
   act("tap", { x, y, settle: false, manual: true });
 });
 $("tree-filter").addEventListener("input", renderTree);

@@ -15,6 +15,17 @@ final class BroadcastWireTests: XCTestCase {
         XCTAssertEqual(au, unit)
     }
 
+    /// The extension counts as connected only on `welcome`, which comes
+    /// before the lanes on the same connection.
+    func testWelcomeComesFirst() {
+        var reader = BroadcastWire.Reader()
+        let got = reader.feed(BroadcastWire.message(.welcome) + BroadcastWire.message(.stop))
+        XCTAssertEqual(got.map(\.0), [.welcome, .stop])
+        XCTAssertTrue(got[0].1.isEmpty)
+        XCTAssertEqual(Set(BroadcastWire.ports).count, BroadcastWire.ports.count)
+        XCTAssertGreaterThan(BroadcastWire.ports.count, 1)
+    }
+
     func testReaderJoinsSplitMessages() throws {
         let lanes = [BroadcastWire.Lane(id: 1, longSide: 1920, fps: 60, codec: "hevc", bitrate: 2_000_000, hold: false, key: true)]
         let a = try XCTUnwrap(BroadcastWire.message(.lanes, json: lanes))

@@ -12,12 +12,22 @@ import Foundation
 ///     message = len u32 (type + payload) | type u8 | payload
 ///
 /// No App Group: the extension and the app are signed apart (sign-ipa.sh
-/// gives extensions no entitlements), so the port is fixed rather than shared
-/// through a container, and the runner takes a connection only while iOS says
-/// the screen is being captured.
+/// gives extensions no entitlements), so the ports are fixed rather than
+/// shared through a container, and the runner takes a connection only while
+/// iOS says the screen is being captured.
+///
+/// The runner listens on one of `ports`, a different one each time it listens
+/// afresh, and answers `hello` with `welcome`; the extension tries the ports
+/// in turn and counts as connected only once welcomed. A listening socket
+/// iOS left behind in a suspended LoopCtrl can keep a port: the kernel still
+/// completes connections to it, but nothing ever answers. With one fixed port
+/// the extension sat on such a connection for good, and the broadcast showed
+/// nothing until LoopCtrl was killed.
 enum BroadcastWire {
-    /// The runner's loopback port for the extension.
-    static let port: UInt16 = 48300
+    /// The runner's loopback ports for the extension.
+    static let ports: [UInt16] = Array(48300...48307)
+    /// How long the extension waits for `welcome` before trying the next port.
+    static let welcomeTimeout: Double = 5
 
     enum Kind: UInt8 {
         // Extension → runner
@@ -36,6 +46,8 @@ enum BroadcastWire {
         case lanes = 10
         /// Empty: the switch was turned off; end the broadcast.
         case stop = 11
+        /// Empty: the answer to `hello`; the extension is taken.
+        case welcome = 12
     }
 
     struct Hello: Codable {

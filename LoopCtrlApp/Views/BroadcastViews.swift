@@ -61,9 +61,14 @@ struct BroadcastPicker: UIViewRepresentable {
     func makeUIView(context: Context) -> RPSystemBroadcastPickerView { view }
     func updateUIView(_ uiView: RPSystemBroadcastPickerView, context: Context) {}
 
+    /// The picker's button may sit deeper than its first level of subviews,
+    /// depending on the iOS version; press the first one found.
     func press() {
-        for case let button as UIButton in view.subviews {
-            button.sendActions(for: .touchUpInside)
+        func button(in v: UIView) -> UIButton? {
+            if let b = v as? UIButton { return b }
+            for sub in v.subviews { if let b = button(in: sub) { return b } }
+            return nil
         }
+        button(in: view)?.sendActions(for: .touchUpInside)
     }
 }

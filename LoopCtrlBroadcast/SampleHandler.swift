@@ -18,9 +18,12 @@ import VideoToolbox
 /// hasn't taken yet are dropped rather than queued.
 ///
 /// A broadcast is started by hand, so losing the runner doesn't end it: the
-/// extension connects again every second (the runner restarting, or still
-/// waiting for iOS to count the screen as captured), and gives up only after
-/// half a minute without one, or when LoopCtrl says stop.
+/// extension connects again (the runner restarting, or still waiting for iOS
+/// to count the screen as captured), trying the runner's ports in turn
+/// (`BroadcastWire.ports`), and counts as connected only once the runner
+/// says welcome: a connection nobody answers is dropped after a few seconds
+/// for the next port. It gives up only after half a minute without the
+/// runner, or when LoopCtrl says stop.
 final class SampleHandler: RPBroadcastSampleHandler {
     private let queue = DispatchQueue(label: "top.ebato.loopctrl.broadcast")
     private var connection: NWConnection?
@@ -29,6 +32,9 @@ final class SampleHandler: RPBroadcastSampleHandler {
     private var connected = false
     /// Bumped per connection, so a late callback from an old one is ignored.
     private var generation = 0
+    /// The port tried last, in `BroadcastWire.ports`; a dropped connection
+    /// tries the next one.
+    private var portIndex = 0
     /// Without a runner since then (the start counts).
     private var lostSince: CFTimeInterval? = CACurrentMediaTime()
     private static let giveUpAfter: CFTimeInterval = 30
@@ -96,7 +102,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
     // MARK: - Runner
 
     private func connect() {
-        guard !ended, let port = NWEndpoint.Port(rawValue: BroadcastWire.port) else { return }
+        guard !ended, let port = NWEndpoint.Port(rawValue: BroadcastWire.ports[portIndex]) else { return }
         generation += 1
         let mine = generation
         let conn = NWConnection(host: .ipv4(.loopback), port: port, using: .tcp)
@@ -107,12 +113,16 @@ final class SampleHandler: RPBroadcastSampleHandler {
             guard let self, self.generation == mine else { return }
             switch state {
             case .ready:
-                self.connected = true
-                self.lostSince = nil
                 self.send(BroadcastWire.message(.hello, json: BroadcastWire.Hello()), counted: false)
                 self.receive(mine)
+                // Taken only once welcomed: a port can be held by a socket
+                // nobody reads (see BroadcastWire).
+                self.queue.asyncAfter(deadline: .now() + BroadcastWire.welcomeTimeout) {
+                    guard self.generation == mine, !self.connected else { return }
+                    self.dropped()
+                }
             case .waiting, .failed, .cancelled:
-                // Nobody listening (yet), or the runner went away.
+                // Nobody listening there (yet), or the runner went away.
                 self.dropped()
             default:
                 break
@@ -131,18 +141,23 @@ final class SampleHandler: RPBroadcastSampleHandler {
         }
     }
 
-    /// The runner is gone or not there yet: try again in a second. Its
-    /// lanes start afresh with the next connection.
+    /// The runner is gone or not there yet: try the next port, soon, and
+    /// after a round of all of them, a second later. Its lanes start afresh
+    /// with the next connection.
     private func dropped() {
         generation += 1
         connection?.cancel()
         connection = nil
         if connected { lostSince = CACurrentMediaTime() }
+        let wasConnected = connected
         connected = false
         for lane in lanes.values { lane.teardown() }
         lanes.removeAll()
         guard !ended else { return }
-        queue.asyncAfter(deadline: .now() + 1) { self.connect() }
+        // A runner that was there and went: the same port first, it may be back.
+        if !wasConnected { portIndex = (portIndex + 1) % BroadcastWire.ports.count }
+        let delay = wasConnected || portIndex == 0 ? 1.0 : 0.1
+        queue.asyncAfter(deadline: .now() + delay) { self.connect() }
     }
 
     private func handle(_ kind: BroadcastWire.Kind, _ payload: Data) {
@@ -166,6 +181,9 @@ final class SampleHandler: RPBroadcastSampleHandler {
                     _ = lane.take(newest.pixels, orientation: newest.orientation, now: Self.micros())
                 }
             }
+        case .welcome:
+            connected = true
+            lostSince = nil
         case .stop:
             finish(Self.text(en: "System broadcast was turned off in LoopCtrl.", zh: "已在 LoopCtrl 中关闭「系统录屏推流」。"))
         default:

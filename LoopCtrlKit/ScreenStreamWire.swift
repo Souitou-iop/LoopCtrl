@@ -69,7 +69,7 @@ struct ScreenStreamRequest {
 /// iv = 0x00000000 || be64(counter) and the type byte as associated data.
 final class ScreenStreamSealer {
     enum Kind: UInt8 {
-        case hello = 0, config = 1, frame = 2, state = 3
+        case hello = 0, config = 1, frame = 2, state = 3, action = 4
     }
 
     static let keyLabel = "loopctrl-stream-v1"
@@ -105,6 +105,14 @@ final class ScreenStreamSealer {
     func state(_ fields: [String: JSONValue]) -> Data? {
         guard let json = try? JSONEncoder().encode(JSONValue.object(fields)) else { return nil }
         return message(.state, json)
+    }
+
+    /// Someone's action as it happens, for the page to draw over the
+    /// screen: `{tok, kind, method, phase, …}` (docs/remote-control.md,
+    /// "Actions on screen").
+    func action(_ fields: [String: JSONValue]) -> Data? {
+        guard let json = try? JSONEncoder().encode(JSONValue.object(fields)) else { return nil }
+        return message(.action, json)
     }
 
     /// flags u8 (bit 0: keyframe) | ts u64 (microseconds) | AVCC access unit

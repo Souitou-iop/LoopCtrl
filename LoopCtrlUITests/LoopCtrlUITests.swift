@@ -1592,6 +1592,9 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                     if method == "config" {
                         result = self.handleConfig(params)
                     } else if let handler = self.actionHandler {
+                        // Touches made now are drawn on viewers' pages as this sender's.
+                        FastActionHandler.actor = params?[JSONRPCServer.actorParam]?.objectValue
+                        defer { FastActionHandler.actor = nil }
                         let reason = ObjCException.catching {
                             result = handler.dispatch(method: method, params: params)
                         }
@@ -1715,6 +1718,8 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         // capture a fresh frame instead of waiting for the next tick.
         srv.onRPCUIChanged = { ScreenStream.shared.nudge() }
         srv.onPageUpdated = { ScreenStream.shared.broadcastState() }
+        srv.onAction = { ScreenStream.shared.showAction($0) }
+        FastActionHandler.onTouch = { ScreenStream.shared.showAction($0) }
         srv.onScreenStream = { connection, request in
             ScreenStream.shared.add(connection, request: request)
         }

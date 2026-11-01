@@ -4,7 +4,33 @@ class FastActionHandler {
     /// Where the last tap/press landed, for the settle check to watch that
     /// spot as well as the whole screen. Cleared per call by the dispatcher.
     var lastTouchPoint: CGPoint?
+    /// The element the next tap aims at, if it aims at one.
+    var targetFrame: CGRect?
     private let app: XCUIApplication
+
+    /// Who sent the action being run (`JSONRPCServer.actorParam`: tok, kind
+    /// and the action's id), set around each RPC on the main thread; nil for
+    /// the runner's own touches.
+    static var actor: [String: JSONValue]?
+    /// Each touch just before it is sent, for the live page to draw who did
+    /// what (docs/remote-control.md, "Actions on screen").
+    static var onTouch: (([String: JSONValue]) -> Void)?
+
+    /// `touch`: tap, double_tap, long_press or path; each finger as
+    /// [[x, y, t], …] in points and seconds; `frame`: the element aimed at.
+    func show(_ touch: String, _ fingers: [[(point: CGPoint, t: Double)]]) {
+        guard let onTouch = Self.onTouch, var fields = Self.actor else { return }
+        let r1 = { (v: Double) in JSONValue.double((v * 10).rounded() / 10) }
+        fields["phase"] = .string("touch")
+        fields["touch"] = .string(touch)
+        fields["fingers"] = .array(fingers.map { finger in
+            .array(finger.map { .array([r1($0.point.x), r1($0.point.y), .double(($0.t * 1000).rounded() / 1000)]) })
+        })
+        if let f = targetFrame {
+            fields["frame"] = .array([r1(f.minX), r1(f.minY), r1(f.width), r1(f.height)])
+        }
+        onTouch(fields)
+    }
 
     init(app: XCUIApplication) {
         self.app = app
@@ -12,6 +38,7 @@ class FastActionHandler {
 
     func fastTap(x: Double, y: Double) -> ([String: JSONValue]?, JSONRPCError?) {
         lastTouchPoint = CGPoint(x: x, y: y)
+        show("tap", [[(CGPoint(x: x, y: y), 0), (CGPoint(x: x, y: y), 0.05)]])
         let eventRecord = XCSynthesizedEventRecord(name: "Fast Tap")
         let point = CGPoint(x: x, y: y)
         let eventPath = XCPointerEventPath(forTouchAt: point, offset: 0.0)
@@ -47,6 +74,7 @@ class FastActionHandler {
     /// it as a single tap (the video paused instead of liking).
     func fastDoubleTap(x: Double, y: Double) -> ([String: JSONValue]?, JSONRPCError?) {
         lastTouchPoint = CGPoint(x: x, y: y)
+        show("double_tap", [[(CGPoint(x: x, y: y), 0), (CGPoint(x: x, y: y), 0.17)]])
         let eventRecord = XCSynthesizedEventRecord(name: "Fast Double Tap")
         let point = CGPoint(x: x, y: y)
         let eventPath = XCPointerEventPath(forTouchAt: point, offset: 0.0)
@@ -69,6 +97,7 @@ class FastActionHandler {
     /// quiescence wait that XCUICoordinate.press(forDuration:) does.
     func fastLongPress(x: Double, y: Double, duration: Double) -> ([String: JSONValue]?, JSONRPCError?) {
         lastTouchPoint = CGPoint(x: x, y: y)
+        show("long_press", [[(CGPoint(x: x, y: y), 0), (CGPoint(x: x, y: y), duration)]])
         let eventRecord = XCSynthesizedEventRecord(name: "Fast Long Press")
         let point = CGPoint(x: x, y: y)
         let eventPath = XCPointerEventPath(forTouchAt: point, offset: 0.0)
@@ -102,6 +131,7 @@ class FastActionHandler {
     /// last; a finger whose points don't move is a hold. One record, so iOS
     /// sees the fingers together (a pinch, a two-finger hold).
     func fastGesture(_ fingers: [[(point: CGPoint, t: Double)]]) -> ([String: JSONValue]?, JSONRPCError?) {
+        show("path", fingers)
         let eventRecord = XCSynthesizedEventRecord(name: "Gesture")
         var end = 0.0
         for finger in fingers {
@@ -136,6 +166,8 @@ class FastActionHandler {
 
     func fastSwipe(fromX: Double, fromY: Double, toX: Double, toY: Double, duration: Double = 0.3,
                    hold: Double = 0.05) -> ([String: JSONValue]?, JSONRPCError?) {
+        show("path", [[(CGPoint(x: fromX, y: fromY), 0), (CGPoint(x: toX, y: toY), duration),
+                       (CGPoint(x: toX, y: toY), duration + hold)]])
         let eventRecord = XCSynthesizedEventRecord(name: "Fast Swipe")
         let startPoint = CGPoint(x: fromX, y: fromY)
         let endPoint = CGPoint(x: toX, y: toY)

@@ -47,6 +47,9 @@ class JSONRPCServer {
     var onPageUpdated: (() -> Void)?
     var onStreamAck: ((_ viewer: String, _ micros: UInt64, _ queueMs: Double?, _ wantsKey: Bool) -> Void)?
 
+    /// Someone's action starting or ending, for the live page to draw:
+    /// `{tok, kind, id, method, phase: "begin" | "end", outcome?}`.
+    var onAction: (([String: JSONValue]) -> Void)?
     /// Fired right after a UI-mutating JSON-RPC completes (tap, swipe, home, …)
     /// so the host can nudge the video pipeline to emit a keyframe immediately
     /// instead of waiting for the next 1/fps tick — cuts perceived click-to-
@@ -1222,12 +1225,15 @@ class JSONRPCServer {
         }
         let controlled = Self.uiMutatingMethods.contains(rpcRequest.method)
         var actionID = 0
+        var actor: [String: JSONValue] = [:]
         if controlled {
             let person = rpcRequest.params?["manual"]?.boolValue == true
             let name = AuthManager.shared.clientName(forTokenId: opened.tokId) ?? opened.tokId
             actionID = session.begin(tok: opened.tokId, name: name, kind: person ? .person : .agent,
                                      method: rpcRequest.method,
                                      detail: RemoteSession.describe(rpcRequest.method, rpcRequest.params))
+            actor = ["tok": .string(opened.tokId), "kind": .string(person ? "person" : "agent"), "id": .int(actionID)]
+            onAction?(actor.merging(["method": .string(rpcRequest.method), "phase": .string("begin")]) { a, _ in a })
         }
 
         guard let handler = onRPCRequest else {
@@ -1245,6 +1251,13 @@ class JSONRPCServer {
             var p = params ?? [:]
             p[Self.peerSourceParam] = .string(ex.peer?.via ?? PeerSource.other.rawValue)
             params = p
+        }
+        if controlled {
+            var p = params ?? [:]
+            p[Self.actorParam] = .object(actor)
+            params = p
+        } else if params?[Self.actorParam] != nil {
+            params?[Self.actorParam] = nil
         }
         handler(method, params) { [weak self] result, error in
             // What became of a touch, so nobody replays one that may have
@@ -1265,6 +1278,8 @@ class JSONRPCServer {
                 }
                 let outcome = (error?.data?["outcome"] ?? result?["outcome"])?.stringValue ?? "unknown"
                 session.finish(tok: opened.tokId, id: actionID, outcome: outcome)
+                self?.onAction?(actor.merging(["method": .string(method), "phase": .string("end"),
+                                               "outcome": .string(outcome)]) { a, _ in a })
             }
             let json = error.map { Self.errorJSON(rpcRequest.id, $0) }
                 ?? Self.resultJSON(rpcRequest.id, result ?? [:])
@@ -1384,6 +1399,10 @@ class JSONRPCServer {
     private static let corsAllowHeaders = "Content-Type, Authorization"
     /// Parameter the server adds to `config`: the request's `PeerSource`.
     static let peerSourceParam = "_peer_source"
+    /// Who sent a controlled action, added to its params here (overwriting
+    /// any the caller sent): `{tok, kind, id}`, for the runner to tag the
+    /// touches it makes with (docs/remote-control.md, "Actions on screen").
+    static let actorParam = "_actor"
 
     /// Send a response whose body is raw bytes.
     ///
