@@ -44,28 +44,56 @@ class LogBuffer {
         var total = 0.0
         var min = Double.greatestFiniteMagnitude
         var max = 0.0
+        // Recent samples for percentiles. Percentiles need the distribution,
+        // not just aggregates; capped so a long session can't grow this.
+        var samples: [Double] = []
+        var queueTotal = 0.0
+        var queueCount = 0
+        var queueSamples: [Double] = []
     }
     private var stats: [String: Stat] = [:]
+
+    /// How many recent samples per method to keep for p50/p90.
+    private static let sampleCap = 200
 
     init(capacity: Int) {
         self.capacity = capacity
     }
 
     /// Record one action's execution time (ms) and, unless `quiet`, log it.
-    func recordTiming(method: String, ms: Double, ok: Bool, quiet: Bool = false) {
+    /// `queueMs` is the time the call spent waiting for its turn before it
+    /// started; nil when the caller doesn't track it.
+    func recordTiming(method: String, ms: Double, ok: Bool, quiet: Bool = false, queueMs: Double? = nil) {
         lock.lock()
         var s = stats[method] ?? Stat()
         s.count += 1
         s.total += ms
         s.min = Swift.min(s.min, ms)
         s.max = Swift.max(s.max, ms)
+        s.samples.append(ms)
+        if s.samples.count > Self.sampleCap { s.samples.removeFirst(s.samples.count - Self.sampleCap) }
+        if let queueMs {
+            s.queueTotal += queueMs
+            s.queueCount += 1
+            s.queueSamples.append(queueMs)
+            if s.queueSamples.count > Self.sampleCap { s.queueSamples.removeFirst(s.queueSamples.count - Self.sampleCap) }
+        }
         stats[method] = s
         lock.unlock()
 
         // A failure is always worth a line, even for a quiet call.
         guard !quiet || !ok else { return }
         let marker = ok ? "✓" : "✗"
-        append(String(format: "⏱ %@ %@ %.0fms", marker, method, ms))
+        let queuePart = queueMs.map { String(format: " (queue %.0fms)", $0) } ?? ""
+        append(String(format: "⏱ %@ %@ %.0fms%@", marker, method, ms, queuePart))
+    }
+
+    /// Nearest-rank percentile of a sample list, or nil with no samples.
+    private static func percentile(_ values: [Double], _ p: Double) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let rank = Int((p / 100.0 * Double(sorted.count)).rounded(.up))
+        return sorted[min(sorted.count - 1, max(0, rank - 1))]
     }
 
     /// Human-readable per-method timing summary.
@@ -75,12 +103,16 @@ class LogBuffer {
         lock.unlock()
 
         guard !snapshot.isEmpty else { return "(no timing data yet)" }
-        var out = "method            count      avg      min      max\n"
-        out += "-------------------------------------------------------\n"
+        var out = "method            count      avg      p50      p90      min      max  queue_p90\n"
+        out += "-----------------------------------------------------------------------------\n"
         for (m, s) in snapshot.sorted(by: { $0.key < $1.key }) {
             let avg = s.total / Double(s.count)
-            out += String(format: "%-16@ %5d  %7.0f  %7.0f  %7.0f\n",
-                          m as NSString, s.count, avg, s.min, s.max)
+            let p50 = Self.percentile(s.samples, 50) ?? avg
+            let p90 = Self.percentile(s.samples, 90) ?? s.max
+            let queueP90 = Self.percentile(s.queueSamples, 90)
+            let queueCol = queueP90.map { String(format: "%.0fms", $0) } ?? "-"
+            out += String(format: "%-16@ %5d  %7.0f  %7.0f  %7.0f  %7.0f  %7.0f  %9@\n",
+                          m as NSString, s.count, avg, p50, p90, s.min, s.max, queueCol as NSString)
         }
         return out
     }
@@ -91,13 +123,20 @@ class LogBuffer {
         let snapshot = stats
         lock.unlock()
         return snapshot.sorted { $0.key < $1.key }.map { m, s in
-            [
+            var out: [String: Any] = [
                 "method": m,
                 "count": s.count,
                 "avg_ms": Int(s.total / Double(s.count)),
                 "min_ms": Int(s.min),
                 "max_ms": Int(s.max),
             ]
+            if let p50 = Self.percentile(s.samples, 50) { out["p50_ms"] = Int(p50) }
+            if let p90 = Self.percentile(s.samples, 90) { out["p90_ms"] = Int(p90) }
+            if s.queueCount > 0 {
+                out["queue_avg_ms"] = Int(s.queueTotal / Double(s.queueCount))
+                if let q90 = Self.percentile(s.queueSamples, 90) { out["queue_p90_ms"] = Int(q90) }
+            }
+            return out
         }
     }
 

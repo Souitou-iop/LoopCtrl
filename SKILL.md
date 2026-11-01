@@ -59,6 +59,11 @@ r find_and_tap '{"element_id":"General"}' && r find_and_tap '{"element_id":"Abou
 - `find_and_tap` locates and taps in one call. Use it for labels you know are unique on the screen. When look-alikes are possible (dates, list rows, "More"), use `find_element` first: it returns `visibility` and `alternatives`, and `find_and_tap` doesn't.
 - After a chain stops on an error, read the screen before continuing. Steps before the error ran; later ones did not.
 - Never chain a side effect behind uncertain steps. Do the side effect alone, after a checkpoint.
+- **Python client, one process:** `run` executes several steps in one process (one connection, no per-step process start), stops at the first error, and appends a final `page_source{visible_only}` read:
+```bash
+python3 loopctrl_rpc.py run '[{"method":"find_and_tap","params":{"element_id":"搜索"}},{"method":"type","params":{"text":"快递","submit":true}}]'
+```
+Each step may carry `"expect":{"present":"<text>"}` (or `absent` / `foreground":"<bundle_id>"`), checked right after it; a failed expect stops the batch. `--no-observe` skips the final read.
 
 ## Deep menus and going back
 
@@ -84,6 +89,9 @@ r find_and_tap '{"element_id":"General"}' && r find_and_tap '{"element_id":"Abou
 - `screen_changed:false` → the action did nothing visible. Check the target before repeating it.
 - `stable:false`, a spinner, or `loading:true` in `page_source` → wait for what you expect, in one call: `wait{text:"<expected text>", timeout:10}` returns as soon as it is on screen (tree, or OCR where the tree has no words: games, Flutter, canvas). `until:"absent"` waits for a loading text or spinner label to go. A timeout comes back as an error with `met:false` and what was on screen.
 - `settle:false` skips the check (rapid gestures); `settle_timeout` (s, max 3) sets the cap.
+- `quiet_window` (s, 0.2–3) overrides the settle quiet window for one action: a page you know is slow or instant can shorten the fixed 0.6–1.2s wait. Too short reads "no change" for a navigation that arrives late — use it only when you know the page.
+- `observe:"visible"` (or `"compact"`, the same tree without coordinate frames, ~3x smaller — use over slow links) on an action attaches the settled screen to its reply — the next read is already in hand, so don't re-read it.
+- Several conditions at once: `wait_for{present:["…"], absent:["…"], foreground:"<bundle_id>", timeout:10}` polls on the device in one call and reports which condition failed. Texts match labels/values like `wait{text}`.
 
 ## Methods
 
@@ -96,6 +104,7 @@ r find_and_tap '{"element_id":"General"}' && r find_and_tap '{"element_id":"Abou
 | `type` | `text` | `submit`, `clear`, `x`+`y` (tap to focus first) |
 | `resolve_app` | `text` | `country` |
 | `wait` | `text` (or `duration`) | `until:"absent"`, `timeout` (≤60s), `source:"tree"\|"ocr"` |
+| `wait_for` | `present` and/or `absent` (arrays of texts), or `foreground` | `timeout` (≤60s) |
 | `read_value` | `element_id` or `ref` | `match`, `max_length` (≤65536) — a long text's whole value, read-only |
 | `launch_app` | `bundle_id` or `name` | — |
 | `activate_app` / `terminate_app` | `bundle_id` | — |

@@ -1123,7 +1123,14 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             Self.logBuffer.append(granted ? "🔔 Notifications enabled" : "🔕 Notifications denied")
             semaphore.signal()
         }
-        semaphore.wait()
+        // The callback normally answers in milliseconds, but on the Simulator's
+        // test runner it never does — an unbounded wait hung startup there. Run
+        // without notifications when it doesn't answer; pairing approval has
+        // the home-screen card, and localhost callers can use plain grants.
+        let answered = semaphore.wait(timeout: .now() + 5) == .success
+        if !answered {
+            Self.logBuffer.append("🔕 requestAuthorization never answered (Simulator?) — continuing without notifications")
+        }
     }
 
     // MARK: - UNUserNotificationCenterDelegate
@@ -1310,7 +1317,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
         "list_apps", "installed_apps",
         // Waits up to a minute; each of its looks hops to the main thread on
         // its own, so touches from others go on meanwhile.
-        "wait",
+        "wait", "wait_for",
         // Class-metadata introspection only — takes no snapshot, touches no
         // element. Belongs here precisely because you want to run it WHILE the
         // UI channel is wedged, to find out what the snapshot API supports.
@@ -1457,9 +1464,11 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
     private static let extendedRpcTimeout: TimeInterval = 15
 
     private static func rpcBudget(for method: String, params: [String: JSONValue]?) -> TimeInterval {
-        if method == "wait" {
+        if method == "wait" || method == "wait_for" {
             // As long as it was asked to wait, and a slow last look (OCR).
-            let asked = params?["text"] != nil ? (params?["timeout"]?.doubleValue ?? 10) : (params?["duration"]?.doubleValue ?? 1)
+            let asked = method == "wait"
+                ? (params?["text"] != nil ? (params?["timeout"]?.doubleValue ?? 10) : (params?["duration"]?.doubleValue ?? 1))
+                : (params?["timeout"]?.doubleValue ?? 10)
             return min(max(asked, 0), 60) + 15
         }
         return extendedTimeoutMethods.contains(method) ? extendedRpcTimeout : rpcTimeout
@@ -1534,9 +1543,11 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
             // Set once the call actually begins — a timeout reply has to say
             // whether this call ran and hung, or is still waiting behind another.
             let started = Atomic(false)
+            let enqueuedAt = ProcessInfo.processInfo.systemUptime
 
             queue.async {
                 let start = ProcessInfo.processInfo.systemUptime
+                let queueMs = max(0, (start - enqueuedAt) * 1000)
                 var result: ([String: JSONValue]?, JSONRPCError?) = (nil, .internalError)
                 started.set(true)
                 if isUIMethod { self.setUIInFlight(method) }
@@ -1580,7 +1591,7 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
                 }
 
                 let ms = (ProcessInfo.processInfo.systemUptime - start) * 1000
-                Self.logBuffer.recordTiming(method: method, ms: ms, ok: result.1 == nil, quiet: quiet)
+                Self.logBuffer.recordTiming(method: method, ms: ms, ok: result.1 == nil, quiet: quiet, queueMs: queueMs)
                 // Completing at all proves the UI channel is alive, even if the
                 // action itself failed (element not found is a healthy answer).
                 if isUIMethod { self.setUIInFlight(nil); self.noteUISuccess() }
@@ -1964,13 +1975,17 @@ final class LoopCtrlUITests: XCTestCase, UNUserNotificationCenterDelegate {
 
         // Per-action timing stats (ms).
         let timing: [JSONValue] = Self.logBuffer.timingStats().map { s in
-            .object([
+            var o: [String: JSONValue] = [
                 "method": .string(s["method"] as? String ?? ""),
                 "count": .int(s["count"] as? Int ?? 0),
                 "avg_ms": .int(s["avg_ms"] as? Int ?? 0),
                 "min_ms": .int(s["min_ms"] as? Int ?? 0),
                 "max_ms": .int(s["max_ms"] as? Int ?? 0),
-            ])
+            ]
+            for key in ["p50_ms", "p90_ms", "queue_avg_ms", "queue_p90_ms"] {
+                if let v = s[key] as? Int { o[key] = .int(v) }
+            }
+            return .object(o)
         }
         result["timing"] = .array(timing)
 

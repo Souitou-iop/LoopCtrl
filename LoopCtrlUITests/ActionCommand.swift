@@ -51,6 +51,12 @@ struct ActionCommand {
     var enhanced: Bool?
     var source: String?
     var settleTimeout: Double?
+    /// "visible": attach a bounded read of the settled screen to the reply,
+    /// saving the caller one page_source round trip.
+    var observe: String?
+    /// Overrides the settle quiet window for this action (0.2–3s). Expert
+    /// knob: too short can miss a late-arriving navigation.
+    var quietWindow: Double?
 
     init(method: String, params: [String: JSONValue]?) {
         self.name = method
@@ -90,6 +96,8 @@ struct ActionCommand {
         self.enhanced = params?["enhanced"]?.boolValue
         self.source = params?["source"]?.stringValue
         self.settleTimeout = params?["settle_timeout"]?.doubleValue
+        self.observe = params?["observe"]?.stringValue
+        self.quietWindow = params?["quiet_window"]?.doubleValue
 
         self.maxDepth = params?["max_depth"]?.intValue
         self.maxElements = params?["max_elements"]?.intValue

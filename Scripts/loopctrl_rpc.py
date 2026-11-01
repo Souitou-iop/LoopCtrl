@@ -930,6 +930,14 @@ def main() -> int:
                    help="JPEG quality 0.1-1.0 (default 0.6); ignored for PNG")
     s.add_argument("--scale", type=float, default=2.0)
 
+    r = sub.add_parser("run", help="run several RPC steps in ONE process (one connection, one "
+                       "process start), stopping at the first error; prints one JSON line per step")
+    r.add_argument("steps", help='JSON array of steps, or @file holding one. Each step: '
+                   '{"method": str, "params": {}} with an optional "expect" ({"present": text} | '
+                   '{"absent": text} | {"foreground": bundle_id}) checked right after the step')
+    r.add_argument("--no-observe", action="store_true",
+                   help="do not append a page_source{visible_only} read after the last step")
+
     args = ap.parse_args()
     client_name = os.uname().nodename
 
@@ -1004,6 +1012,64 @@ def main() -> int:
         print(f"{args.path}  {len(blob):,} B  {result.get('format')}  "
               f"{px_w}x{px_h}px  ->  {pt_w}x{pt_h}pt  (scale {sc}: tap_x = px/{sc}, tap_y = py/{sc})  "
               f"{(time.time() - t0) * 1000:.0f}ms end-to-end")
+    elif args.cmd == "run":
+        raw = args.steps
+        if raw.startswith("@"):
+            with open(raw[1:], encoding="utf-8") as fh:
+                steps = json.load(fh)
+        else:
+            steps = json.loads(raw)
+        if not isinstance(steps, list) or not steps or not all(isinstance(s, dict) for s in steps):
+            raise SystemExit("run expects a non-empty JSON array of step objects")
+
+        def expect_outcome(exp: dict) -> tuple[bool, str]:
+            """Check one expect object with cheap follow-up calls."""
+            if "present" in exp:
+                out = rpc("wait", {"text": exp["present"], "timeout": 1})
+                if out.get("result", {}).get("met") is not True:
+                    return False, f"present '{exp['present']}' not confirmed"
+            if "absent" in exp:
+                out = rpc("wait", {"text": exp["absent"], "until": "absent", "timeout": 1})
+                if out.get("result", {}).get("met") is not True:
+                    return False, f"absent '{exp['absent']}' not confirmed"
+            if "foreground" in exp:
+                out = rpc("device_info", {})
+                fg = (out.get("result", {}).get("system") or {}).get("foreground_app")
+                if fg != exp["foreground"]:
+                    return False, f"foreground is {fg!r}, not {exp['foreground']!r}"
+            return True, ""
+
+        t0 = time.time()
+        failed_at = None
+        for i, step in enumerate(steps):
+            method = step.get("method")
+            if not method:
+                raise SystemExit(f"step {i}: missing \"method\"")
+            out = rpc(method, step.get("params") or {})
+            ok = "result" in out and "error" not in out
+            print(json.dumps({"step": i, "method": method, "ok": ok,
+                              **({"result": out["result"]} if ok else {"error": out.get("error")})},
+                             ensure_ascii=False))
+            if not ok:
+                failed_at = i
+                break
+            exp = step.get("expect")
+            if exp:
+                good, why = expect_outcome(exp)
+                if not good:
+                    print(json.dumps({"step": i, "expect_failed": why}, ensure_ascii=False))
+                    failed_at = i
+                    break
+        if failed_at is None and not args.no_observe:
+            obs = rpc("page_source", {"visible_only": True, "max_children": 50})
+            print(json.dumps({"step": len(steps), "method": "page_source", "ok": "result" in obs,
+                              "observe": obs.get("result")}, ensure_ascii=False))
+        not_sent = list(range(failed_at + 1, len(steps))) if failed_at is not None else []
+        print(json.dumps({"summary": {"steps": len(steps), "failed_at": failed_at,
+                                      "not_sent": not_sent,
+                                      "elapsed_ms": int((time.time() - t0) * 1000)}},
+                         ensure_ascii=False))
+        return 2 if failed_at is not None else 0
     else:
         # "@file": the params are in that file (a page_update is too big to type).
         if args.params.startswith("@"):

@@ -628,6 +628,7 @@ class ActionHandler {
         if method == "gesture" { return gesture(params) }
         if method == "rotate" { return rotate(params) }
         if method == "wait" { return wait(cmd, params: params) }
+        if method == "wait_for" { return waitFor(cmd, params: params) }
         if method == "read_value" { return readValue(cmd, params: params) }
         if method == "launch_app", cmd.bundleId == nil,
            let name = (params?["name"]?.stringValue ?? cmd.text)?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
@@ -748,6 +749,16 @@ class ActionHandler {
                 }()
                 let settleBid = resolveForegroundBundleId()
                 let baseQuiet = hitControl ? ScreenSettle.quietWindowForControls : ScreenSettle.quietWindow
+                // An explicit quiet_window is the caller's call (a playbook
+                // that knows this page): it overrides both the default and the
+                // learned late-reaction floor, clamped to a sane range. The
+                // fine look, late-react learning and page_check still apply.
+                let effectiveQuiet: Double
+                if let requested = cmd.quietWindow {
+                    effectiveQuiet = min(max(requested, 0.2), 3.0)
+                } else {
+                    effectiveQuiet = max(baseQuiet, settleBid.flatMap { lateReactQuiet[$0] } ?? 0)
+                }
                 // What moved between the caller's last look and the moment
                 // before this action is the screen's own animation.
                 let ambientOnly: [Bool]? = {
@@ -770,7 +781,7 @@ class ActionHandler {
                     return zip(a, m).map { $0 || $1 }
                 }()
                 var s = ScreenSettle.wait(baseline: baseline, budget: budget,
-                                          quiet: max(baseQuiet, settleBid.flatMap { lateReactQuiet[$0] } ?? 0),
+                                          quiet: effectiveQuiet,
                                           focus: fastHandler.lastTouchPoint, screen: pointSize.size,
                                           newScreenWatch: settleBid.flatMap { lateLoaderWatch[$0] } ?? ScreenSettle.newScreenWatch,
                                           ignore: ambient)
@@ -986,6 +997,40 @@ class ActionHandler {
         if Self.seenOnRead.contains(method), result.1 == nil, let frame = readFrame ?? ScreenSettle.sample() {
             noteSeen(frame)
         }
+
+        // observe:"visible": the settled screen travels with the action's
+        // reply, saving the caller one page_source round trip. Skipped when
+        // the action already used most of its call budget — a timeout reply
+        // for a landed action is worse than no attachment.
+        if result.1 == nil, Self.settleMethods.contains(method), var data = result.0,
+           cmd.observe == "visible" || cmd.observe == "compact" {
+            if nowMonotonic - dispatchStart > 4.5 {
+                data["observe"] = .object(["skipped": .bool(true),
+                    "why": .string("The action used most of this call's budget, so no screen was attached — send page_source to read it.")])
+            } else {
+                var read = cmd
+                read.visibleOnly = true
+                if read.maxChildren == nil { read.maxChildren = 50 }
+                if read.maxElements == nil { read.maxElements = 800 }
+                var (obs, obsErr) = pageSource(read)
+                if obs != nil, cmd.observe == "compact", case .string(let body)? = obs!["source"] {
+                    obs!["source"] = .string(ObserveFormat.compact(body))
+                    obs!["format"] = .string("compact-text")
+                }
+                if let obs {
+                    data["observe"] = .object(obs)
+                    let note = "The settled screen is attached under `observe` — read it there instead of another page_source call."
+                    if case .string(let old)? = data["hint"] {
+                        data["hint"] = .string(note + " " + old)
+                    } else {
+                        data["hint"] = .string(note)
+                    }
+                } else {
+                    data["observe"] = .object(["error": .string(obsErr?.message ?? "the read failed")])
+                }
+            }
+            result = (data, nil)
+        }
         return result
     }
 
@@ -1151,7 +1196,6 @@ class ActionHandler {
     }
 
     /// The element a ref/find tap aimed at, for the fine look.
-    private var tapTargetFrame: CGRect?
     /// Where to look closely after a tap: ±120pt around a coordinate tap; for
     /// a tapped element its own frame plus a margin — a row's checkmark sits
     /// at its right edge, ~150pt from the centre a ref tap lands on.
@@ -2746,6 +2790,12 @@ class ActionHandler {
     /// the reply says the press was accepted, not what the level became.
     private func volume(_ cmd: ActionCommand) -> ([String: JSONValue]?, JSONRPCError?) {
         let direction = (cmd.direction ?? "").lowercased()
+        #if targetEnvironment(simulator)
+        return (nil, JSONRPCError(code: -32603, message:
+            "The Simulator has no volume buttons.", data: [
+                "outcome": .string("not_sent"), "retry_safe": .bool(true),
+            ]))
+        #else
         let button: XCUIDevice.Button
         switch direction {
         case "up", "volume_up": button = .volumeUp
@@ -2756,12 +2806,6 @@ class ActionHandler {
                     "outcome": .string("not_sent"), "retry_safe": .bool(true),
                 ]))
         }
-        #if targetEnvironment(simulator)
-        return (nil, JSONRPCError(code: -32603, message:
-            "The Simulator has no volume buttons.", data: [
-                "outcome": .string("not_sent"), "retry_safe": .bool(true),
-            ]))
-        #else
         if let raised = ObjCException.catching({ XCUIDevice.shared.press(button) }) {
             return (nil, .serverError("Volume press failed: \(raised)"))
         }
@@ -8283,6 +8327,76 @@ class ActionHandler {
             }
             usleep(350_000)
         }
+    }
+
+    /// Structured wait: several present/absent text conditions plus an
+    /// optional foreground app, polled on the device in one call. Saves the
+    /// "read → think → read" loop for screens whose content arrives late.
+    /// Text conditions match the way `wait{text}` does (labels and values,
+    /// case and spacing ignored); accessibility identifiers are not matched.
+    private func waitFor(_ cmd: ActionCommand, params: [String: JSONValue]?) -> ([String: JSONValue]?, JSONRPCError?) {
+        let present = Self.stringArray(params?["present"])
+        let absent = Self.stringArray(params?["absent"])
+        let foreground = params?["foreground"]?.stringValue
+        guard !present.isEmpty || !absent.isEmpty || foreground != nil else {
+            return (nil, JSONRPCError(code: -32602, message:
+                "wait_for needs at least one condition: present (array of texts), absent (array of texts), " +
+                "or foreground (a bundle id).", data: nil))
+        }
+        let timeout = min(max(params?["timeout"]?.doubleValue ?? 10, 0.5), 60)
+        let start = nowMonotonic
+        var rounds = 0
+        var lastSeen: [String] = []
+        var lastForeground: String?
+        var lastReadOK = false
+        while true {
+            rounds += 1
+            var texts: [String]?
+            DispatchQueue.main.sync { texts = self.visibleTexts() }
+            if let texts { lastSeen = texts; lastReadOK = true } else { lastReadOK = false }
+            DispatchQueue.main.sync { lastForeground = self.resolveForegroundBundleId() }
+
+            // An unreadable tree can neither confirm present (can't claim what
+            // it can't see) nor absent (same rule as wait's until:"absent").
+            let missing = present.filter { p in
+                texts.map { t in !t.contains { Self.squash($0).contains(Self.squash(p)) } } ?? true
+            }
+            let lingering = absent.filter { a in
+                texts.map { t in t.contains { Self.squash($0).contains(Self.squash(a)) } } ?? false
+            }
+            let fgWrong = foreground.map { lastForeground != $0 } ?? false
+            let readsDecide = !present.isEmpty || !absent.isEmpty
+            if missing.isEmpty, lingering.isEmpty, !fgWrong, (!readsDecide || lastReadOK) {
+                var out: [String: JSONValue] = [
+                    "met": .bool(true),
+                    "elapsed": .double(((nowMonotonic - start) * 100).rounded() / 100),
+                    "rounds": .int(rounds),
+                    "message": .string("All wait_for conditions hold."),
+                ]
+                if let fg = lastForeground { out["foreground"] = .string(fg) }
+                return (out, nil)
+            }
+            if nowMonotonic - start >= timeout {
+                let elapsed = ((nowMonotonic - start) * 100).rounded() / 100
+                var why: [String] = []
+                if !missing.isEmpty { why.append("still missing: " + missing.joined(separator: ", ")) }
+                if !lingering.isEmpty { why.append("still on screen: " + lingering.joined(separator: ", ")) }
+                if fgWrong { why.append("foreground is \(lastForeground ?? "?"), not \(foreground ?? "?")") }
+                if readsDecide, !lastReadOK { why.append("the screen could not be read (no accessibility tree)") }
+                let sample = lastSeen.prefix(12).map { "'\($0)'" }.joined(separator: ", ")
+                return (nil, JSONRPCError(code: -32000, message:
+                    "wait_for conditions not met within \(Int(timeout.rounded()))s (\(rounds) looks) — "
+                    + why.joined(separator: "; ") + "."
+                    + (sample.isEmpty ? "" : " On screen at the last look: \(sample)."),
+                    data: ["met": .bool(false), "elapsed": .double(elapsed), "rounds": .int(rounds)]))
+            }
+            usleep(350_000)
+        }
+    }
+
+    private static func stringArray(_ v: JSONValue?) -> [String] {
+        guard case .array(let items)? = v else { return [] }
+        return items.compactMap { if case .string(let s) = $0 { return s } else { return nil } }
     }
 
     /// Every label and value on screen, from the bounded snapshot (main thread).
