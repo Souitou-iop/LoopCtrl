@@ -33,6 +33,10 @@ if command -v rustup >/dev/null && ! rustup target list --installed | grep -qx a
     echo "❌ Rust target aarch64-apple-ios missing — rustup target add aarch64-apple-ios"
     exit 1
 fi
+if command -v rustup >/dev/null && ! rustup target list --installed | grep -qx aarch64-apple-ios-sim; then
+    echo "🦀 Adding Rust target aarch64-apple-ios-sim…"
+    rustup target add aarch64-apple-ios-sim
+fi
 
 # A clean checkout of the pinned tag every time the stamp changes: patches
 # apply to pristine sources, and cargo's target/ survives for a fast rebuild.
