@@ -12,6 +12,10 @@
 </p>
 
 <p align="center">
+  <img src="docs/assets/loopctrl-demo.gif" alt="An agent pairs with the iPhone, opens Photos and Maps; then a person drives the same phone from a browser" width="100%">
+</p>
+
+<p align="center">
   <a href="#install">Install</a> ·
   <a href="#requirements">Requirements</a> ·
   <a href="#approval">Pairing approval</a> ·

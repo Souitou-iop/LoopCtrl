@@ -12,6 +12,10 @@
 </p>
 
 <p align="center">
+  <img src="docs/assets/loopctrl-demo.gif" alt="Agent 配对 iPhone，打开相册和地图；随后你在浏览器里接手操作同一台手机" width="100%">
+</p>
+
+<p align="center">
   <a href="#install">安装</a> ·
   <a href="#requirements">系统要求</a> ·
   <a href="#approval">配对审批</a> ·
