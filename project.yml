@@ -139,6 +139,11 @@ targets:
       - path: LoopCtrlLiveActivity/RemoteActivityAttributes.swift
     dependencies:
       - target: LoopCtrl
+      # The CoreDevice input backend (LoopCtrlKit/CoreDeviceInput.swift) calls
+      # the idevice FFI directly: tunnel → RSD → Indigo HID + displayservice
+      # gate, the DeviceHub path. Same framework the app links.
+      - framework: Frameworks/IDevice.xcframework
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(LOOPCTRL_BUNDLE_PREFIX).loopctrl.uitests"

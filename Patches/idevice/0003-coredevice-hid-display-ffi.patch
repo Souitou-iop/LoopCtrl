@@ -1,0 +1,489 @@
+diff --git a/ffi/Cargo.toml b/ffi/Cargo.toml
+index 93d2ca8..98f024f 100644
+--- a/ffi/Cargo.toml
++++ b/ffi/Cargo.toml
+@@ -33,7 +33,7 @@ afc = ["idevice/afc"]
+ amfi = ["idevice/amfi"]
+ bt_packet_logger = ["idevice/bt_packet_logger"]
+ companion_proxy = ["idevice/companion_proxy"]
+-core_device = ["idevice/core_device", "dep:futures", "dep:uuid", "rsd"]
++core_device = ["idevice/core_device", "idevice/display_stream", "dep:futures", "dep:uuid", "rsd"]
+ core_device_proxy = ["idevice/core_device_proxy", "idevice/tunnel_tcp_stack"]
+ crashreportcopymobile = ["idevice/crashreportcopymobile", "afc"]
+ cryptexd = ["idevice/cryptexd", "rsd", "tss"]
+diff --git a/ffi/src/core_device/display_stream.rs b/ffi/src/core_device/display_stream.rs
+new file mode 100644
+index 0000000..74ea827
+--- /dev/null
++++ b/ffi/src/core_device/display_stream.rs
+@@ -0,0 +1,196 @@
++// Jackson Coxson
++//
++// FFI for the displayservice screen media stream. The consumer here is the
++// HID authentication gate: dtuhidd drops synthetic Indigo events unless a
++// media stream is active, while its RTP payload can simply be discarded.
++// Starting it mirrors idevice-tools' start_screen_media_stream, which mirrors
++// what Device Hub sends: `clientSupportedFeatures` = 140, an audio stream
++// first to establish the screen-sharing session, then video on the same
++// `clientSessionID`.
++
++use idevice::core_device::display_stream::{
++    build_screen_audio_offer, build_screen_video_offer, build_start_audio_parameters,
++    build_start_video_parameters, CallInfoBlob, DisplayServiceClient,
++};
++use idevice::{IdeviceError, ReadWrite};
++
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++use crate::{
++    core_device_proxy::AdapterHandle, ffi_err, rsd::RsdHandshakeHandle, run_sync_local,
++    IdeviceFfiError,
++};
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++use idevice::RsdService as _;
++
++/// `clientSupportedFeatures` is what *we* (the controller) support, NOT the
++/// device's mask. Device Hub sends 140 for screen sharing; sending the
++/// device's larger mask makes the negotiator produce an invalid video config.
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++const CLIENT_SUPPORTED_FEATURES: u64 = 140;
++
++/// An active screen media stream. Holds the displayservice client and the two
++/// UDP sockets the device sends RTP to; as long as this handle lives, the HID
++/// authentication gate stays open. Incoming RTP is discarded.
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++pub struct DisplayGateHandle {
++    client: DisplayServiceClient<Box<dyn ReadWrite>>,
++    _audio_udp: idevice::tcp::handle::UdpSocketHandle,
++    _video_udp: idevice::tcp::handle::UdpSocketHandle,
++}
++
++/// Starts the screen media stream (audio + video) over an RSD connection
++///
++/// # Arguments
++/// * [`adapter`] - An adapter created by this library
++/// * [`handshake`] - An RSD handshake from the same adapter
++/// * [`display_id`] - The display to stream; 1 is the main screen
++/// * [`handle`] - Pointer to store the newly created handle
++///
++/// # Returns
++/// An IdeviceFfiError on error, null on success
++///
++/// # Safety
++/// `adapter` and `handshake` must be valid pointers to handles allocated by this library
++/// `handle` must be a valid pointer to a location where the handle will be stored
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn display_gate_start_rsd(
++    adapter: *mut AdapterHandle,
++    handshake: *mut RsdHandshakeHandle,
++    display_id: i64,
++    handle: *mut *mut DisplayGateHandle,
++) -> *mut IdeviceFfiError {
++    if adapter.is_null() || handshake.is_null() || handle.is_null() {
++        return ffi_err!(IdeviceError::FfiInvalidArg);
++    }
++
++    let res: Result<DisplayGateHandle, IdeviceError> = run_sync_local(async {
++        let adapter_ref = unsafe { &mut (*adapter).0 };
++        let handshake_ref = unsafe { &mut (*handshake).0 };
++
++        let mut client = DisplayServiceClient::connect_rsd(adapter_ref, handshake_ref).await?;
++
++        let audio_udp = adapter_ref.bind_udp(0).await.map_err(|e| {
++            IdeviceError::InternalError(format!("bind_udp(audio) failed: {e:?}"))
++        })?;
++        let video_udp = adapter_ref.bind_udp(0).await.map_err(|e| {
++            IdeviceError::InternalError(format!("bind_udp(video) failed: {e:?}"))
++        })?;
++        let receiver_ip = adapter_ref.host_ip().to_string();
++        let sender_ip = adapter_ref.peer_ip().to_string();
++        let audio_receiver_port = audio_udp.local_port();
++        let receiver_port = video_udp.local_port();
++
++        // VCCallInfoBlob describing this (host) endpoint. The string values
++        // mirror a captured Device Hub offer the device accepted.
++        let call_info = CallInfoBlob {
++            call_id: 0,
++            client_version: 1,
++            device_type: "Mac17,7".into(),
++            framework_version: "2205.3.1".into(),
++            os_version: "25F71".into(),
++            device_name: None,
++            audio_device_uid: None,
++        };
++
++        // The screen-sharing session is keyed by clientSessionID; both the
++        // audio and video streams share it.
++        let client_session_id = uuid::Uuid::new_v4();
++
++        // Start the audio stream first to establish the screen-sharing session.
++        let audio_call_id = uuid::Uuid::new_v4().to_string().to_uppercase();
++        let audio_offer = build_screen_audio_offer(&audio_call_id, &call_info)?;
++        let audio_params = build_start_audio_parameters(
++            &receiver_ip,
++            audio_receiver_port,
++            &sender_ip,
++            50000,
++            audio_offer,
++            CLIENT_SUPPORTED_FEATURES,
++            client_session_id,
++        );
++        client.start_media_stream(audio_params).await?;
++
++        // Start the video stream on the same session. The SSRC declared in the
++        // offer must match the RTCP sender SSRC if sending feedback; we never
++        // send RTCP, so any value works.
++        let call_id = uuid::Uuid::new_v4().to_string().to_uppercase();
++        let our_ssrc = uuid::Uuid::new_v4().as_u128() as u32;
++        let offer = build_screen_video_offer(&call_id, &call_info, our_ssrc)?;
++        let params = build_start_video_parameters(
++            &receiver_ip,
++            receiver_port,
++            &sender_ip,
++            50001,
++            offer,
++            CLIENT_SUPPORTED_FEATURES,
++            display_id,
++            client_session_id,
++        );
++        client.start_media_stream(params).await?;
++
++        Ok(DisplayGateHandle {
++            client,
++            _audio_udp: audio_udp,
++            _video_udp: video_udp,
++        })
++    });
++
++    match res {
++        Ok(gate) => {
++            unsafe { *handle = Box::into_raw(Box::new(gate)) };
++            std::ptr::null_mut()
++        }
++        Err(e) => ffi_err!(e),
++    }
++}
++
++/// Stops the screen media stream and frees the gate handle
++///
++/// A dropped connection tears the gate down all the same; an error here only
++/// means the device answered rudely, the handle is freed regardless.
++///
++/// # Safety
++/// `handle` must be a valid pointer to a handle allocated by this library,
++/// and must not be used afterwards
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn display_gate_stop_rsd(handle: *mut DisplayGateHandle) -> *mut IdeviceFfiError {
++    if handle.is_null() {
++        return ffi_err!(IdeviceError::FfiInvalidArg);
++    }
++
++    let mut gate = unsafe { Box::from_raw(handle) };
++    let res = run_sync_local(async { gate.client.stop_media_stream().await });
++    match res {
++        Ok(_) => std::ptr::null_mut(),
++        Err(e) => {
++            drop(gate);
++            ffi_err!(e)
++        }
++    }
++}
+diff --git a/ffi/src/core_device/hid.rs b/ffi/src/core_device/hid.rs
+new file mode 100644
+index 0000000..36a21d3
+--- /dev/null
++++ b/ffi/src/core_device/hid.rs
+@@ -0,0 +1,256 @@
++// Jackson Coxson
++//
++// FFI for the CoreDevice HID services. Remote control goes through the Indigo
++// surface (`com.apple.coredevice.hid.indigo`): buttons, keyboard and the
++// digitizer. The Universal HID service's digitizer decodes cleanly but the
++// device drops its touch reports (observed on iOS 27.3, DDI 27A9266e), so only
++// the Indigo client is exposed here.
++//
++// Digitizer coordinates are 0.0-1.0 normalized against the screen: sending
++// (0.5, 0.5) taps the center (observed on iOS 27.3). The library doc comment
++// claims "pixel space", which is wrong — idevice v0.1.68's own tools pass
++// 0-65535, and their swipe then lands nowhere, which the author marked
++// "doesn't seem to work".
++//
++// Like every Indigo event, these only land while a displayservice media
++// stream is active; see display_stream.rs for the gate.
++
++use idevice::core_device::hid::{
++    ButtonState, DigitizerEdge, DigitizerEventType, DigitizerTarget, IndigoHidClient,
++};
++use idevice::{IdeviceError, ReadWrite};
++
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++use crate::{
++    core_device_proxy::AdapterHandle, ffi_err, rsd::RsdHandshakeHandle, run_sync_local,
++    IdeviceFfiError,
++};
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++use idevice::RsdService as _;
++
++/// Opaque handle to an IndigoHidClient
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++pub struct IndigoHidHandle(pub IndigoHidClient<Box<dyn ReadWrite>>);
++
++/// Creates an Indigo HID client over an RSD connection
++///
++/// # Arguments
++/// * [`adapter`] - An adapter created by this library
++/// * [`handshake`] - An RSD handshake from the same adapter
++/// * [`handle`] - Pointer to store the newly created handle
++///
++/// # Returns
++/// An IdeviceFfiError on error, null on success
++///
++/// # Safety
++/// `adapter` and `handshake` must be valid pointers to handles allocated by this library
++/// `handle` must be a valid pointer to a location where the handle will be stored
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn hid_indigo_connect_rsd(
++    adapter: *mut AdapterHandle,
++    handshake: *mut RsdHandshakeHandle,
++    handle: *mut *mut IndigoHidHandle,
++) -> *mut IdeviceFfiError {
++    if adapter.is_null() || handshake.is_null() || handle.is_null() {
++        return ffi_err!(IdeviceError::FfiInvalidArg);
++    }
++
++    let res: Result<IndigoHidClient<Box<dyn ReadWrite>>, IdeviceError> = run_sync_local(async {
++        let adapter_ref = unsafe { &mut (*adapter).0 };
++        let handshake_ref = unsafe { &mut (*handshake).0 };
++        IndigoHidClient::connect_rsd(adapter_ref, handshake_ref).await
++    });
++
++    match res {
++        Ok(client) => {
++            unsafe { *handle = Box::into_raw(Box::new(IndigoHidHandle(client))) };
++            std::ptr::null_mut()
++        }
++        Err(e) => ffi_err!(e),
++    }
++}
++
++/// Sends a digitizer event: a touch, drag or edge-swipe on the main screen
++///
++/// Coordinates are 0.0-1.0 normalized (0.5, 0.5 is the screen center).
++/// `event_type`: 0 = start, 1 = position, 2 = end. `edge`: 0 = none,
++/// 1 = top, 2 = left, 3 = bottom, 4 = right; a non-none edge turns the event
++/// into a system edge-swipe gesture. `target`: 0 = main screen, any other
++/// value addresses that external display id. Pass `has_second_contact` = 1
++/// and fill `x2`/`y2` for a two-finger event.
++///
++/// # Arguments
++/// * [`handle`] - The IndigoHidClient handle
++///
++/// # Returns
++/// An IdeviceFfiError on error, null on success
++///
++/// # Safety
++/// `handle` must be a valid pointer to a handle allocated by this library
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn hid_indigo_send_digitizer(
++    handle: *mut IndigoHidHandle,
++    x1: f64,
++    y1: f64,
++    x2: f64,
++    y2: f64,
++    has_second_contact: i32,
++    event_type: u64,
++    edge: u64,
++    target: u64,
++) -> *mut IdeviceFfiError {
++    if handle.is_null() {
++        return ffi_err!(IdeviceError::FfiInvalidArg);
++    }
++    let event_type = match event_type {
++        0 => DigitizerEventType::Start,
++        1 => DigitizerEventType::Position,
++        2 => DigitizerEventType::End,
++        _ => return ffi_err!(IdeviceError::FfiInvalidArg),
++    };
++    let edge = match edge {
++        0 => DigitizerEdge::None,
++        1 => DigitizerEdge::Top,
++        2 => DigitizerEdge::Left,
++        3 => DigitizerEdge::Bottom,
++        4 => DigitizerEdge::Right,
++        _ => return ffi_err!(IdeviceError::FfiInvalidArg),
++    };
++    let target = if target == 0 {
++        DigitizerTarget::MainScreen
++    } else {
++        DigitizerTarget::Display(target)
++    };
++    let point_two = if has_second_contact != 0 {
++        Some((x2, y2))
++    } else {
++        None
++    };
++
++    let res = run_sync_local(async {
++        unsafe { (*handle).0.send_digitizer((x1, y1), point_two, event_type, edge, target).await }
++    });
++
++    match res {
++        Ok(()) => std::ptr::null_mut(),
++        Err(e) => ffi_err!(e),
++    }
++}
++
++/// Sends a hardware button event through the Indigo surface
++///
++/// `state`: 1 = down, 2 = up. The named buttons live on usage page 0x0C
++/// (consumer): home 0x40, power 0x30, volume up 0xE9, volume down 0xEA.
++///
++/// # Returns
++/// An IdeviceFfiError on error, null on success
++///
++/// # Safety
++/// `handle` must be a valid pointer to a handle allocated by this library
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn hid_indigo_send_button(
++    handle: *mut IndigoHidHandle,
++    usage_page: u64,
++    usage_code: u64,
++    state: u64,
++) -> *mut IdeviceFfiError {
++    if handle.is_null() {
++        return ffi_err!(IdeviceError::FfiInvalidArg);
++    }
++    let state = match state {
++        1 => ButtonState::Down,
++        2 => ButtonState::Up,
++        _ => return ffi_err!(IdeviceError::FfiInvalidArg),
++    };
++
++    let res =
++        run_sync_local(async { unsafe { (*handle).0.send_button(usage_page, usage_code, state).await } });
++
++    match res {
++        Ok(()) => std::ptr::null_mut(),
++        Err(e) => ffi_err!(e),
++    }
++}
++
++/// Sends a keyboard key state change through the Indigo surface
++///
++/// `usage_code` is a HID keyboard usage (page 0x07 implicit): 0x04 = a,
++/// 0x28 = return, 0x2A = backspace, 0xE1 = left shift. `state`: 1 = down,
++/// 2 = up. A modifier is sent as its own down/up around the key.
++///
++/// # Returns
++/// An IdeviceFfiError on error, null on success
++///
++/// # Safety
++/// `handle` must be a valid pointer to a handle allocated by this library
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn hid_indigo_send_keyboard(
++    handle: *mut IndigoHidHandle,
++    usage_code: u64,
++    state: u64,
++) -> *mut IdeviceFfiError {
++    if handle.is_null() {
++        return ffi_err!(IdeviceError::FfiInvalidArg);
++    }
++    let state = match state {
++        1 => ButtonState::Down,
++        2 => ButtonState::Up,
++        _ => return ffi_err!(IdeviceError::FfiInvalidArg),
++    };
++
++    let res = run_sync_local(async { unsafe { (*handle).0.send_keyboard(usage_code, state).await } });
++
++    match res {
++        Ok(()) => std::ptr::null_mut(),
++        Err(e) => ffi_err!(e),
++    }
++}
++
++/// Frees an Indigo HID client handle
++///
++/// # Safety
++/// `handle` must be a valid pointer to a handle allocated by this library,
++/// and must not be used afterwards
++#[cfg(all(
++    feature = "core_device",
++    feature = "core_device_proxy",
++    feature = "rsd"
++))]
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn hid_indigo_free(handle: *mut IndigoHidHandle) {
++    if !handle.is_null() {
++        drop(unsafe { Box::from_raw(handle) });
++    }
++}
+diff --git a/ffi/src/core_device/mod.rs b/ffi/src/core_device/mod.rs
+index 7bb5ea9..21c4ed0 100644
+--- a/ffi/src/core_device/mod.rs
++++ b/ffi/src/core_device/mod.rs
+@@ -3,5 +3,7 @@
+ pub mod app_service;
+ pub mod configuration_service;
+ pub mod diagnosticsservice;
++pub mod display_stream;
+ pub mod file_service;
++pub mod hid;
+ pub mod icon_service;

@@ -457,9 +457,17 @@ class ActionHandler {
             guard let fx = cmd.fromX, let fy = cmd.fromY, let tx = cmd.toX, let ty = cmd.toY else { return nil }
             if let err = validateCoordinate(x: fx, y: fy, context: "drag start") { return (nil, err) }
             let size = pointSize
-            return fastHandler.fastSwipe(fromX: fx, fromY: fy, toX: min(max(tx, 0), size.width),
-                                         toY: min(max(ty, 0), size.height),
-                                         duration: min(max(cmd.duration ?? 0.3, 0.05), 3))
+            let clampedX = min(max(tx, 0), size.width)
+            let clampedY = min(max(ty, 0), size.height)
+            let duration = min(max(cmd.duration ?? 0.3, 0.05), 3)
+            if CoreDeviceInput.shared.usable,
+               CoreDeviceInput.shared.drag(fromX: fx, fromY: fy, toX: clampedX, toY: clampedY,
+                                           width: Double(size.width), height: Double(size.height),
+                                           duration: duration) {
+                return (["message": .string("Dragged from (\(Int(fx)),\(Int(fy))) to " +
+                                            "(\(Int(clampedX)),\(Int(clampedY))) (CoreDevice)")], nil)
+            }
+            return fastHandler.fastSwipe(fromX: fx, fromY: fy, toX: clampedX, toY: clampedY, duration: duration)
         case "type":
             guard let text = cmd.text, !text.isEmpty, cmd.clear != true, cmd.x == nil else { return nil }
             return fastHandler.fastTypeText(text)
@@ -2057,7 +2065,17 @@ class ActionHandler {
             // post-tap probe would describe the new layout, not what was hit.
             let hit = elementUnder(x: x, y: y)
             if let err = alertRaisedBeforeTouch(x: x, y: y) { return (nil, err) }
-            var r = fastHandler.fastTap(x: x, y: y)
+            // CoreDevice HID first — a real touchscreen event, no synthesis and
+            // no quiescence machinery. Falls back to the synthesized event when
+            // the path is unavailable (no pairing record, tunnel down).
+            var r: ([String: JSONValue]?, JSONRPCError?)
+            if CoreDeviceInput.shared.usable,
+               CoreDeviceInput.shared.tap(x: x, y: y, width: Double(pointSize.width),
+                                          height: Double(pointSize.height)) {
+                r = (["message": .string("Tapped at (\(x), \(y)) (CoreDevice)")], nil)
+            } else {
+                r = fastHandler.fastTap(x: x, y: y)
+            }
             if var data = r.0 {
                 if var h = hit {
                     if case .string(let note)? = h.removeValue(forKey: "note") { data["hint"] = .string(note) }
@@ -2121,6 +2139,18 @@ class ActionHandler {
         if let err = validateCoordinate(x: x, y: y, context: "double_tap") { return (nil, err) }
 
         if cmd.fast != false {
+            // CoreDevice HID first: two real taps ~80 ms apart, exactly what a
+            // finger does. Falls back to the synthesized paths below.
+            if CoreDeviceInput.shared.usable,
+               CoreDeviceInput.shared.tap(x: x, y: y, width: Double(pointSize.width),
+                                          height: Double(pointSize.height)) {
+                Thread.sleep(forTimeInterval: 0.08)
+                if CoreDeviceInput.shared.tap(x: x, y: y, width: Double(pointSize.width),
+                                              height: Double(pointSize.height)) {
+                    return (["message": .string("Double tapped at (\(x), \(y)) (CoreDevice)"),
+                             "screen": coordinateHint], nil)
+                }
+            }
             // mode:"separate" sends two independent synthesize calls; the default
             // packs both presses into one event path so the gap is exact.
             let separate = (cmd.matchMode ?? "").lowercased() == "separate"
@@ -2168,6 +2198,14 @@ class ActionHandler {
         // appeared, while the native press at the same point produced the full
         // copy/forward/delete menu. Opt in with fast:true if an app disagrees.
         if cmd.fast == true {
+            // CoreDevice HID first: a real touch held for the duration, which —
+            // unlike an XCPointerEventPath hold — should fire the recognizer.
+            if CoreDeviceInput.shared.usable,
+               CoreDeviceInput.shared.hold(x: x, y: y, width: Double(pointSize.width),
+                                           height: Double(pointSize.height), duration: duration) {
+                return (["message": .string("Long pressed at (\(x), \(y)) for \(duration)s (CoreDevice)"),
+                         "screen": coordinateHint], nil)
+            }
             let r = fastHandler.fastLongPress(x: x, y: y, duration: duration)
             if r.1 == nil {
                 return (["message": .string("Long pressed at (\(x), \(y)) for \(duration)s (synthesized — " +
@@ -2343,6 +2381,23 @@ class ActionHandler {
         }
 
         if cmd.fast != false {
+            // CoreDevice HID first: a real finger from start to end over
+            // moveDuration. Falls back to the synthesized event when the path
+            // is unavailable.
+            if CoreDeviceInput.shared.usable,
+               CoreDeviceInput.shared.drag(fromX: x, fromY: y, toX: clampedEndX, toY: clampedEndY,
+                                           width: Double(size.width), height: Double(size.height),
+                                           duration: moveDuration) {
+                var data: [String: JSONValue] = [
+                    "message": .string("Swiped \(direction) from (\(Int(x)),\(Int(y))) to " +
+                                       "(\(Int(clampedEndX)),\(Int(clampedEndY))) (CoreDevice)"),
+                    "from": .object(["x": .double(x), "y": .double(y)]),
+                ]
+                if clampedEndX != endX || clampedEndY != endY {
+                    data["clamped"] = .string("End point was outside the screen and clamped to the edge.")
+                }
+                return (data, nil)
+            }
             // Default to the synthesized fast path (no quiescence wait); velocity via duration.
             let r = fastHandler.fastSwipe(fromX: x, fromY: y, toX: clampedEndX, toY: clampedEndY, duration: moveDuration)
             if var data = r.0 {
@@ -2730,7 +2785,20 @@ class ActionHandler {
         var landed = false
         if before == springboard {
             landed = true
-        } else {
+        } else if CoreDeviceInput.shared.usable,
+                  CoreDeviceInput.shared.button(usagePage: 0x0C, usage: 0x40, holdMs: 80) {
+            // A real Home event through the device's own HID surface lands
+            // instantly, with none of the activation fallbacks below. Verify
+            // the same way; if it didn't take, the activation chain still runs.
+            for _ in 0..<12 {
+                if leftForeground() { landed = true; break }
+                usleep(50_000)
+            }
+            if !landed {
+                LoopCtrlUITests.logBuffer.append("🏠 CoreDevice home event didn't land — trying the activation chain")
+            }
+        }
+        if !landed, before != springboard {
             // Activate SpringBoard first: this is what WebDriverAgent ships for
             // its home-screen route, and it works on phones where `press(.home)`
             // goes nowhere. The press below stays as a fallback for devices that
