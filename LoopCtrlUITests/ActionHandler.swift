@@ -451,8 +451,25 @@ class ActionHandler {
         case "tap", "long_press":
             guard let x = cmd.x, let y = cmd.y else { return nil }
             if let err = validateCoordinate(x: x, y: y, context: method) { return (nil, err) }
-            return method == "tap" ? fastHandler.fastTap(x: x, y: y)
-                : fastHandler.fastLongPress(x: x, y: y, duration: min(max(cmd.duration ?? 1, 0.3), 10))
+            // CoreDevice HID first, like the agent path: a real touch lands
+            // without the synthesized event, and it is the channel the web
+            // page's status line reports.
+            let w = Double(pointSize.width), h = Double(pointSize.height)
+            if method == "tap" {
+                if CoreDeviceInput.shared.usable,
+                   CoreDeviceInput.shared.tap(x: x, y: y, width: w, height: h) {
+                    lastBackend = "coredevice"
+                    return (["message": .string("Tapped at (\(Int(x)), \(Int(y))) (CoreDevice)")], nil)
+                }
+                return fastHandler.fastTap(x: x, y: y)
+            }
+            let duration = min(max(cmd.duration ?? 1, 0.3), 10)
+            if CoreDeviceInput.shared.usable,
+               CoreDeviceInput.shared.hold(x: x, y: y, width: w, height: h, duration: duration) {
+                lastBackend = "coredevice"
+                return (["message": .string("Long pressed at (\(Int(x)), \(Int(y))) for \(duration)s (CoreDevice)")], nil)
+            }
+            return fastHandler.fastLongPress(x: x, y: y, duration: duration)
         case "drag":
             guard let fx = cmd.fromX, let fy = cmd.fromY, let tx = cmd.toX, let ty = cmd.toY else { return nil }
             if let err = validateCoordinate(x: fx, y: fy, context: "drag start") { return (nil, err) }
@@ -464,6 +481,7 @@ class ActionHandler {
                CoreDeviceInput.shared.drag(fromX: fx, fromY: fy, toX: clampedX, toY: clampedY,
                                            width: Double(size.width), height: Double(size.height),
                                            duration: duration) {
+                lastBackend = "coredevice"
                 return (["message": .string("Dragged from (\(Int(fx)),\(Int(fy))) to " +
                                             "(\(Int(clampedX)),\(Int(clampedY))) (CoreDevice)")], nil)
             }
@@ -633,9 +651,27 @@ class ActionHandler {
         return (["message": .string("Opened the app switcher (swipe up and hold).")], nil)
     }
 
+    /// The gestures that go through CoreDeviceInput first; their replies name
+    /// the channel that actually ran (`backend`).
+    private static let backendMethods: Set<String> =
+        ["tap", "double_tap", "long_press", "swipe", "drag", "home"]
+
+    /// Adds the input channel that produced a gesture result, so a client —
+    /// the /remote page's status line — can tell CoreDevice from the XCTest
+    /// fallback without parsing the message text.
+    private func addingBackend(_ r: ([String: JSONValue]?, JSONRPCError?))
+        -> ([String: JSONValue]?, JSONRPCError?) {
+        guard lastBackend != "none", var data = r.0 else { return r }
+        data["backend"] = .string(lastBackend)
+        return (data, r.1)
+    }
+
     func dispatch(method: String, params: [String: JSONValue]?) -> ([String: JSONValue]?, JSONRPCError?) {
         let cmd = ActionCommand(method: method, params: params)
         readFrame = nil
+        // These gestures always end on CoreDevice or the fallback; `home`
+        // overrides this with "none" when it has nothing to do.
+        lastBackend = Self.backendMethods.contains(method) ? "xctest" : "none"
         if let t = cmd.elementType, let raws = Self.typeFilterRaws(t), raws.isEmpty {
             return (nil, JSONRPCError(code: -32602, message:
                 "Unknown element_type '\(t)'. Use a type name as page_source prints it — e.g. Button, StaticText, " +
@@ -645,7 +681,7 @@ class ActionHandler {
         fastHandler.lastTouchPoint = nil
         tapTargetFrame = nil
         pageKeyboardTop = nil
-        if cmd.manual == true, let r = manualAction(method: method, cmd: cmd) { return r }
+        if cmd.manual == true, let r = manualAction(method: method, cmd: cmd) { return addingBackend(r) }
         if method == "gesture" { return gesture(params) }
         if method == "rotate" { return rotate(params) }
         if method == "wait" { return wait(cmd, params: params) }
@@ -743,7 +779,7 @@ class ActionHandler {
         let pageCheck = blind ? samePageCheck(before: baseline, typing: method == "type" || method == "clear_text") : nil
 
         readLaps = []
-        var result = dispatchInner(method: method, cmd: cmd)
+        var result = addingBackend(dispatchInner(method: method, cmd: cmd))
         if !readLaps.isEmpty { LoopCtrlUITests.logBuffer.append("🐢 \(method) slow parts: " + readLaps.joined(separator: " ")) }
 
         if settleOn, result.1 == nil, var data = result.0 {
@@ -1728,8 +1764,20 @@ class ActionHandler {
             // previously attached only to coordinateHint, which rides along with
             // tap/swipe responses and so never reached a plain device_info.
             "system": .object(systemMetrics()),
+            // Which input channel actions take right now: CoreDevice HID over
+            // the on-device tunnel, or the XCTest fallback (with why).
+            "coredevice": .object(coreDeviceStatus()),
         ]
         return (result, nil)
+    }
+
+    /// The CoreDevice input path's state, for device_info and the /remote
+    /// status line. Cheap enough to ask on every page load.
+    private func coreDeviceStatus() -> [String: JSONValue] {
+        let s = CoreDeviceInput.shared.status()
+        var out: [String: JSONValue] = ["state": .string(s.state), "input": .string(s.input)]
+        if let reason = s.reason { out["reason"] = .string(reason) }
+        return out
     }
 
     private func screenshot(_ cmd: ActionCommand) -> ([String: JSONValue]?, JSONRPCError?) {
@@ -2072,6 +2120,7 @@ class ActionHandler {
             if CoreDeviceInput.shared.usable,
                CoreDeviceInput.shared.tap(x: x, y: y, width: Double(pointSize.width),
                                           height: Double(pointSize.height)) {
+                lastBackend = "coredevice"
                 r = (["message": .string("Tapped at (\(x), \(y)) (CoreDevice)")], nil)
             } else {
                 r = fastHandler.fastTap(x: x, y: y)
@@ -2147,6 +2196,7 @@ class ActionHandler {
                 Thread.sleep(forTimeInterval: 0.08)
                 if CoreDeviceInput.shared.tap(x: x, y: y, width: Double(pointSize.width),
                                               height: Double(pointSize.height)) {
+                    lastBackend = "coredevice"
                     return (["message": .string("Double tapped at (\(x), \(y)) (CoreDevice)"),
                              "screen": coordinateHint], nil)
                 }
@@ -2203,6 +2253,7 @@ class ActionHandler {
             if CoreDeviceInput.shared.usable,
                CoreDeviceInput.shared.hold(x: x, y: y, width: Double(pointSize.width),
                                            height: Double(pointSize.height), duration: duration) {
+                lastBackend = "coredevice"
                 return (["message": .string("Long pressed at (\(x), \(y)) for \(duration)s (CoreDevice)"),
                          "screen": coordinateHint], nil)
             }
@@ -2388,6 +2439,7 @@ class ActionHandler {
                CoreDeviceInput.shared.drag(fromX: x, fromY: y, toX: clampedEndX, toY: clampedEndY,
                                            width: Double(size.width), height: Double(size.height),
                                            duration: moveDuration) {
+                lastBackend = "coredevice"
                 var data: [String: JSONValue] = [
                     "message": .string("Swiped \(direction) from (\(Int(x)),\(Int(y))) to " +
                                        "(\(Int(clampedEndX)),\(Int(clampedEndY))) (CoreDevice)"),
@@ -2784,6 +2836,8 @@ class ActionHandler {
 
         var landed = false
         if before == springboard {
+            // Already home: nothing was pressed, so don't claim a channel.
+            lastBackend = "none"
             landed = true
         } else if CoreDeviceInput.shared.usable,
                   CoreDeviceInput.shared.button(usagePage: 0x0C, usage: 0x40, holdMs: 80) {
@@ -2791,7 +2845,7 @@ class ActionHandler {
             // instantly, with none of the activation fallbacks below. Verify
             // the same way; if it didn't take, the activation chain still runs.
             for _ in 0..<12 {
-                if leftForeground() { landed = true; break }
+                if leftForeground() { landed = true; lastBackend = "coredevice"; break }
                 usleep(50_000)
             }
             if !landed {
@@ -3941,6 +3995,12 @@ class ActionHandler {
 
     /// Post-fetch costs of the current page_source, logged when slow.
     private var readLaps: [String] = []
+
+    /// The channel the gesture being dispatched actually used: "coredevice"
+    /// when the CoreDevice HID path took it, "xctest" when it fell back,
+    /// "none" when no channel was involved (e.g. home while already home).
+    /// Rides back in the reply so the /remote status line can show it.
+    private var lastBackend = "none"
     private func timedLap<T>(_ name: String, _ work: () -> T) -> T {
         let t = nowMonotonic
         let v = work()

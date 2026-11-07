@@ -60,7 +60,8 @@ LoopCtrl 侧：
 
 - FFI：`Patches/idevice/0003-coredevice-hid-display-ffi.patch` 暴露 `hid_indigo_*` 与 `display_gate_*`，xcframework 由 `Scripts/build-idevice.sh` 带补丁构建。
 - App 侧：`LoopCtrlKit/CoreDeviceInput.swift` 走本机 LocalDevVPN 隧道（`10.7.0.1:49152`）→ RSD → Indigo HID；配对记录用 `Application Support/Pairing/pairingFile.plist`（设置 → 磁盘镜像向导 → “在这台 iPhone 上配对”）。HID 期间保持一条 displayservice 媒体流作认证门，空闲 30s 关闭；失败整体拆除并冷却 60s。
-- RPC：`tap` / `double_tap` / `long_press` / `swipe` / `drag` / `home` 先走 CoreDevice，失败回退 XCTest；power / action / volume 仍走 XCTest（HID 用法未验证）。
+- RPC：`tap` / `double_tap` / `long_press` / `swipe` / `drag` / `home` 先走 CoreDevice，失败回退 XCTest；power / action / volume 仍走 XCTest（HID 用法未验证）。`/remote` 页的手动点按与长按也走 CoreDevice。
+- 状态：`device_info` 增加 `coredevice {state, input, reason}`（active/idle/cooldown/unavailable）；手势回复带 `backend: coredevice|xctest`。`/remote` 状态行在连接方式后显示 CoreDevice / XCTest，回退时悬停显示原因。
 
 iPhone 17（iOS 27.3）局域网 RPC 端到端耗时，客户端实测（含一次网络往返）：
 

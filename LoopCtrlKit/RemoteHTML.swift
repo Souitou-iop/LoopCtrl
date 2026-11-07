@@ -955,6 +955,8 @@ async function rpc(method, params = {}, retry = true, base = "") {
     e.code = out.error.code; e.data = out.error.data || {};
     throw e;
   }
+  // Gesture replies name the channel they used; keep the status line live.
+  if (out.result && out.result.backend) noteBackend(out.result.backend);
   return out.result || {};
 }
 
@@ -2092,6 +2094,10 @@ function actionFailed(method, e) {
 // Anyone paired may operate; the pill says how many watch and operate, and
 // opens everyone's own log of actions.
 let state = { paused: false, people: [], hidden: false, source: "" };
+// The input channel: `info` is device_info's coredevice block (availability
+// and why), `backend` is the channel the last gesture actually used. The
+// top-left status line shows whichever is fresher.
+let channel = { info: null, backend: "" };
 let pageVersion = 0;
 function onState(s) {
   const was = state;
@@ -2962,13 +2968,39 @@ $("flow-file").addEventListener("change", async () => {
 let relayed = location.protocol === "https:", linkUp = false;
 function setLink(up) { linkUp = up; renderSub(); renderDevices(); }
 let lastDecoded = 0, fps = 0, codecName = "";
+
+// Which channel is driving the phone: CoreDevice (HID over the on-device
+// tunnel) or the XCTest fallback. The last gesture that actually ran wins
+// over the availability device_info reported, so a fallback shows at once.
+function channelName() {
+  const input = channel.backend || (channel.info && channel.info.input);
+  return input === "xctest" ? "XCTest" : input === "coredevice" ? "CoreDevice" : "";
+}
+function noteBackend(backend) {
+  if (!backend || backend === channel.backend) return;
+  channel.backend = backend;
+  renderSub();
+  // A fallback is worth explaining: ask once for the fresh state + reason.
+  if (backend === "xctest") refreshChannelInfo();
+}
+async function refreshChannelInfo() {
+  try {
+    const info = await rpc("device_info", {}, true);
+    if (info.coredevice) { channel.info = info.coredevice; renderSub(); }
+  } catch (_) {}
+}
+
 function renderSub() {
   const parts = [linkUp ? t(relayed && !apiBase ? "relay" : "direct") : t("offline")];
+  // Right after the link, so a narrow bar truncates codec/fps first.
+  if (linkUp) { const name = channelName(); if (name) parts.push(name); }
   // How the phone takes its screen: screenshots, or the system's screen
   // recording while one runs (docs/remote-control.md, "System broadcast").
   if (linkUp && state.source) parts.push(t(state.source === "broadcast" ? "srcBroadcast" : "srcCapture"));
   if (linkUp && shownAt) parts.push(codecName, fps + " fps", Math.round(lastRTT) + " ms");
   $("sub").textContent = parts.join(" · ");
+  const why = channelName() === "XCTest" && channel.info && channel.info.reason;
+  if (why) $("sub").title = why; else $("sub").removeAttribute("title");
 }
 setInterval(() => {
   fps = decoded - lastDecoded; lastDecoded = decoded; renderSub();
@@ -3468,6 +3500,8 @@ async function begin(adopt = "") {
     }
     if (adopt) store.set(storeName(), adopt);
     if (info.point_width) points = { w: info.point_width, h: info.point_height };
+    if (info.coredevice) channel.info = info.coredevice;
+    renderSub();
     if (info.device_name || info.name) device.name = info.device_name || info.name;
     rememberThisDevice({
       ...(info.model ? { model: info.model } : {}),

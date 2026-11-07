@@ -476,4 +476,7 @@ The first time a browser opens the page, a short guide points at each part
 of it in turn (Screen settings › **Show the guide again** repeats it). The
 buttons show icons, text, or both (Screen settings › **Buttons**; both by
 default on a wide screen with a mouse). The status line under the phone's
-name gives the connection, the codec, the frame rate and the round trip.
+name gives the connection, the input channel — **CoreDevice** (real HID
+events over the phone's on-device tunnel) or **XCTest** (the synthesized
+fallback; hover for the reason) — the codec, the frame rate and the round
+trip.

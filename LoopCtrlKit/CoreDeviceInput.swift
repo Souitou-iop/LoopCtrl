@@ -49,6 +49,8 @@ final class CoreDeviceInput {
     private var gate: OpaquePointer?
     private var cooldownUntil = Date.distantPast
     private var gateWorkItem: DispatchWorkItem?
+    /// Why the last attempt failed, so status surfaces can say it.
+    private var lastFailure: String?
 
     private init() {}
 
@@ -122,6 +124,32 @@ final class CoreDeviceInput {
     /// Whether the path may be worth trying right now (not cooling down).
     var usable: Bool { Date() >= cooldownUntil }
 
+    /// What the path looks like right now, for status surfaces (device_info,
+    /// the /remote status line). Cheap: one file check and queue state.
+    struct Status {
+        /// "active" (session open), "idle" (configured, no session yet),
+        /// "cooldown" (a failure just tore it down), or "unavailable".
+        let state: String
+        /// Which channel the next action takes: "coredevice" or "xctest".
+        let input: String
+        /// Why it isn't usable, for cooldown/unavailable.
+        let reason: String?
+    }
+
+    func status() -> Status {
+        queue.sync {
+            if hid != nil { return Status(state: "active", input: "coredevice", reason: nil) }
+            if !FileManager.default.fileExists(atPath: Self.pairingPath()) {
+                return Status(state: "unavailable", input: "xctest", reason: "no pairing record")
+            }
+            if Date() < cooldownUntil {
+                return Status(state: "cooldown", input: "xctest",
+                              reason: lastFailure ?? "recent failure")
+            }
+            return Status(state: "idle", input: "coredevice", reason: nil)
+        }
+    }
+
     // MARK: - FFI plumbing
 
     private enum DigitizerEvent {
@@ -150,7 +178,9 @@ final class CoreDeviceInput {
     private func runCall(_ call: (OpaquePointer) -> UnsafeMutablePointer<IdeviceFfiError>?) -> Bool {
         guard let hid else { return false }
         if let err = call(hid) {
-            Self.log.info("CoreDeviceInput: event failed: \(self.errorMessage(err))")
+            let message = errorMessage(err)
+            Self.log.info("CoreDeviceInput: event failed: \(message)")
+            lastFailure = "event: " + message
             teardownAll(cooldown: true)
             return false
         }
@@ -174,23 +204,24 @@ final class CoreDeviceInput {
         // writes the RP record to Application Support. In the all-in-one build
         // the runner shares the app's container and reads the same file; in the
         // separate-runner build the file is absent and the path stays off.
-        let base = FileManager.default.urls(for: .applicationSupportDirectory,
-                                            in: .userDomainMask)[0]
-        let pairingPath = base.appendingPathComponent("Pairing/pairingFile.plist").path
+        let pairingPath = Self.pairingPath()
         guard FileManager.default.fileExists(atPath: pairingPath) else {
             Self.log.info("CoreDeviceInput: no pairing record at \(pairingPath, privacy: .public) — staying on XCTest")
+            lastFailure = "no pairing record"
             cooldownUntil = Date().addingTimeInterval(Self.cooldown)
             return false
         }
         // The tunnel is down after every reboot; don't dial a dead address.
         guard Self.tunnelReachable() else {
             Self.log.info("CoreDeviceInput: tunnel \(Self.tunnelAddress, privacy: .public):\(Self.tunnelPort) unreachable — staying on XCTest")
+            lastFailure = "tunnel unreachable"
             cooldownUntil = Date().addingTimeInterval(Self.cooldown)
             return false
         }
 
         var pairing: OpaquePointer?
         guard rp_pairing_file_read(pairingPath, &pairing) == nil, let pairing else {
+            lastFailure = "unreadable pairing record"
             cooldownUntil = Date().addingTimeInterval(Self.cooldown)
             return false
         }
@@ -200,6 +231,8 @@ final class CoreDeviceInput {
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_port = Self.tunnelPort.bigEndian
         guard Self.tunnelAddress.withCString({ inet_pton(AF_INET, $0, &addr.sin_addr) }) == 1 else {
+            lastFailure = "bad tunnel address"
+            cooldownUntil = Date().addingTimeInterval(Self.cooldown)
             return false
         }
 
@@ -213,7 +246,9 @@ final class CoreDeviceInput {
             }
         }
         if let connectErr {
-            Self.log.info("CoreDeviceInput: tunnel failed: \(self.errorMessage(connectErr))")
+            let message = errorMessage(connectErr)
+            Self.log.info("CoreDeviceInput: tunnel failed: \(message)")
+            lastFailure = "tunnel: " + message
             teardownAll(cooldown: true)
             return false
         }
@@ -222,11 +257,14 @@ final class CoreDeviceInput {
 
         var newHid: OpaquePointer?
         if let err = hid_indigo_connect_rsd(adapter, handshake, &newHid) {
-            Self.log.info("CoreDeviceInput: hid connect failed: \(self.errorMessage(err))")
+            let message = errorMessage(err)
+            Self.log.info("CoreDeviceInput: hid connect failed: \(message)")
+            lastFailure = "hid: " + message
             teardownAll(cooldown: true)
             return false
         }
         hid = newHid
+        lastFailure = nil
         Self.log.info("CoreDeviceInput: session up (tunnel → RSD → indigo)")
         return true
     }
@@ -237,7 +275,9 @@ final class CoreDeviceInput {
         guard let adapter, let handshake else { return false }
         var newGate: OpaquePointer?
         if let err = display_gate_start_rsd(adapter, handshake, 1, &newGate) {
-            Self.log.info("CoreDeviceInput: media gate failed: \(self.errorMessage(err))")
+            let message = errorMessage(err)
+            Self.log.info("CoreDeviceInput: media gate failed: \(message)")
+            lastFailure = "gate: " + message
             teardownAll(cooldown: true)
             return false
         }
@@ -283,6 +323,14 @@ final class CoreDeviceInput {
         return text
     }
 
+    /// Where on-device pairing writes the RemotePairing record (mirrors
+    /// PairingFileStore.storedURL in LoopCtrlApp).
+    private static func pairingPath() -> String {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory,
+                                            in: .userDomainMask)[0]
+        return base.appendingPathComponent("Pairing/pairingFile.plist").path
+    }
+
     /// A TCP connect is the probe; LocalDevVPN answers or it doesn't.
     private static func tunnelReachable() -> Bool {
         var addr = sockaddr_in()
@@ -314,6 +362,12 @@ final class CoreDeviceInput {
 final class CoreDeviceInput {
     static let shared = CoreDeviceInput()
 
+    struct Status {
+        let state: String
+        let input: String
+        let reason: String?
+    }
+
     private static let log = Logger(subsystem: "top.ebato.loopctrl", category: "coredevice-input")
     func tap(x: Double, y: Double, width: Double, height: Double) -> Bool { false }
     func drag(fromX: Double, fromY: Double, toX: Double, toY: Double,
@@ -322,6 +376,9 @@ final class CoreDeviceInput {
     func button(usagePage: UInt64, usage: UInt64, holdMs: Int) -> Bool { false }
     func key(usage: UInt64) -> Bool { false }
     var usable: Bool { false }
+    func status() -> Status {
+        Status(state: "unavailable", input: "xctest", reason: "not linked")
+    }
 }
 
 #endif
