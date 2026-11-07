@@ -64,6 +64,10 @@
 - (BOOL)unlockScreenWithTimeout:(NSTimeInterval)timeout error:(NSError **)error {
     if (!_isLocked) return YES;
 
+    [[XCUIDevice sharedDevice] pressLockButton];
+    [NSThread sleepForTimeInterval:0.3];
+    if (!_isLocked) return YES;
+
     [[XCUIDevice sharedDevice] pressButton:XCUIDeviceButtonHome];
     [NSThread sleepForTimeInterval:1.0];
     [[XCUIDevice sharedDevice] pressButton:XCUIDeviceButtonHome];

@@ -1353,7 +1353,8 @@ class JSONRPCServer {
     private static let uiMutatingMethods: Set<String> = [
         "tap", "double_tap", "long_press", "swipe", "drag", "gesture", "drag_up", "drag_down",
         "drag_move", "scroll", "scroll_to_element", "tap_element", "find_and_tap", "page", "collect",
-        "type", "clear_text", "home", "lock", "unlock", "rotate", "app_switcher", "notification_center", "control_center",
+        "type", "clear_text", "home", "lock", "unlock", "power", "power_button", "action_button", "action", "volume",
+        "rotate", "app_switcher", "notification_center", "control_center",
         "launch_app", "activate_app", "terminate_app", "open_url",
     ]
 

@@ -323,6 +323,22 @@ struct RPCMethodRegistry {
             returns: "Lock state boolean"
         ),
         RPCMethodDef(
+            name: "power",
+            description: "Press the phone's real Side / Power button (HID Consumer 0x0C / Power 0x30). A short press (default 0.005s) turns the screen off when awake or wakes it to the Lock Screen when asleep; a longer duration (e.g. 0.8s) holds the Side button.",
+            params: [
+                RPCParamDef(name: "duration", type: "number", required: false, description: "Hold duration in seconds (default 0.005)"),
+            ],
+            returns: "{message, duration, locked, outcome}"
+        ),
+        RPCMethodDef(
+            name: "action_button",
+            description: "Press the iPhone 15 Pro+ Action button (HID Telephony 0x0B / RingEnable 0x2D). Default duration 0.5s triggers the bound action (Silent Mode, Flashlight, Camera, Shortcut, etc.); a short duration (0.05s) peeks the Dynamic Island hint.",
+            params: [
+                RPCParamDef(name: "duration", type: "number", required: false, description: "Hold duration in seconds (default 0.5)"),
+            ],
+            returns: "{message, duration, outcome}"
+        ),
+        RPCMethodDef(
             name: "volume",
             description: "Press the phone's real volume button: direction 'up' or 'down'. This is XCUIDevice's public volume button, so it changes the media volume and shows the system HUD; the reply confirms the press was accepted, not the resulting level. Not available on the Simulator.",
             params: [

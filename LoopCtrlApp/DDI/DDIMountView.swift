@@ -173,6 +173,11 @@ struct DDIMountView: View {
             .onChange(of: mounter.phase) { phase in
                 if case .mounted = phase { ddiStatus = DeveloperDiskImage.status() }
             }
+            .onChange(of: canMount) { ready in
+                if ready, !isMounted, case .idle = mounter.phase {
+                    Task { await mounter.mount() }
+                }
+            }
             .fileImporter(isPresented: $showPairingPicker,
                           allowedContentTypes: PairingFileStore.supportedContentTypes) { result in
                 switch result {

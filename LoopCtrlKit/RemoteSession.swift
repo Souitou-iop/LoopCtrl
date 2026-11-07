@@ -278,6 +278,10 @@ final class RemoteSession {
             return p["orientation"]?.stringValue ?? ""
         case "swipe", "scroll", "page":
             return p["direction"]?.stringValue ?? ""
+        case "volume":
+            return p["direction"]?.stringValue ?? ""
+        case "power", "power_button", "action_button", "action":
+            return p["duration"]?.doubleValue.map { $0 >= 0.2 ? String(format: "%.1fs", $0) : "" } ?? ""
         default:
             return ""
         }

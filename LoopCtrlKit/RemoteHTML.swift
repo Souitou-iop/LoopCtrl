@@ -189,11 +189,36 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   .labels-text .rail .more, .labels-both .rail .more { display: flex; }
 }
 .stage { position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; }
-.screen { position: relative; height: 100%; max-width: 100%; aspect-ratio: var(--ar, 0.46); border-radius: 22px; overflow: hidden;
+.screen { position: relative; height: 100%; max-width: calc(100% - 20px); margin: 0 10px; aspect-ratio: var(--ar, 0.46); border-radius: 22px; overflow: visible;
   background: #000; box-shadow: 0 0 0 1px var(--screen-edge), 0 12px 40px rgba(0,0,0,.18); touch-action: none; user-select: none; -webkit-user-select: none; }
-.screen > canvas, .screen > video { position: absolute; inset: 0; width: 100%; height: 100%; }
+.screen > canvas, .screen > video { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; }
 #video, #mse { object-fit: fill; }
 #overlay { cursor: pointer; }
+/* Physical side buttons along the left and right edges of the phone frame:
+   Action button + Volume Up/Down on the left, Side/Power button on the right. */
+.hwbtn { position: absolute; width: 18px; padding: 0; border: 0; background: transparent; cursor: pointer; z-index: 4;
+  display: flex; align-items: center; touch-action: none; -webkit-tap-highlight-color: transparent; outline: none; }
+.hwbtn.left { left: -18px; justify-content: flex-end; }
+.hwbtn.right { right: -18px; justify-content: flex-start; }
+.hwbtn i { display: block; width: 5px; height: 100%; background: var(--on-surface); opacity: .28;
+  box-shadow: 0 1px 3px rgba(0,0,0,.22);
+  transition: width .18s var(--spring), transform .14s var(--spring), opacity .18s, background-color .18s; }
+.hwbtn.left i { border-radius: 4px 1px 1px 4px; margin-right: 1px; }
+.hwbtn.right i { border-radius: 1px 4px 4px 1px; margin-left: 1px; }
+.hwbtn:hover i, .hwbtn:focus-visible i { width: 7px; opacity: .68; background: var(--primary); }
+.hwbtn:active i, .hwbtn.pressing i { opacity: .95; background: var(--primary); }
+.hwbtn.left:active i, .hwbtn.left.pressing i { transform: translateX(2.5px) scaleY(.96); }
+.hwbtn.right:active i, .hwbtn.right.pressing i { transform: translateX(-2.5px) scaleY(.96); }
+/* Positions from Apple's iPhone 17 dimensional drawing (product 149.61 mm,
+   active area 144.79 mm): the display starts 2.41 mm below the top. Button
+   bottoms: Action 34.08 mm, Volume Up 48.23, Volume Down 62.43; the Side
+   button starts at 55.32 mm and is 17.70 mm long. Expressed against the
+   display's height, which is what this frame draws. */
+#hw-action { top: 16.4%; height: 5.5%; min-height: 24px; max-height: 52px; }
+#hw-volup { top: 24.3%; height: 7.4%; min-height: 36px; max-height: 68px; }
+#hw-voldown { top: 34.0%; height: 7.4%; min-height: 36px; max-height: 68px; }
+#hw-power { top: 36.5%; height: 12.2%; min-height: 56px; max-height: 116px; }
+.screen.landscape .hwbtn { display: none; }
 /* A phone browser greys out a tapped element that looks clickable; on the
    screen that flashed the whole picture with every tap. */
 .screen, .screen * { -webkit-tap-highlight-color: transparent; }
@@ -213,7 +238,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 @keyframes ai-breathe { from { opacity: .55; } to { opacity: .95; } }
 @keyframes ai-pulse { 30% { opacity: 1; filter: blur(16px); } }
 .msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; color: rgba(255,255,255,.75);
-  font-size: 15px; line-height: 1.5; pointer-events: none; }
+  font-size: 15px; line-height: 1.5; pointer-events: none; border-radius: inherit; }
 .msg .box { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 18em; }
 .msg.paused { background: rgba(0,0,0,.72); pointer-events: auto; }
 .msg.paused svg { width: 40px; height: 40px; color: #fff; }
@@ -244,26 +269,38 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 
 /* devices: every phone opened here, to switch between */
 .devices { width: 252px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.devices .head { display: flex; align-items: center; padding: 14px 8px 6px 18px; }
+.devices .head { display: flex; align-items: center; gap: 2px; padding: 10px 8px 6px 18px; }
 .devices .head b { flex: 1; font-size: 14px; font-weight: 500; color: var(--small-title); }
+.devices .search { margin: 0 8px 6px; height: 38px; padding: 0 12px; border-radius: 12px; }
+.devices .search input { font-size: 14px; }
 .devlist { flex: 1; min-height: 0; overflow: auto; padding: 2px 8px 8px; display: flex; flex-direction: column; gap: 4px; }
-.dev { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 14px; cursor: pointer; color: inherit; text-decoration: none;
+.dev { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 14px; cursor: pointer; color: inherit; text-decoration: none;
   transition: background .15s; }
 .dev:hover { background: var(--press); }
 .dev.current { background: var(--tertiary-container); cursor: default; }
-.dev .ic { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; flex: none;
+.dev .ic { position: relative; width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; flex: none;
   background: var(--secondary-container); color: var(--on-secondary-container); }
 .dev.current .ic { background: var(--primary); color: var(--on-primary); }
 .dev .ic svg { width: 20px; height: 20px; }
+.dev .pin { position: absolute; right: -3px; top: -3px; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--primary); color: var(--on-primary); display: grid; place-items: center; box-shadow: 0 0 0 2px var(--card); }
+.dev.current .pin { background: var(--on-tertiary-container); color: var(--tertiary-container); box-shadow: 0 0 0 2px var(--tertiary-container); }
+.dev .pin svg { width: 9px; height: 9px; stroke-width: 2.4; }
 .dev .t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .dev .title { font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dev.current .title { color: var(--on-tertiary-container); }
-.dev .summary { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--summary); white-space: nowrap; }
+.dev .summary { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--summary); white-space: nowrap; overflow: hidden; }
+.dev .summary span { overflow: hidden; text-overflow: ellipsis; }
 .dev .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--actions); flex: none; }
 .dev .dot.on { background: #34c759; } .dev .dot.off { background: var(--error); }
-.dev .rm { width: 30px; height: 30px; opacity: 0; } .dev:hover .rm, .dev .rm:focus-visible { opacity: 1; }
-@media (hover: none) { .dev .rm { opacity: .7; } }
+.dev .acts { display: flex; align-items: center; gap: 2px; flex: none; margin-right: -4px; }
+.dev .act { width: 28px; height: 28px; opacity: 0; color: var(--summary); }
+.dev .act svg { width: 17px; height: 17px; }
+.dev:hover .act, .dev .act:focus-visible, .dev.current .act { opacity: .85; }
+.dev .act:hover { opacity: 1; color: var(--on-surface); }
+@media (hover: none) { .dev .act { opacity: .75; } }
 .devices .add { margin: 0 8px 8px; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.iconbtn.spinning svg { animation: spin .8s linear infinite; }
 .drawer-scrim { position: fixed; inset: 0; z-index: 14; background: var(--dim); animation: fade .25s both; }
 @keyframes from-left { from { transform: translateX(-100%); } }
 @keyframes from-right { from { transform: translateX(100%); } }
@@ -388,7 +425,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 @media (min-width: 1100px) {
   .devices { transition: width .45s var(--ease), margin-right .45s var(--ease), opacity .3s var(--ease), transform .45s var(--ease); }
   .devices > .head, .devices > .devlist { min-width: 252px; }
-  .devices > .add { min-width: 236px; }   /* 252 less its 8px margins */
+  .devices > .add, .devices > .search { min-width: 236px; }   /* 252 less its 8px margins */
   .devices.collapsed { width: 0; margin-right: -12px; opacity: 0; transform: translateX(-16px); pointer-events: none; visibility: hidden;
     transition: width .45s var(--ease), margin-right .45s var(--ease), opacity .25s var(--ease), transform .45s var(--ease), visibility 0s .45s; }
 }
@@ -534,13 +571,20 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   </header>
   <main class="body">
     <aside class="devices card" id="devices">
-      <div class="head"><b data-t="devicesTitle"></b>
+      <div class="head"><b id="devices-title" data-t="devicesTitle"></b>
+        <button class="iconbtn" id="devices-refresh" data-tip="refresh"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
         <button class="iconbtn" id="devices-close" data-tip="close"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button></div>
+      <label class="search" id="dev-search-wrap" hidden><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
+        <input id="dev-filter" type="search" autocomplete="off" spellcheck="false"></label>
       <div class="devlist" id="devlist"></div>
       <button class="btn add" id="dev-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span data-t="addDevice"></span></button>
     </aside>
     <section class="stage">
       <div class="screen" id="screen">
+        <button class="hwbtn left" id="hw-action" data-tip="actionBtn"><i></i></button>
+        <button class="hwbtn left" id="hw-volup" data-tip="volup"><i></i></button>
+        <button class="hwbtn left" id="hw-voldown" data-tip="voldown"><i></i></button>
+        <button class="hwbtn right" id="hw-power" data-tip="powerBtn"><i></i></button>
         <canvas id="video"></canvas>
         <video id="mse" muted playsinline autoplay disablepictureinpicture hidden></video>
         <canvas id="overlay"></canvas>
@@ -632,6 +676,9 @@ const T = {
   systemShotHint: ["Ask iOS to take a screenshot (saved to Photos)", "让 iOS 截图并存入相册"],
   systemShotSent: ["Screenshot requested — check Photos", "已请求截图，请在相册确认"],
   volup: ["Volume up", "音量+"], voldown: ["Volume down", "音量-"],
+  powerBtn: ["Power button (tap: sleep/wake, hold: Siri)", "电源键（点按息屏/亮屏，长按唤醒 Siri）"],
+  actionBtn: ["Action button", "操作按钮"],
+  power: ["Power", "电源键"], action: ["Action button", "操作按钮"],
   paused: ["The phone's owner paused remote control.\nNothing is visible or sent until they resume it on the phone.",
            "机主已在手机上暂停远程控制。\n在机主继续之前，看不到画面，也无法操作。"],
   hiddenTag: ["This screen blocks capture · showing outlines", "此画面禁止截屏 · 显示元素轮廓"],
@@ -664,9 +711,16 @@ const T = {
   replaying: ["Replaying %s/%s", "正在回放 %s/%s"], replayDone: ["Replay finished", "回放完成"], stop: ["Stop", "停止"],
   badFlow: ["That file isn't a LoopCtrl recording.", "这不是 LoopCtrl 的录制文件。"],
   devices: ["Devices", "切换设备"], devicesTitle: ["Devices", "设备"], addDevice: ["Add a device", "添加设备"],
-  addHint: ["Paste the address of another phone's control page.", "粘贴另一台手机控制页的地址。"],
+  addHint: ["Paste a control URL, IP(:port) or relay slug.", "输入控制页网址、IP(:端口) 或中继标识。"],
   badUrl: ["That isn't a web address.", "这不是一个网址。"], devOn: ["Online", "在线"], devOff: ["Offline", "离线"],
-  devOpen: ["Open to check", "打开后可查看"], devThis: ["This phone", "当前"], remove: ["Remove", "移除"], add: ["Add", "添加"],
+  devUnreachable: ["That phone isn't reachable from here.", "从这里连不上这台手机。"],
+  devOpen: ["Tap to open", "点击连接"], devThis: ["This phone", "当前"], remove: ["Remove", "移除"], add: ["Add", "添加"],
+  devNamePlaceholder: ["Alias (optional)", "备注名称（选填）"],
+  devAddrPlaceholder: ["https://…/remote or 192.168.x.x:8300", "https://…/remote 或 192.168.x.x:8300"],
+  devManage: ["Manage device", "设备管理"], devSave: ["Save", "保存"],
+  devPin: ["Pin to top", "置顶设备"], devUnpin: ["Unpin", "取消置顶"],
+  devNewTab: ["Open in new tab", "新标签页打开"], devCopyUrl: ["Copy address", "复制地址"],
+  devFilter: ["Search devices", "搜索设备"], devNoMatch: ["No matching devices", "没有匹配的设备"],
   g7t: ["Your phones", "多台手机"],
   g7: ["Every phone you've opened here is listed, with whether it's online: choose one to switch to it. In a narrow window, tap the phone's name.",
        "在这里打开过的手机都会列出来，并显示是否在线，点一下就能切换。窗口较窄时，点左上角的手机名称打开列表。"],
@@ -683,6 +737,7 @@ for (const el of document.querySelectorAll("[data-t]")) el.textContent = t(el.da
 for (const el of document.querySelectorAll("[data-tip]")) { el.title = t(el.dataset.tip); el.setAttribute("aria-label", el.title); }
 const $ = (id) => document.getElementById(id);
 $("tree-filter").placeholder = t("filter");
+$("dev-filter").placeholder = t("devFilter");
 
 // ───────────────────────────── settings ─────────────────────────────
 const prefs = {
@@ -828,7 +883,13 @@ async function ephemeralKey() {
 let device = { id: "", name: "" };
 let key = null, tok = "";        // the 32-byte pairing key and its id
 let clockSkew = 0;               // server minus local, seconds
-const storeName = () => "loopctrl.key." + (device.id || location.host);
+// The phone this page is showing, which is not always the one in the address
+// bar: a device in the list switches in place (see switchDevice). Every
+// request, stream and stored key follows this, not location.
+let activeURL = location.href.split("#")[0].split("?")[0];
+let activeBase = new URL("./", location.href).href;
+const activeHost = () => new URL(activeBase).host;
+const storeName = () => "loopctrl.key." + (device.id || activeHost());
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} },
@@ -853,9 +914,10 @@ const RPC_TIMEOUT = { stream_ack: 4000, stream_ticket: 8000 };
 // relay carries on). apiBase is "" for this page's own origin.
 let apiBase = "";
 const LAN_FETCH = { targetAddressSpace: "local" };
-const via = (base) => base ? LAN_FETCH : {};
-async function rpc(method, params = {}, retry = true, base = apiBase) {
+const via = (base) => base && location.protocol === "https:" && base.startsWith("http://") ? LAN_FETCH : {};
+async function rpc(method, params = {}, retry = true, base = "") {
   if (!key) throw new AuthError("not paired");
+  const target = base || apiBase || activeBase;
   const nonce = random(16), ts = Math.floor(Date.now() / 1000 + clockSkew);
   const body = enc.encode(JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }));
   const ct = keystreamXor(hmac(key, cat(enc.encode("loopctrl-v1|enc-req"), nonce)), nonce, body);
@@ -866,12 +928,12 @@ async function rpc(method, params = {}, retry = true, base = apiBase) {
   const abort = new AbortController(), timer = setTimeout(() => abort.abort(), limit);
   let r, j;
   try {
-    r = await fetch(base + "rpc", { method: "POST", headers: { "Content-Type": "application/json" }, signal: abort.signal,
-      body: JSON.stringify({ v: 1, tok, ts, nonce: hex(nonce), ct: b64(ct), tag: hex(tag) }), ...via(base) });
+    r = await fetch(target + "rpc", { method: "POST", headers: { "Content-Type": "application/json" }, signal: abort.signal,
+      body: JSON.stringify({ v: 1, tok, ts, nonce: hex(nonce), ct: b64(ct), tag: hex(tag) }), ...via(target) });
     j = await r.json().catch(() => ({}));
   } catch (e) {
     // The LAN went away under us: the relay from now on.
-    if (base && base === apiBase) dropDirect("rpc: " + (e.message || e));
+    if (apiBase && target === apiBase) dropDirect("rpc: " + (e.message || e));
     throw new Error(abort.signal.aborted ? "no answer from the phone" : (e.message || String(e)));
   } finally { clearTimeout(timer); }
   lastRTT = performance.now() - started;
@@ -903,7 +965,7 @@ async function pair() {
   const ua = navigator.userAgent;
   const browser = /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "Browser";
   const os = /iPhone|iPad/.test(ua) ? "iOS" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "";
-  const r = await fetch("pair", { method: "POST", headers: { "Content-Type": "application/json" },
+  const r = await fetch(activeBase + "pair", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ client_name: browser + (os ? " · " + os : ""), pub: b64(eph.pub) }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
@@ -1282,7 +1344,7 @@ async function runStream() {
       const quality = settings.quality;
       const encrypted = !!SUBTLE;
       const codec = await wantedCodec();
-      const base = apiBase;
+      const base = apiBase || activeBase;
       const r = await fetch(base + "stream?ticket=" + encodeURIComponent(ticket) + "&quality=" + quality + "&codec=" + codec + "&ack=1" +
         (encrypted ? "&enc=1" : ""), { signal: abort.signal, cache: "no-store", ...via(base) });
       if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
@@ -1356,6 +1418,7 @@ async function onConfig(cfg) {
   if (cfg.point_width) points = { w: cfg.point_width, h: cfg.point_height };
   codecName = /^(hvc1|hev1)/.test(cfg.codec || "") ? "H.265" : "H.264";
   screenEl.style.setProperty("--ar", cfg.width / cfg.height);
+  screenEl.classList.toggle("landscape", cfg.width > cfg.height);
   if (!player) player = CodecPlayer.ok() ? new CodecPlayer() : MsePlayer.ok() ? new MsePlayer() : null;
   if (!player) throw new Error("this browser can't play the stream");
   try { await player.configure(cfg); }
@@ -1603,8 +1666,8 @@ function rippleFx(x, y, color, delay = 0) {
     return true;
   };
 }
-// A sent swipe: its path waits faint, then a bead runs along it as the
-// phone replays it, and it fades. `hooks` hears from the action queue.
+// A sent swipe from another person: a contact point moving along the path
+// as the phone replays it, without a long trail.
 function replayFx(paths, color) {
   const dur = Math.max(...paths.map(pathEnd));
   const r = { start: 0, end: 0, gone: 0 };
@@ -1616,16 +1679,7 @@ function replayFx(paths, color) {
     const s = playing ? (now - r.start) / 1000 : 0;
     const out = r.gone ? 1 - (now - r.gone) / fade : playing && s > dur ? 1 - (s - dur) * 1000 / fade : 1;
     for (const path of paths) {
-      if (!playing) {
-        octx.save();
-        octx.setLineDash([px(2), px(6)]); octx.lineCap = "round";
-        octx.strokeStyle = rgba(color, .55 * out); octx.lineWidth = px(2.4);
-        octx.beginPath(); octx.moveTo(cx(path[0].x), cy(path[0].y));
-        for (const p of path) octx.lineTo(cx(p.x), cy(p.y));
-        octx.stroke(); octx.restore();
-        continue;
-      }
-      drawComet(path, Math.min(s, pathEnd(path)), color, out, .22);
+      if (!playing) continue;
       const h = pathAt(path, Math.min(s, pathEnd(path)));
       if (s <= pathEnd(path) + .05) drawContact(h.x, h.y, .4, color, .9 * out);
     }
@@ -1826,9 +1880,7 @@ function aiPathFx(fingers, at) {
     const s = (now - at) / 1000;
     if (s < 0) return true;
     if (s > dur + fade / 1000) return false;
-    const out = s > dur ? 1 - (s - dur) * 1000 / fade : 1;
     fingers.forEach((f, i) => {
-      drawRibbon(f, Math.min(s, pathEnd(f)), out, now);
       // The other fingers of a pinch: a ring each.
       if (i && s <= pathEnd(f)) {
         const p = pathAt(f, s);
@@ -1957,18 +2009,17 @@ function draw() {
       fx = fx.filter((f) => f(now));
       again = again || fx.length > 0;
     }
-    // Fingers on the screen: a comet behind each, the contact under it, and
+    // Fingers on the screen: the contact under each (hidden once dragged
+    // outside the screen frame so it never appears stuck on the border), and
     // for one that stays put a ring filling toward the long press (0.5 s).
     for (const f of fingers.values()) {
       if (f.up) continue;
-      const head = (now - gestureStart) / 1000;
-      const live = f.path.concat([{ ...f.path[f.path.length - 1], t: head }]);
-      if (f.moved) drawComet(live, head, WHITE);
-      if (pinch && f.moved) drawComet(mirror(live), head, WHITE, .7);
-      const p = f.path[f.path.length - 1], held = (now - f.down) / 1000;
-      drawContact(p.x, p.y, springOut(held / .25), WHITE);
-      if (pinch) { const m = mirror([f.path[0], p])[1]; drawContact(m.x, m.y, 1, WHITE, .7); }
-      if (!f.moved && fingers.size === 1 && held > .15) drawHoldRing(p.x, p.y, (held - .15) / .35, WHITE, held >= .5);
+      const raw = f.path[f.path.length - 1], p = clampPoint(raw, 1), held = (now - f.down) / 1000;
+      if (!f.outside) {
+        drawContact(p.x, p.y, springOut(held / .25), WHITE);
+        if (pinch) { const m = mirror([clampPoint(f.path[0], 1), p])[1]; drawContact(m.x, m.y, 1, WHITE, .7); }
+        if (!f.moved && fingers.size === 1 && held > .15) drawHoldRing(p.x, p.y, (held - .15) / .35, WHITE, held >= .5);
+      }
       again = true;
     }
     // The agent's cursor, on top: shown while it acts, fading once idle.
@@ -1992,7 +2043,8 @@ const actions = [];
 let acting = false;
 const LABELS = { tap: ["Tap", "点按"], long_press: ["Long press", "长按"], gesture: ["Gesture", "手势"], drag: ["Swipe", "滑动"],
   type: ["Typing", "输入"], home: ["Home", "主屏幕"], lock: ["Lock", "锁屏"], unlock: ["Wake", "唤醒"], launch_app: ["Opening the app", "打开 App"],
-  volume: ["Volume", "音量"], clipboard: ["Clipboard", "剪贴板"], keep_awake: ["Keep awake", "保持唤醒"], system_screenshot: ["Screenshot", "截图"],
+  power: ["Power", "电源键"], action_button: ["Action button", "操作按钮"], volume: ["Volume", "音量"],
+  clipboard: ["Clipboard", "剪贴板"], keep_awake: ["Keep awake", "保持唤醒"], system_screenshot: ["Screenshot", "截图"],
   rotate: ["Rotate", "旋转屏幕"], app_switcher: ["App switcher", "多任务"],
   notification_center: ["Notification Center", "通知中心"], control_center: ["Control Center", "控制中心"], double_tap: ["Double tap", "双击"], swipe: ["Swipe", "滑动"],
   scroll: ["Scroll", "滚动"], clear_text: ["Clear text", "清空文本"], activate_app: ["Switching app", "切换 App"],
@@ -2050,7 +2102,9 @@ function onState(s) {
   }
   state = { paused: !!s.paused, people: Array.isArray(s.people) ? s.people : [], hidden: !!s.hidden, source: s.source || "" };
   if (state.source !== was.source) { if (was.source) note("source", state.source); renderSub(); }
+  const prevLan = lanEndpoints.join(",");
   lanEndpoints = Array.isArray(s.lan) ? s.lan.filter((e) => typeof e === "string") : [];
+  if (lanEndpoints.join(",") !== prevLan && device.id) rememberThisDevice();
   if (apiBase && !lanEndpoints.some((e) => apiBase === "http://" + e + "/")) dropDirect("the phone left the LAN");
   else tryDirect();
   hiddenScreen = state.hidden && !state.paused;
@@ -2130,11 +2184,52 @@ $("people").addEventListener("click", async () => {
 });
 
 // ───────────────────────────── input ─────────────────────────────
-function toPoint(ev) {
+function rawPoint(ev) {
   const r = overlay.getBoundingClientRect();
-  const x = Math.min(Math.max((ev.clientX - r.left) / r.width, 0), 1) * points.w;
-  const y = Math.min(Math.max((ev.clientY - r.top) / r.height, 0), 1) * points.h;
-  return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
+  if (!r.width || !r.height) return { x: 0, y: 0, outside: true };
+  const u = (ev.clientX - r.left) / r.width, v = (ev.clientY - r.top) / r.height;
+  return {
+    x: Math.round(u * points.w * 10) / 10,
+    y: Math.round(v * points.h * 10) / 10,
+    outside: u < 0 || u > 1 || v < 0 || v > 1,
+  };
+}
+function clampPoint(p, pad = 1) {
+  const w = Math.max(points.w, pad * 2), h = Math.max(points.h, pad * 2);
+  return {
+    x: Math.round(Math.min(Math.max(p.x, pad), w - pad) * 10) / 10,
+    y: Math.round(Math.min(Math.max(p.y, pad), h - pad) * 10) / 10,
+  };
+}
+function toPoint(ev) { return clampPoint(rawPoint(ev), 1); }
+// Fit a gesture path that went outside the screen frame back into the safe
+// interior [pad, w - pad] × [pad, h - pad] while keeping its full travel
+// span and end-of-stroke velocity intact (rather than flattening out-of-bounds
+// motion against the screen edge and zeroing lift-off momentum).
+function fitPath(path, pad = 2) {
+  if (!path.length || !points.w || !points.h) return path;
+  const minB = pad, maxW = Math.max(points.w - pad, minB), maxH = Math.max(points.h - pad, minB);
+  const availW = Math.max(maxW - minB, 1), availH = Math.max(maxH - minB, 1);
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of path) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const spanX = maxX - minX, spanY = maxY - minY;
+  const outX = minX < minB || maxX > maxW, outY = minY < minB || maxY > maxH;
+  const dx = !outX ? 0 : spanX <= availW ? (minX < minB ? minB - minX : maxW - maxX) : 0;
+  const dy = !outY ? 0 : spanY <= availH ? (minY < minB ? minB - minY : maxH - maxY) : 0;
+  return path.map((p) => {
+    const nx = !outX ? p.x : spanX <= availW ? p.x + dx : minB + ((p.x - minX) / spanX) * availW;
+    const ny = !outY ? p.y : spanY <= availH ? p.y + dy : minB + ((p.y - minY) / spanY) * availH;
+    return {
+      x: Math.round(Math.min(Math.max(nx, minB), maxW) * 10) / 10,
+      y: Math.round(Math.min(Math.max(ny, minB), maxH) * 10) / 10,
+      t: p.t,
+    };
+  });
 }
 // Every finger on the screen, with its path. When the last one lifts: a tap
 // or long press for one finger that stayed put, otherwise one gesture with
@@ -2143,47 +2238,92 @@ function toPoint(ev) {
 const fingers = new Map();
 let gestureStart = 0, pinch = false;
 const since = () => Math.round((performance.now() - gestureStart)) / 1000;
+function pruneStaleFingers(isMouse) {
+  const now = performance.now();
+  for (const [id, g] of fingers.entries()) {
+    if ((isMouse && g.pointerType === "mouse") || now - g.down > 8000) fingers.delete(id);
+  }
+}
 overlay.addEventListener("pointerdown", (ev) => {
   if (!points.w || state.paused || (ev.button !== 0 && ev.pointerType === "mouse")) return;
+  pruneStaleFingers(ev.pointerType === "mouse");
   try { overlay.setPointerCapture(ev.pointerId); } catch (_) { /* a pointer the browser no longer tracks */ }
   if (!fingers.size) { gestureStart = performance.now(); pinch = ev.altKey && ev.pointerType === "mouse"; }
   const p = toPoint(ev);
-  fingers.set(ev.pointerId, { path: [{ x: p.x, y: p.y, t: since() }], moved: false, px: ev.clientX, py: ev.clientY, down: performance.now(), up: false });
+  fingers.set(ev.pointerId, {
+    path: [{ x: p.x, y: p.y, t: since() }],
+    moved: false, outside: false, pointerType: ev.pointerType,
+    px: ev.clientX, py: ev.clientY, down: performance.now(), up: false,
+  });
   draw();
 });
 // Every sample the browser has (a touch screen or a fast mouse reports
 // several per frame). The phone moves a finger in a straight line from one
 // sample to the next over the time between them, so a pause would play
 // back as a slow drift: one that ends gets a sample where it began.
-overlay.addEventListener("pointermove", (ev) => {
+function onPointerMove(ev) {
   const f = fingers.get(ev.pointerId);
-  if (!f) { if (treeOpen() || wireOn()) hover(toPoint(ev)); return; }
+  if (!f) {
+    if (ev.target === overlay && (treeOpen() || wireOn())) hover(toPoint(ev));
+    return;
+  }
+  if (f.up) return;
+  if (ev.pointerType === "mouse" && (ev.buttons & 1) === 0) { lift(ev, false); return; }
   if (!f.moved && Math.hypot(ev.clientX - f.px, ev.clientY - f.py) > 6) f.moved = true;
   if (!f.moved) return;
   const list = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [];
   for (const e of list.length ? list : [ev]) {
-    const p = toPoint(e), tt = Math.round(e.timeStamp && e.timeStamp >= gestureStart ? e.timeStamp - gestureStart : performance.now() - gestureStart) / 1000;
+    const p = rawPoint(e), tt = Math.round(e.timeStamp && e.timeStamp >= gestureStart ? e.timeStamp - gestureStart : performance.now() - gestureStart) / 1000;
+    f.outside = p.outside;
     const last = f.path[f.path.length - 1];
     if (tt - last.t < 0.008 || (p.x === last.x && p.y === last.y)) continue;
     if (tt - last.t > 0.05 && f.path.length > 1) f.path.push({ x: last.x, y: last.y, t: Math.round((tt - 0.016) * 1000) / 1000 });
     f.path.push({ x: p.x, y: p.y, t: tt });
   }
   draw();
-});
+}
+addEventListener("pointermove", onPointerMove, { passive: true });
 function lift(ev, cancelled) {
   const f = fingers.get(ev.pointerId);
-  if (!f) return;
-  if (cancelled) { fingers.clear(); draw(); return; }
-  const p = toPoint(ev), last = f.path[f.path.length - 1];
+  if (!f || f.up) return;
+  // If the browser cancels a touch because the finger crossed outside the
+  // element or viewport, still complete the swipe if the finger already moved.
+  if (cancelled && !f.moved) {
+    fingers.delete(ev.pointerId);
+    if (fingers.size && [...fingers.values()].every((g) => g.up)) finishGesture();
+    draw();
+    return;
+  }
+  const p = f.moved ? rawPoint(ev) : toPoint(ev), last = f.path[f.path.length - 1];
   // A finger that rested before lifting leaves with no speed; past a third
-  // of a second more rest changes nothing but how long the phone waits.
-  f.path.push({ x: p.x, y: p.y, t: Math.max(Math.min(since(), last.t + 0.35), last.t + 0.01) });
+  // of a second more rest changes nothing but how long the phone waits. A
+  // finger that lifts while still moving (< 80 ms since the last move sample)
+  // lifts right on that sample so iOS keeps its flick velocity.
+  const rest = since() - last.t;
+  if (f.path.length < 2 || p.x !== last.x || p.y !== last.y || rest >= 0.08) {
+    f.path.push({ x: p.x, y: p.y, t: Math.max(Math.min(since(), last.t + 0.35), last.t + 0.01) });
+  }
   f.up = true;
   if ([...fingers.values()].every((g) => g.up)) finishGesture();
   if (ev.pointerType === "mouse") focusKeyboard();
 }
-overlay.addEventListener("pointerup", (ev) => lift(ev, false));
-overlay.addEventListener("pointercancel", (ev) => lift(ev, true));
+addEventListener("pointerup", (ev) => lift(ev, false));
+addEventListener("pointercancel", (ev) => lift(ev, true));
+overlay.addEventListener("lostpointercapture", (ev) => {
+  const f = fingers.get(ev.pointerId);
+  if (!f || f.up) return;
+  if (ev.pointerType !== "mouse" || (ev.buttons & 1) === 0) lift(ev, false);
+});
+addEventListener("blur", () => {
+  if (!fingers.size) return;
+  if ([...fingers.values()].some((f) => f.moved)) {
+    for (const f of fingers.values()) f.up = true;
+    finishGesture();
+  } else {
+    fingers.clear();
+    draw();
+  }
+});
 function mirror(path) {
   const o = path[0];
   return path.map((q) => ({ x: Math.min(Math.max(2 * o.x - q.x, 1), points.w - 1),
@@ -2201,19 +2341,17 @@ function finishGesture() {
   fingers.clear();
   const single = list.length === 1 && !list[0].moved && !pinch;
   if (single) {
-    const p = list[0].path[0], held = (performance.now() - list[0].down) / 1000;
+    const p = clampPoint(list[0].path[0], 1), held = (performance.now() - list[0].down) / 1000;
     fx.push(rippleFx(p.x, p.y, WHITE));
     if (held >= 0.5) act("long_press", { x: p.x, y: p.y, duration: Math.min(held, 5), settle: false, manual: true });
     else act("tap", { x: p.x, y: p.y, settle: false, manual: true });
     draw();
     return;
   }
-  let paths = list.map((f) => f.path);
+  let paths = list.map((f) => fitPath(f.path, 2));
   if (pinch && paths.length === 1) paths.push(mirror(paths[0]));
   paths = paths.map(thin);
-  const replay = replayFx(paths, WHITE);
-  fx.push(replay.draw);
-  act("gesture", { fingers: paths, manual: true }, replay.hooks);
+  act("gesture", { fingers: paths, manual: true });
   draw();
 }
 overlay.addEventListener("contextmenu", (ev) => {
@@ -2267,12 +2405,10 @@ function sendWheel() {
   if (!side) for (const s of [.04, .08, .12]) path.push({ ...end, t: Math.round((dur + s) * 1000) / 1000 });
   else path.push({ ...end, t: Math.round((dur + .01) * 1000) / 1000 });
   wheeling = true;
-  const replay = replayFx([path], WHITE);
-  fx.push(replay.draw);
   const next = () => { wheeling = false; if (wheel && !wheelTimer) wheelTimer = setTimeout(sendWheel, 0); };
   act("gesture", { fingers: [path], manual: true }, {
-    start: replay.hooks.start, done: next,
-    drop: () => { replay.hooks.drop(); next(); },
+    done: next,
+    drop: next,
   });
   draw();
 }
@@ -2324,6 +2460,91 @@ async function openApp() {
     act("launch_app", { bundle_id: app.bundle_id });
   } catch (e) { if (e instanceof AuthError) needPair(); else snack(e.message); }
 }
+// Physical side buttons on the phone frame + toolbar actions for Power and
+// Action button. If the phone's runner predates the `power` RPC (-32601),
+// fall back to `is_locked` → `home` (wake) / `lock` (sleep) so the button
+// works even before the app binary is reinstalled.
+async function triggerPower(duration = 0.005) {
+  if (state.paused) return;
+  const dur = Math.min(Math.max(duration, 0.005), 5);
+  record("power", { duration: dur, manual: true });
+  try {
+    await rpc("power", { duration: dur, manual: true });
+    expectFrame();
+    setTimeout(askKeyframe, 350);
+  } catch (e) {
+    if (e && e.code === -32601) {
+      try {
+        const st = await rpc("is_locked");
+        if (st && st.locked) {
+          await rpc("home", { manual: true });
+          expectFrame();
+          setTimeout(askKeyframe, 350);
+          return;
+        }
+      } catch (e2) { actionFailed("power", e2); return; }
+    }
+    actionFailed("power", e);
+  }
+}
+async function triggerActionButton(duration = 0.5) {
+  if (state.paused) return;
+  const dur = Math.min(Math.max(duration, 0.05), 5);
+  act("action_button", { duration: dur, manual: true });
+}
+function bindHoldButton(btn, onRelease) {
+  if (!btn) return;
+  let downAt = 0;
+  const finish = (ev, cancelled) => {
+    if (!downAt) return;
+    const held = (performance.now() - downAt) / 1000;
+    downAt = 0;
+    btn.classList.remove("pressing");
+    if (!cancelled) onRelease(held, ev);
+  };
+  btn.addEventListener("pointerdown", (ev) => {
+    if (state.paused || (ev.pointerType === "mouse" && ev.button !== 0)) return;
+    ev.preventDefault(); ev.stopPropagation();
+    try { btn.setPointerCapture(ev.pointerId); } catch (_) {}
+    downAt = performance.now();
+    btn.classList.add("pressing");
+  });
+  btn.addEventListener("pointerup", (ev) => finish(ev, false));
+  btn.addEventListener("pointercancel", (ev) => finish(ev, true));
+  btn.addEventListener("lostpointercapture", (ev) => finish(ev, false));
+}
+function bindRepeatButton(btn, stepFn) {
+  if (!btn) return;
+  let active = false, delayTimer = 0, repeatTimer = 0;
+  const stop = () => {
+    if (!active) return;
+    active = false;
+    clearTimeout(delayTimer); clearInterval(repeatTimer);
+    btn.classList.remove("pressing");
+  };
+  btn.addEventListener("pointerdown", (ev) => {
+    if (state.paused || (ev.pointerType === "mouse" && ev.button !== 0)) return;
+    ev.preventDefault(); ev.stopPropagation();
+    try { btn.setPointerCapture(ev.pointerId); } catch (_) {}
+    active = true;
+    btn.classList.add("pressing");
+    stepFn();
+    delayTimer = setTimeout(() => {
+      if (active) repeatTimer = setInterval(stepFn, 220);
+    }, 360);
+  });
+  btn.addEventListener("pointerup", stop);
+  btn.addEventListener("pointercancel", stop);
+  btn.addEventListener("lostpointercapture", stop);
+}
+bindHoldButton($("hw-power"), (held) => triggerPower(held >= 0.55 ? Math.round(held * 10) / 10 : 0.005));
+bindHoldButton($("hw-action"), (held, ev) => {
+  const dur = ev && ev.shiftKey ? 0.05 : held >= 0.55 ? Math.round(held * 10) / 10 : 0.5;
+  triggerActionButton(dur);
+});
+bindRepeatButton($("hw-volup"), () => act("volume", { direction: "up", manual: true }));
+bindRepeatButton($("hw-voldown"), () => act("volume", { direction: "down", manual: true }));
+
 // One ordered list of rail actions. The first RAIL_PRIMARY stay on the bar;
 // the rest live in "More". The order is per browser, and Sort changes it.
 function runRailAction(id, b) {
@@ -2335,13 +2556,11 @@ function runRailAction(id, b) {
     case "controls": act("control_center", { manual: true }); break;
     case "volup": act("volume", { direction: "up", manual: true }); break;
     case "voldown": act("volume", { direction: "down", manual: true }); break;
+    case "power": triggerPower(0.005); break;
+    case "action": triggerActionButton(0.5); break;
     case "more": openMore(); break;
     case "clipboard": openClipboard(); break;
     case "shot": systemScreenshot(); break;
-    // No lock / wake buttons: locking the phone suspends the app that holds
-    // the relay tunnel (the page simply loses the phone), and waking it is a
-    // Home press that cannot get past a passcode. Both stay available to
-    // agents over RPC, where screen_locked says what actually happened.
     case "app": openApp(); break;
     case "keyboard":
       keyboardOn = !keyboardOn; if (b) b.classList.toggle("on", keyboardOn);
@@ -2461,6 +2680,8 @@ const RAIL_ACTIONS = [
   ["keyboard", "keyboard", '<rect x="3" y="6" width="18" height="12" rx="3"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/>'],
   ["voldown", "voldown", '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9a4 4 0 0 1 0 6"/>'],
   ["volup", "volup", '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 8a5 5 0 0 1 0 8M18.5 5.5a9 9 0 0 1 0 13"/>'],
+  ["power", "power", '<path d="M12 3v9"/><path d="M7.05 6.05a7 7 0 1 0 9.9 0"/>'],
+  ["action", "action", '<rect x="6" y="4" width="12" height="16" rx="6"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>'],
   ["notifications", "notifications", '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>'],
   ["controls", "controls", '<rect x="3" y="4" width="8" height="8" rx="4"/><rect x="13" y="4" width="8" height="8" rx="2.5"/><rect x="3" y="14" width="8" height="6" rx="2.5"/><rect x="13" y="14" width="8" height="6" rx="3"/>'],
   ["rotate", "rotate", '<rect x="3" y="10" width="14" height="10" rx="2.5"/><path d="M11 3.5a8 8 0 0 1 9 7.5"/><path d="M21 7.5l-1 3.5-3.4-1.3"/>'],
@@ -2682,7 +2903,7 @@ function guide() {
 let recording = null, replaying = null;
 // "wait" is never recorded, but a recording may be edited to wait for a text
 // ({method:"wait", params:{text, timeout}}) before its next step.
-const RECORDED = new Set(["tap", "long_press", "gesture", "drag", "type", "home", "lock", "unlock", "launch_app", "rotate", "app_switcher", "notification_center", "control_center", "volume", "wait"]);
+const RECORDED = new Set(["tap", "long_press", "gesture", "drag", "type", "home", "lock", "unlock", "power", "action_button", "launch_app", "rotate", "app_switcher", "notification_center", "control_center", "volume", "wait"]);
 function record(method, params) {
   if (!recording || replaying || !RECORDED.has(method)) return;
   const now = performance.now();
@@ -2770,59 +2991,367 @@ document.addEventListener("visibilitychange", () => {
 // Every phone opened in this browser on this site, to switch between. Under
 // a relay all phones share the site, so each one's page lists the others; a
 // phone at another address (a LAN or tailnet IP) can be added by its URL.
-// Switching is opening that phone's page: each keeps its own pairing key.
-const pageURL = () => location.href.split("#")[0].split("?")[0];
+// Choosing one switches this page to it: same URL, stream and pairing key,
+// without a reload. Each phone keeps its own pairing key.
+const pageURL = () => activeURL;
 const wide = matchMedia("(min-width: 1100px)");
-function deviceList() {
-  try { const l = JSON.parse(prefs.get("devices") || "[]"); return Array.isArray(l) ? l : []; } catch (_) { return []; }
+function readWindowDevices() {
+  try {
+    if (!window.name || !window.name.startsWith("{")) return [];
+    const parsed = JSON.parse(window.name);
+    return Array.isArray(parsed.loopctrl_devices) ? parsed.loopctrl_devices : [];
+  } catch (_) { return []; }
 }
-function saveDevices(list) { prefs.set("devices", JSON.stringify(list.slice(0, 30))); }
-function rememberThisDevice() {
-  const list = deviceList(), url = pageURL();
-  const at = list.findIndex((d) => (device.id && d.id === device.id) || d.url === url);
-  const entry = { id: device.id || url, name: device.name || location.host, url, via: relayed ? "relay" : "direct" };
+function writeWindowDevices(list) {
+  try {
+    let base = {};
+    if (window.name && window.name.startsWith("{")) {
+      try { base = JSON.parse(window.name) || {}; } catch (_) { base = {}; }
+    }
+    base.loopctrl_devices = list;
+    window.name = JSON.stringify(base);
+  } catch (_) {}
+}
+function mergeDeviceLists(primary, secondary) {
+  const out = primary.map((d) => ({ ...d }));
+  for (const s of secondary) {
+    if (!s || !s.url) continue;
+    const at = out.findIndex((d) => d.url === s.url);
+    if (at >= 0) {
+      out[at] = {
+        ...s,
+        ...out[at],
+        alias: out[at].alias || s.alias || "",
+        pinned: out[at].pinned ?? s.pinned ?? false,
+        model: out[at].model || s.model || "",
+        os: out[at].os || s.os || "",
+        name: (out[at].name && out[at].name !== new URL(out[at].url, location.href).host) ? out[at].name : (s.name || out[at].name),
+      };
+    } else {
+      out.push({ ...s });
+    }
+  }
+  return out.slice(0, 30);
+}
+function deviceList() {
+  let local = [];
+  try { const l = JSON.parse(prefs.get("devices") || "[]"); if (Array.isArray(l)) local = l; } catch (_) {}
+  const shared = readWindowDevices();
+  if (!shared.length) return local;
+  const merged = mergeDeviceLists(local, shared);
+  if (merged.length !== local.length) {
+    try { prefs.set("devices", JSON.stringify(merged)); } catch (_) {}
+  }
+  return merged;
+}
+function saveDevices(list) {
+  const trimmed = list.slice(0, 30);
+  prefs.set("devices", JSON.stringify(trimmed));
+  writeWindowDevices(trimmed);
+}
+function findDeviceIndex(list, d) {
+  const byUrl = list.findIndex((x) => x.url === d.url);
+  if (byUrl >= 0) return byUrl;
+  return d.id ? list.findIndex((x) => x.id === d.id) : -1;
+}
+function isCurrentDevice(d, list) {
+  const here = activeURL;
+  if (d.url === here) return true;
+  return !list.some((x) => x.url === here) && !!(device.id && d.id === device.id);
+}
+function currentDeviceDisplayName() {
+  const list = deviceList();
+  const entry = list.find((d) => isCurrentDevice(d, list));
+  return (entry && entry.alias) || device.name || (entry && entry.name) || "LoopCtrl";
+}
+function updateTopbarName() {
+  const display = currentDeviceDisplayName();
+  $("name").textContent = $("pair-name").textContent = display;
+  document.title = display;
+}
+function rememberThisDevice(extra = {}) {
+  const list = deviceList(), url = activeURL;
+  const at = list.findIndex((d) => d.url === url || (!list.some((x) => x.url === url) && device.id && d.id === device.id));
+  const prev = at >= 0 ? list[at] : {};
+  const entry = {
+    ...prev,
+    id: device.id || prev.id || url,
+    name: device.name || prev.name || activeHost(),
+    url,
+    via: relayed ? "relay" : "direct",
+    ...(lanEndpoints.length ? { lan: lanEndpoints.slice(0, 4) } : {}),
+    ...extra,
+    lastSeen: Date.now(),
+  };
   if (at >= 0) list[at] = entry; else list.push(entry);
   saveDevices(list);
+  updateTopbarName();
 }
-const devState = {};   // id → "on" | "off" | "unknown"
-async function probe(d) {
-  if (new URL(d.url).origin !== location.origin) return "unknown";   // whoami is same-origin only
-  const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 6000);
+function shortAddr(urlStr) {
   try {
-    const r = await fetch(new URL("whoami", d.url), { cache: "no-store", signal: abort.signal });
-    const who = r.ok ? await r.json() : null;
-    if (!who || (d.id && !d.id.startsWith("http") && who.device_id !== d.id)) return "off";
-    if (who.name && who.name !== d.name) {
-      const list = deviceList(), e = list.find((x) => x.url === d.url);
-      if (e) { e.name = who.name; e.id = who.device_id; saveDevices(list); }
+    const u = new URL(urlStr, location.href);
+    const m = u.pathname.match(/\/d\/([^/]+)\//);
+    if (m) return m[1];
+    return u.host.replace(/:8300$/, "");
+  } catch (_) { return urlStr; }
+}
+// Resolve a user-entered address: full URL, IP(:port), hostname, or a relay slug.
+function parseDeviceUrl(raw) {
+  const s = (raw || "").trim();
+  if (!s) return null;
+  if (/^[a-z0-9_-]{4,32}$/i.test(s) && !s.includes(".") && !s.includes(":")) {
+    const m = location.pathname.match(/^(.*\/d\/)[^/]+\/remote\/?$/);
+    if (m) return new URL(m[1] + s + "/remote", location.origin);
+    const parts = location.hostname.split(".");
+    if (parts.length >= 3 && location.protocol === "https:") {
+      const u = new URL(location.href);
+      u.hostname = [s, ...parts.slice(1)].join(".");
+      u.pathname = "/remote"; u.search = ""; u.hash = "";
+      return u;
     }
+  }
+  let candidate = s;
+  if (!/^[a-z]+:\/\//i.test(candidate)) {
+    const isLocal = /^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?(\/|$)/i.test(candidate) || /\.local(:\d+)?(\/|$)/i.test(candidate);
+    const hasPort = /:\d+(\/|$)/.test(candidate) || /\]:\d+/.test(candidate);
+    if (isLocal && !hasPort) {
+      const slash = candidate.indexOf("/");
+      candidate = slash >= 0 ? candidate.slice(0, slash) + ":8300" + candidate.slice(slash) : candidate + ":8300";
+    }
+    candidate = (isLocal ? "http://" : "https://") + candidate;
+  }
+  try {
+    const u = new URL(candidate);
+    if (!/^https?:$/.test(u.protocol)) return null;
+    u.hash = ""; u.search = "";
+    if (!/\/remote\/?$/.test(u.pathname)) u.pathname = u.pathname.replace(/\/?$/, "/remote");
+    return u;
+  } catch (_) { return null; }
+}
+const devKey = (d) => d.url || d.id;
+const devState = {};   // id → "on" | "off" | "unknown"
+const devRTT = {};     // id → ms
+async function probe(d) {
+  let u;
+  try { u = new URL(d.url, location.href); } catch (_) { return "off"; }
+  const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 6000);
+  const t0 = performance.now();
+  try {
+    if (u.origin === location.origin) {
+      const r = await fetch(new URL("whoami", u), { cache: "no-store", signal: abort.signal });
+      const who = r.ok ? await r.json() : null;
+      if (!who || (d.id && !d.id.startsWith("http") && who.device_id !== d.id)) return "off";
+      devRTT[devKey(d)] = Math.round(performance.now() - t0);
+      const list = deviceList(), idx = findDeviceIndex(list, d), e = idx >= 0 ? list[idx] : null;
+      if (e) {
+        let changed = false;
+        if (who.name && who.name !== e.name) { e.name = who.name; changed = true; }
+        if (who.device_id && who.device_id !== e.id) { e.id = who.device_id; changed = true; }
+        if (changed) saveDevices(list);
+      }
+      return "on";
+    }
+    // Cross-origin device: /remote/icon.png carries Access-Control-Allow-Origin: *.
+    if (location.protocol === "https:" && u.protocol === "http:") {
+      const r = await fetch(new URL("remote/icon.png", u), { cache: "no-store", signal: abort.signal, ...LAN_FETCH });
+      if (!r.ok) return "off";
+      devRTT[devKey(d)] = Math.round(performance.now() - t0);
+      return "on";
+    }
+    const r = await fetch(new URL("remote/icon.png", u), { cache: "no-store", signal: abort.signal });
+    if (!r.ok) return "off";
+    devRTT[devKey(d)] = Math.round(performance.now() - t0);
     return "on";
-  } catch (_) { return "off"; } finally { clearTimeout(timer); }
+  } catch (_) {
+    return (location.protocol === "https:" && u.protocol === "http:") ? "unknown" : "off";
+  } finally { clearTimeout(timer); }
 }
 const PHONE_ICON = icon('<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>');
+const PIN_ICON = icon('<path d="M12 3v18M7 8l5-5 5 5"/>');
+const MORE_DOTS_ICON = icon('<circle cx="6" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="18" cy="12" r="1.4" fill="currentColor"/>');
+const NEWTAB_ICON = icon('<path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>');
+function sortedDevices(list) {
+  return list.slice().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+}
 function renderDevices() {
-  const here = pageURL();
-  $("devlist").replaceChildren(...deviceList().map((d, k) => {
-    const current = d.url === here || (device.id && d.id === device.id);
-    const st = current ? (linkUp ? "on" : "off") : devState[d.id] || "unknown";
-    const row = el(current ? "div" : "a", { class: "dev" + (current ? " current" : ""), style: "--k:" + k, ...(current ? {} : { href: d.url }) },
-      el("div", { class: "ic" }, PHONE_ICON.cloneNode(true)),
-      el("div", { class: "t" }, el("div", { class: "title", text: d.name || d.url }),
+  const rawList = deviceList(), all = sortedDevices(rawList);
+  const q = ($("dev-filter")?.value || "").trim().toLowerCase();
+  const searchWrap = $("dev-search-wrap");
+  if (searchWrap) searchWrap.hidden = all.length < 4 && !q;
+  const nameCounts = {};
+  for (const d of all) {
+    const title = (d.alias || d.name || shortAddr(d.url)).trim();
+    nameCounts[title] = (nameCounts[title] || 0) + 1;
+  }
+  const titleEl = $("devices-title");
+  if (titleEl) {
+    const onCount = all.filter((d) => {
+      const cur = isCurrentDevice(d, rawList);
+      return cur ? linkUp : devState[devKey(d)] === "on";
+    }).length;
+    titleEl.textContent = all.length > 1 ? t("devicesTitle") + " (" + onCount + "/" + all.length + ")" : t("devicesTitle");
+  }
+  const filtered = q ? all.filter((d) => [d.alias, d.name, d.model, d.url, shortAddr(d.url)].filter(Boolean).join(" ").toLowerCase().includes(q)) : all;
+  if (!filtered.length) {
+    $("devlist").replaceChildren(el("div", { class: "node empty", style: "padding:12px 14px;cursor:default" },
+      el("div", { class: "t" }, el("b", { text: t("devNoMatch") }))));
+    return;
+  }
+  $("devlist").replaceChildren(...filtered.map((d, k) => {
+    const current = isCurrentDevice(d, rawList);
+    const dk = devKey(d);
+    const st = current ? (linkUp ? "on" : "off") : devState[dk] || "unknown";
+    const rtt = current ? (linkUp && lastRTT ? Math.round(lastRTT) : 0) : (st === "on" ? devRTT[dk] || 0 : 0);
+    const title = d.alias || d.name || shortAddr(d.url);
+    const addr = shortAddr(d.url);
+    const subParts = [t(d.via === "relay" ? "relay" : "direct")];
+    if (current) subParts.push(t("devThis"));
+    else if (st === "on") subParts.push(rtt ? rtt + " ms" : t("devOn"));
+    else subParts.push(t(st === "off" ? "devOff" : "devOpen"));
+    if ((d.alias && d.name && d.alias !== d.name) || (nameCounts[title] > 1 && addr && addr !== title)) {
+      subParts.push(d.alias && d.name && d.alias !== d.name ? d.name : addr);
+    } else if (d.model && d.model !== title) {
+      subParts.push(d.model);
+    }
+    const row = el("div", { class: "dev" + (current ? " current" : ""), style: "--k:" + k,
+      ...(current ? {} : { role: "link", tabindex: "0" }) },
+      el("div", { class: "ic" }, PHONE_ICON.cloneNode(true), d.pinned && el("i", { class: "pin" }, PIN_ICON.cloneNode(true))),
+      el("div", { class: "t" }, el("div", { class: "title", text: title }),
         el("div", { class: "summary" }, el("i", { class: "dot" + (st === "on" ? " on" : st === "off" ? " off" : "") }),
-          el("span", { text: [t(d.via === "relay" ? "relay" : "direct"),
-                              current ? t("devThis") : t(st === "on" ? "devOn" : st === "off" ? "devOff" : "devOpen")].join(" · ") }))),
-      !current && el("button", { class: "iconbtn rm", title: t("remove"), "aria-label": t("remove"), onclick: (ev) => {
-        ev.preventDefault(); ev.stopPropagation();
-        saveDevices(deviceList().filter((x) => x.url !== d.url));
-        renderDevices();
-      } }, icon('<path d="M6 6l12 12M18 6L6 18"/>')));
+          el("span", { text: subParts.join(" · ") }))),
+      el("div", { class: "acts" },
+        !current && el("button", { class: "iconbtn act", title: t("devNewTab"), "aria-label": t("devNewTab"), onclick: (ev) => {
+          ev.preventDefault(); ev.stopPropagation();
+          writeWindowDevices(deviceList());
+          window.open(d.url, "_blank");
+        } }, NEWTAB_ICON.cloneNode(true)),
+        el("button", { class: "iconbtn act", title: t("devManage"), "aria-label": t("devManage"), onclick: (ev) => {
+          ev.preventDefault(); ev.stopPropagation();
+          openDeviceDialog(d, current);
+        } }, MORE_DOTS_ICON.cloneNode(true))));
+    if (!current) {
+      row.addEventListener("click", (ev) => {
+        if (ev.target.closest(".acts")) return;
+        if (ev.metaKey || ev.ctrlKey || ev.shiftKey) {
+          writeWindowDevices(deviceList());
+          window.open(d.url, "_blank");
+          return;
+        }
+        switchDevice(d);
+      });
+      row.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter" && ev.key !== " ") return;
+        ev.preventDefault();
+        switchDevice(d);
+      });
+    }
+    row.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      openDeviceDialog(d, current);
+    });
     return row;
   }));
 }
-async function refreshDevices() {
-  const here = pageURL();
-  await Promise.all(deviceList().filter((d) => d.url !== here && d.id !== device.id).map(async (d) => { devState[d.id] = await probe(d); }));
+async function openDeviceDialog(d, current) {
+  const aliasInput = el("input", { class: "keyfield", type: "text", value: d.alias || "",
+    placeholder: (d.name && d.name !== shortAddr(d.url) ? d.name + " · " : "") + t("devNamePlaceholder"), autocomplete: "off", spellcheck: "false" });
+  aliasInput.style.fontFamily = "var(--font)";
+  const urlInput = el("input", { class: "keyfield", type: "url", value: d.url || "",
+    placeholder: t("devAddrPlaceholder"), autocomplete: "off", spellcheck: "false", ...(current ? { readonly: "readonly" } : {}) });
+  const list = deviceList(), idx = findDeviceIndex(list, d);
+  const actions = el("div", { class: "moregrid" });
+  const makeAct = (label, svgEl, onClick) => el("button", { class: "moreitem", style: "min-height:68px", onclick: onClick }, svgEl, el("span", { text: label }));
+  const body = [
+    (close) => {
+      const onEnter = (e) => { if (e.key === "Enter") close("save"); };
+      aliasInput.addEventListener("keydown", onEnter);
+      urlInput.addEventListener("keydown", onEnter);
+      actions.replaceChildren(
+        makeAct(d.pinned ? t("devUnpin") : t("devPin"), PIN_ICON.cloneNode(true), () => {
+          const cur = deviceList(), i = findDeviceIndex(cur, d), e = i >= 0 ? cur[i] : null;
+          if (e) { e.pinned = !e.pinned; saveDevices(cur); renderDevices(); }
+          close(null);
+        }),
+        makeAct(t("devCopyUrl"), icon('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>'), async () => {
+          try { await navigator.clipboard.writeText(d.url); }
+          catch (_) {
+            const area = el("textarea", { style: "position:fixed;opacity:0" });
+            area.value = d.url; document.body.append(area); area.select(); document.execCommand("copy"); area.remove();
+          }
+          close(null);
+          snack(t("copied"));
+        }),
+        makeAct(t("devNewTab"), NEWTAB_ICON.cloneNode(true), () => {
+          writeWindowDevices(deviceList());
+          window.open(d.url, "_blank");
+          close(null);
+        }),
+      );
+      if (idx > 0) {
+        actions.append(makeAct(t("moveUp"), icon('<path d="M12 19V5M6 11l6-6 6 6"/>'), () => {
+          const cur = deviceList(), i = findDeviceIndex(cur, d);
+          if (i > 0) { cur.splice(i - 1, 0, cur.splice(i, 1)[0]); saveDevices(cur); renderDevices(); }
+          close(null);
+        }));
+      }
+      if (idx >= 0 && idx < list.length - 1) {
+        actions.append(makeAct(t("moveDown"), icon('<path d="M12 5v14M6 13l6 6 6-6"/>'), () => {
+          const cur = deviceList(), i = findDeviceIndex(cur, d);
+          if (i >= 0 && i < cur.length - 1) { cur.splice(i + 1, 0, cur.splice(i, 1)[0]); saveDevices(cur); renderDevices(); }
+          close(null);
+        }));
+      }
+      if (!current) {
+        actions.append(makeAct(t("remove"), icon('<path d="M6 6l12 12M18 6L6 18"/>'), () => {
+          const cur = deviceList(), i = findDeviceIndex(cur, d);
+          if (i >= 0) cur.splice(i, 1);
+          saveDevices(cur);
+          renderDevices();
+          close(null);
+        }));
+      }
+      const wrap = el("div", { style: "display:flex;flex-direction:column;gap:10px" }, aliasInput, urlInput, actions);
+      return wrap;
+    }
+  ];
+  const res = await modal({
+    title: d.alias || d.name || shortAddr(d.url),
+    body,
+    buttons: [[t("close"), null], [t("devSave"), "save", true]],
+  });
+  if (res !== "save") return;
+  const cur = deviceList(), entryIdx = findDeviceIndex(cur, d), entry = entryIdx >= 0 ? cur[entryIdx] : null;
+  if (!entry) return;
+  entry.alias = aliasInput.value.trim();
+  if (!current && urlInput.value.trim()) {
+    const parsed = parseDeviceUrl(urlInput.value);
+    if (!parsed) return snack(t("badUrl"));
+    entry.url = parsed.href;
+    entry.via = parsed.protocol === "https:" ? "relay" : "direct";
+  }
+  saveDevices(cur);
+  if (current) updateTopbarName();
   renderDevices();
+  if (!current) refreshDevices();
+}
+let refreshingDevices = false, refreshQueued = false;
+async function refreshDevices() {
+  if (refreshingDevices) { refreshQueued = true; return; }
+  refreshingDevices = true;
+  const btn = $("devices-refresh");
+  if (btn) btn.classList.add("spinning");
+  const rawList = deviceList();
+  try {
+    await Promise.all(rawList.filter((d) => !isCurrentDevice(d, rawList)).map(async (d) => {
+      devState[devKey(d)] = await probe(d);
+      renderDevices();
+    }));
+  } finally {
+    refreshingDevices = false;
+    if (btn) btn.classList.remove("spinning");
+    renderDevices();
+    if (refreshQueued) { refreshQueued = false; refreshDevices(); }
+  }
 }
 setInterval(() => { if (!document.hidden && devicesShown()) refreshDevices(); }, 20000);
 const devicesShown = () => getComputedStyle($("devices")).display !== "none" && !$("devices").classList.contains("collapsed");
@@ -2848,11 +3377,14 @@ function setDevices(show) {
     const list = $("devlist");
     list.classList.add("entering");
     setTimeout(() => list.classList.remove("entering"), 700);
+    renderDevices();
     refreshDevices();
   }
 }
 $("title-btn").addEventListener("click", () => setDevices(!devicesShown()));
+$("devices-refresh").addEventListener("click", () => refreshDevices());
 $("devices-close").addEventListener("click", () => setDevices(false));
+$("dev-filter").addEventListener("input", () => renderDevices());
 wide.addEventListener("change", () => {
   $("devices").classList.remove("open");
   if (drawerScrim) { drawerScrim.remove(); drawerScrim = null; }
@@ -2861,23 +3393,33 @@ wide.addEventListener("change", () => {
 });
 $("devices").classList.toggle("collapsed", !!prefs.get("devicesCollapsed"));
 $("dev-add").addEventListener("click", async () => {
-  const input = el("input", { class: "keyfield", type: "url", placeholder: "https://…/remote", autocomplete: "off", spellcheck: "false" });
-  const err = el("div", { class: "err" });
+  const input = el("input", { class: "keyfield", type: "text", placeholder: t("devAddrPlaceholder"), autocomplete: "off", spellcheck: "false" });
+  const aliasInput = el("input", { class: "keyfield", type: "text", placeholder: t("devNamePlaceholder"), autocomplete: "off", spellcheck: "false" });
+  aliasInput.style.fontFamily = "var(--font)";
   const value = await modal({ title: t("addDevice"), body: [el("p", { text: t("addHint") }), (close) => {
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") close("go"); });
-    return input;
-  }, err], buttons: [[t("close"), null], [t("add"), "go", true]] });
+    const onEnter = (e) => { if (e.key === "Enter") close("go"); };
+    input.addEventListener("keydown", onEnter);
+    aliasInput.addEventListener("keydown", onEnter);
+    return el("div", { style: "display:flex;flex-direction:column;gap:10px" }, input, aliasInput);
+  }], buttons: [[t("close"), null], [t("add"), "go", true]] });
   if (value !== "go" || !input.value.trim()) return;
-  let u;
-  try { u = new URL(input.value.trim()); if (!/^https?:$/.test(u.protocol)) throw 0; } catch (_) { return snack(t("badUrl")); }
-  u.hash = ""; u.search = "";
-  if (!/\/remote\/?$/.test(u.pathname)) u.pathname = u.pathname.replace(/\/?$/, "/remote");
+  const u = parseDeviceUrl(input.value);
+  if (!u) return snack(t("badUrl"));
+  const alias = aliasInput.value.trim();
   const list = deviceList();
-  if (!list.some((d) => d.url === u.href)) {
-    list.push({ id: u.href, name: u.pathname.match(/\/d\/([^/]+)\//)?.[1] || u.host, url: u.href,
-                via: u.protocol === "https:" ? "relay" : "direct" });
-    saveDevices(list);
+  const existing = list.find((d) => d.url === u.href);
+  if (existing) {
+    if (alias) existing.alias = alias;
+  } else {
+    list.push({
+      id: u.href,
+      name: u.pathname.match(/\/d\/([^/]+)\//)?.[1] || u.host.replace(/:8300$/, ""),
+      alias,
+      url: u.href,
+      via: u.protocol === "https:" ? "relay" : "direct",
+    });
   }
+  saveDevices(list);
   setDevices(true);
 });
 // Followed in other tabs too: a phone added or renamed there shows up here.
@@ -2913,14 +3455,32 @@ async function begin(adopt = "") {
   setMessage(t("connecting"));
   try {
     const info = await rpc("device_info");
+    // A phone first reached by address has no id yet: its key was stored
+    // under the host. Now that it named itself, file the key under that id
+    // so the same phone is known at every address it answers on.
+    const liveId = info.device_id || device.id || "";
+    if (liveId && liveId !== device.id) {
+      const held = key ? hex(key) : "";
+      const from = storeName();
+      device.id = liveId;
+      if (held) store.set(storeName(), held);
+      if (from !== storeName() && store.get(from) === held) store.del(from);
+    }
     if (adopt) store.set(storeName(), adopt);
     if (info.point_width) points = { w: info.point_width, h: info.point_height };
-    if (info.device_name || info.name) $("name").textContent = info.device_name || info.name;
+    if (info.device_name || info.name) device.name = info.device_name || info.name;
+    rememberThisDevice({
+      ...(info.model ? { model: info.model } : {}),
+      ...(info.system_version ? { os: info.system_version } : {}),
+    });
+    renderDevices();
     const c = await rpc("control");
     onState({ ...state, paused: c.paused, people: c.people });
     if (!prefs.get("guided")) setTimeout(guide, 400);
   } catch (e) {
     if (e instanceof AuthError) return needPair();
+    setMessage(e.message || String(e), false);
+    return;
   }
   runStream();
 }
@@ -2933,35 +3493,52 @@ if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWor
 function waitForPhone() {
   setLink(false);
   setMessage(t("phoneOffline"), true);
+  const gen = connectGen;
   const timer = setInterval(async () => {
+    if (gen !== connectGen) { clearInterval(timer); return; }
     try {
-      const r = await fetch("whoami", { cache: "no-store" });
-      if (r.ok) { clearInterval(timer); location.reload(); }
+      const r = await fetch(activeBase + "whoami", { cache: "no-store" });
+      if (r.ok) { clearInterval(timer); connectActive(); }
     } catch (_) {}
   }, 5000);
 }
 
-(async () => {
+// Bring the page onto activeURL: learn who answers there, then take the key
+// this browser keeps for that phone. The address bar may still name another
+// device, so nothing here reads location except to compare origins.
+let connectGen = 0;
+async function connectActive() {
+  const gen = ++connectGen;
+  const sameOrigin = new URL(activeBase).origin === location.origin;
   let reachable = false;
-  try {
-    const r = await fetch("whoami", { cache: "no-store" });
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    device = await r.json();
-    device.id = device.device_id || "";
-    relayed = device.via === "relay";
+  if (sameOrigin) {
+    try {
+      const r = await fetch(activeBase + "whoami", { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const who = await r.json();
+      if (gen !== connectGen) return;
+      device = { id: who.device_id || "", name: who.name || "" };
+      relayed = who.via === "relay";
+      reachable = true;
+    } catch (_) {}
+  } else {
+    // /whoami is same-origin only — deliberately, it carries the device id.
+    // A listed phone at another origin is reached by its own key instead;
+    // the RPC reply is what says whether it is really there.
+    relayed = new URL(activeBase).protocol === "https:";
     reachable = true;
-  } catch (_) {
+  }
+  if (!reachable) {
     // Offline: what this browser remembers of the phone.
-    const known = deviceList().find((d) => d.url === pageURL());
+    const known = deviceList().find((d) => d.url === activeURL);
     if (known) {
-      device = { id: known.id.startsWith("http") ? "" : known.id, name: known.name };
+      device = { id: String(known.id || "").startsWith("http") ? "" : known.id, name: known.name };
       relayed = known.via === "relay";
     }
   }
   if (!settings.quality) settings.quality = relayed ? "medium" : "high";
-  $("name").textContent = $("pair-name").textContent = device.name || "LoopCtrl";
-  document.title = (device.name || "LoopCtrl");
   if (reachable) rememberThisDevice();
+  updateTopbarName();
   renderDevices();
   if (devicesShown()) refreshDevices();
   renderSub();
@@ -2969,11 +3546,90 @@ function waitForPhone() {
   // Pages before this one kept the key under the site's name, which every
   // phone on one relay shares. Try such a key once; keep it under this
   // phone's id if the phone takes it.
-  const own = store.get(storeName()), legacy = store.get("loopctrl.key." + location.host);
+  const own = store.get(storeName()), legacy = store.get("loopctrl.key." + activeHost());
   const saved = own || legacy;
   if (saved && /^[0-9a-f]{64}$/.test(saved)) { useKey(saved); begin(!own && device.id ? saved : ""); }
   else needPair();
-})();
+}
+
+// Choose another phone from the list: same page, same tab, new device. The
+// key is per phone, not per origin, so a phone reached through the relay can
+// be driven on its LAN address and vice versa without pairing again.
+let switching = false;
+async function canReach(u) {
+  const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 2500);
+  try {
+    const r = await fetch(new URL("remote/icon.png", u), { cache: "no-store", signal: abort.signal,
+      ...(location.protocol === "https:" && u.protocol === "http:" ? LAN_FETCH : {}) });
+    return r.ok;
+  } catch (_) { return false; } finally { clearTimeout(timer); }
+}
+async function switchDevice(d) {
+  if (!d || switching) return;
+  const list = deviceList();
+  if (isCurrentDevice(d, list)) return;
+  if (devState[devKey(d)] === "off") { snack(t("devUnreachable")); return; }
+  let u;
+  try { u = new URL(d.url, location.href); } catch (_) { return snack(t("badUrl")); }
+  const priorKey = key ? hex(key) : "", priorId = device.id;
+  switching = true;
+  try {
+    if (!(await canReach(u))) return snack(t("devUnreachable"));
+    clearTimeout(hideTimer);
+    dropActions();
+    stopStream();
+    if (player) { try { player.close(); } catch (_) {} player = null; }
+    key = null; tok = "";
+    apiBase = ""; lanEndpoints = []; lanTryAt = 0; lanTrying = false;
+    state = { paused: false, people: [], hidden: false, source: "" };
+    linkUp = false; shownAt = 0; lastRTT = 0; fps = 0; decoded = 0; framesIn = 0; lastDecoded = 0;
+    codecName = ""; points = { w: 0, h: 0 }; pageVersion = 0; geometryOff = 0;
+    activeURL = u.href;
+    activeBase = new URL("./", u).href;
+    relayed = u.protocol === "https:";
+    const samePhone = !!priorId && d.id === priorId;
+    device = { id: samePhone ? priorId : (String(d.id || "").startsWith("http") ? "" : d.id || ""),
+               name: d.alias || d.name || shortAddr(u.href) };
+    // The address bar follows when the origin stays the same; a phone at
+    // another origin cannot be put there without a navigation, and the point
+    // of switching is not to make one.
+    if (u.origin === location.origin) {
+      try { history.replaceState(null, "", u.pathname + u.search); } catch (_) {}
+    }
+    // A reload (a pushed page update, say) has to come back to the phone the
+    // person chose, not the one still named in the address bar.
+    try { sessionStorage.setItem("loopctrl.switch", JSON.stringify({ from: location.href, url: activeURL })); } catch (_) {}
+    $("pair").hidden = true;
+    $("paused-msg").hidden = true;
+    $("hidden-tag").hidden = true;
+    setMessage(t("connecting"));
+    updateTopbarName();
+    renderDevices();
+    renderSub();
+    const own = store.get(storeName());
+    const legacy = store.get("loopctrl.key." + u.host);
+    const saved = own || legacy || (samePhone ? priorKey : "");
+    if (saved && /^[0-9a-f]{64}$/.test(saved)) { useKey(saved); begin(!own && device.id ? saved : ""); }
+    else needPair();
+  } finally { switching = false; }
+}
+
+// A tab that was switched keeps its phone across reloads. Only for the page
+// it was switched on: opening another phone's URL here must win.
+try {
+  const last = JSON.parse(sessionStorage.getItem("loopctrl.switch") || "null");
+  if (last && last.from === location.href && last.url && last.url !== activeURL) {
+    const known = deviceList().find((d) => d.url === last.url);
+    if (known) {
+      activeURL = known.url;
+      activeBase = new URL("./", activeURL).href;
+      device = { id: String(known.id || "").startsWith("http") ? "" : known.id, name: known.alias || known.name || "" };
+      relayed = new URL(activeBase).protocol === "https:";
+    }
+  }
+} catch (_) {}
+
+connectActive();
 })();
 </script>
 </body>

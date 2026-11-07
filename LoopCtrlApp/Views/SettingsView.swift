@@ -19,6 +19,8 @@ struct SettingsView: View {
     @State private var showMountSheet = false
     @State private var showOptions = false
     @State private var showAddRemote = false
+    @StateObject private var autoMounter = DDIMounter()
+    @State private var autoProbing = false
     /// Settings › System broadcast; re-read when Settings closes.
     @State private var broadcastOn = SystemBroadcast.enabled
     /// DEBUG `-remoteShow list|connection`: a 远程服务 page pushed at launch.
@@ -180,6 +182,26 @@ struct SettingsView: View {
         broadcastOn = SystemBroadcast.enabled
         ddi = DeveloperDiskImage.status()
         hasPairingFile = PairingFileStore.exists
+        tryAutoRemountIfReady()
+    }
+
+    /// If iOS unloaded the DDI cryptex in the background while pairing, cached
+    /// image files, Wi-Fi and the tunnel are all already ready, remount it
+    /// automatically on the home screen without reopening the 5-step wizard.
+    private func tryAutoRemountIfReady() {
+        guard !ddi.isMounted, !showMountSheet, !autoMounter.isRunning, !autoProbing,
+              hasPairingFile, DeveloperDiskImageStore.isComplete,
+              NetworkTypeMonitor.shared.current == .wifi else { return }
+        autoProbing = true
+        Task { @MainActor in
+            defer { autoProbing = false }
+            guard !ddi.isMounted, !showMountSheet, !autoMounter.isRunning else { return }
+            guard await LocalDevVPN.probeTunnel() == .reachable else { return }
+            guard !ddi.isMounted, !showMountSheet, !autoMounter.isRunning else { return }
+            loopctrlLog("Auto-remounting DDI on home screen (prerequisites and tunnel ready)")
+            await autoMounter.mount()
+            ddi = DeveloperDiskImage.status()
+        }
     }
 
     // MARK: - Status
@@ -195,8 +217,8 @@ struct SettingsView: View {
             Divider().padding(.leading, 50)
             StatusRow(icon: "externaldrive",
                       title: L10n.ui(.diskImageLabel),
-                      value: ddi.localizedSummary,
-                      tone: ddi.isMounted ? .good : .warning)
+                      value: autoMounter.isRunning ? L10n.ui(.mounting) : ddi.localizedSummary,
+                      tone: ddi.isMounted ? .good : (autoMounter.isRunning ? .busy : .warning))
             Divider().padding(.leading, 50)
             serviceRow
         }
@@ -348,6 +370,12 @@ struct SettingsView: View {
                 primaryLabel(L10n.t(.stopServerButton), systemImage: "stop.fill")
             }
             .primaryAction(.red)
+        } else if autoMounter.isRunning {
+            Button {} label: {
+                primaryLabel(L10n.ui(.mounting), systemImage: "externaldrive.badge.plus")
+            }
+            .primaryAction(.accentColor)
+            .disabled(true)
         } else if !ddi.isMounted {
             Button {
                 showMountSheet = true

@@ -478,6 +478,7 @@ class ActionHandler {
                 "gesture needs fingers: 1 to 5 paths, each [{x, y, t}, …] (points; t in seconds from the start).",
                 data: ["outcome": .string("not_sent"), "retry_safe": .bool(true)]))
         }
+        let isManual = params?["manual"]?.boolValue == true
         var fingers: [[(point: CGPoint, t: Double)]] = []
         for raw in rawFingers {
             guard case .array(let samples) = raw, (1...400).contains(samples.count) else {
@@ -491,13 +492,25 @@ class ActionHandler {
                     return (nil, JSONRPCError(code: -32602, message: "Each point is {x, y, t}.",
                                               data: ["outcome": .string("not_sent"), "retry_safe": .bool(true)]))
                 }
-                if let err = validateCoordinate(x: x, y: y, context: "gesture") {
-                    return (nil, JSONRPCError(code: err.code, message: err.message,
-                                              data: (err.data ?? [:]).merging(["outcome": .string("not_sent"),
-                                                                               "retry_safe": .bool(true)]) { a, _ in a }))
+                let pt: CGPoint
+                if isManual {
+                    // Manual gestures from the live control page clamp into the
+                    // screen's safe interior rather than failing when a drag crosses
+                    // the frame boundary or races a rotation.
+                    _ = validateCoordinate(x: x, y: y, context: "gesture")
+                    let size = pointSize
+                    let w = max(Double(size.width), 2), h = max(Double(size.height), 2)
+                    pt = CGPoint(x: min(max(x, 1), w - 1), y: min(max(y, 1), h - 1))
+                } else {
+                    if let err = validateCoordinate(x: x, y: y, context: "gesture") {
+                        return (nil, JSONRPCError(code: err.code, message: err.message,
+                                                  data: (err.data ?? [:]).merging(["outcome": .string("not_sent"),
+                                                                                   "retry_safe": .bool(true)]) { a, _ in a }))
+                    }
+                    pt = CGPoint(x: x, y: y)
                 }
                 let t = min(max(o["t"]?.doubleValue ?? lastT, lastT), 10)
-                path.append((CGPoint(x: x, y: y), t))
+                path.append((pt, t))
                 lastT = t
             }
             fingers.append(path)
@@ -1315,6 +1328,10 @@ class ActionHandler {
             return unlock()
         case "is_locked":
             return isLocked()
+        case "power", "power_button":
+            return powerButton(cmd)
+        case "action_button", "action":
+            return actionButton(cmd)
         case "volume":
             return volume(cmd)
         case "clipboard":
@@ -2692,25 +2709,14 @@ class ActionHandler {
         let before = resolveForegroundBundleId()
         let springboard = "com.apple.springboard"
 
-        // `press(.home)` normally blocks until SpringBoard is frontmost — but that
-        // wait lives in XCTest's quiescence machinery, which this runner no-ops
-        // globally (see QuiescenceDisabler) to stop taps stalling for seconds. So
-        // the press is delivered and we return before the transition happens,
-        // which reads as "Home did nothing". Verify the result ourselves instead
-        // of reporting success blind.
-        _ = ObjCException.catching { XCUIDevice.shared.press(.home) }
-
         // Verify via the app we are trying to LEAVE, not via "is SpringBoard
-        // frontmost". The private activeApplications detector returns nil on
-        // iOS 26 whatever is in front, so a check built on it passes instantly
-        // and reports success for a press that did nothing. XCUIApplication.state
-        // is public, works, and answers the question that actually matters: did
-        // the app we were in stop being foreground?
+        // frontmost". XCUIApplication.state is public and answers the question
+        // that actually matters: did the app we were in stop being foreground?
         if springboardPID == 0 { springboardPID = ForegroundApp.processID(forBundleID: springboard) }
         func leftForeground() -> Bool {
             guard let bid = before, bid != springboard else {
                 // Nothing was in front (already home), or SpringBoard itself —
-                // there is nothing to leave, so the press has nothing to prove.
+                // there is nothing to leave.
                 return true
             }
             // SpringBoard's pid in front is direct proof. The app's own state
@@ -2721,29 +2727,26 @@ class ActionHandler {
             return state != .foreground
         }
 
-        // Poll rather than sleep a fixed interval: the animation is ~300-500ms but
-        // varies with what's on screen, and a fixed wait either lies or wastes time.
         var landed = false
-        for _ in 0..<20 {
-            if leftForeground() { landed = true; break }
-            usleep(100_000)
-        }
-
-        // Fallback: activate SpringBoard directly. `press(.home)` is a no-op on
-        // iOS 26 here — the button event goes nowhere on a device that has no
-        // physical Home button — whereas activating SpringBoard as an app is a
-        // normal foreground switch and does not depend on button synthesis.
-        if !landed {
-            // This is what WebDriverAgent actually ships for its home-screen
-            // route (fb_switchToSystemApplicationWithError): activate SpringBoard
-            // as an app, launching it if it isn't running. WDA dropped
-            // pressButton: for this years ago precisely because the press was
-            // async and unreliable — which matches what this device does.
-            LoopCtrlUITests.logBuffer.append("🏠 press(.home) had no effect — activating SpringBoard instead")
+        if before == springboard {
+            landed = true
+        } else {
+            // Activate SpringBoard first: this is what WebDriverAgent ships for
+            // its home-screen route, and it works on phones where `press(.home)`
+            // goes nowhere. The press below stays as a fallback for devices that
+            // predate app activation.
             _ = ObjCException.catching { _ = ForegroundApp.activateOrLaunchBundleID(springboard) }
-            for _ in 0..<20 {
+            for _ in 0..<12 {
                 if leftForeground() { landed = true; break }
-                usleep(100_000)
+                usleep(80_000)
+            }
+            if !landed {
+                LoopCtrlUITests.logBuffer.append("🏠 activating SpringBoard had no effect — pressing Home")
+                _ = ObjCException.catching { XCUIDevice.shared.press(.home) }
+                for _ in 0..<12 {
+                    if leftForeground() { landed = true; break }
+                    usleep(80_000)
+                }
             }
         }
 
@@ -2767,6 +2770,9 @@ class ActionHandler {
 
     private func lock() -> ([String: JSONValue]?, JSONRPCError?) {
         let monitor = LockStateMonitor.shared()
+        if monitor.isLocked {
+            return (["message": .string("Screen locked")], nil)
+        }
         do {
             try monitor.lockScreen(withTimeout: 5.0)
             return (["message": .string("Screen locked")], nil)
@@ -2777,6 +2783,9 @@ class ActionHandler {
 
     private func unlock() -> ([String: JSONValue]?, JSONRPCError?) {
         let monitor = LockStateMonitor.shared()
+        if !monitor.isLocked {
+            return (["message": .string("Screen unlocked")], nil)
+        }
         do {
             try monitor.unlockScreen(withTimeout: 5.0)
             return (["message": .string("Screen unlocked")], nil)
@@ -2792,6 +2801,88 @@ class ActionHandler {
     private func isLocked() -> ([String: JSONValue]?, JSONRPCError?) {
         let locked = LockStateMonitor.shared().isLocked
         return (["locked": .bool(locked)], nil)
+    }
+
+    /// `power {duration?}`: press the physical Side / Power button. A short
+    /// press (default 0.005 s) sleeps an awake screen or wakes a sleeping one;
+    /// a long press (e.g. 0.8 s) invokes Siri / side-button hold.
+    ///
+    /// Short presses go through XCTest's own `pressLockButton`. The HID
+    /// Consumer event (`kHIDPage_Consumer` 0x0C / `kHIDUsage_Csmr_Power` 0x30)
+    /// turns a lit screen off but is ignored while the display sleeps, so it
+    /// could never wake the phone back up. `pressLockButton` is the same
+    /// synthesis `LockStateMonitor` already uses to unlock, and it is not
+    /// gated on the main thread — the main thread is busy capturing the
+    /// screen, which is what made this call take five seconds.
+    private func powerButton(_ cmd: ActionCommand) -> ([String: JSONValue]?, JSONRPCError?) {
+        let duration = min(max(cmd.duration ?? 0.005, 0.005), 5.0)
+        do {
+            if duration < 0.5, XCUIDevice.shared.responds(to: NSSelectorFromString("pressLockButton")) {
+                if let raised = ObjCException.catching({ XCUIDevice.shared.pressLockButton() }) {
+                    throw NSError(domain: "LoopCtrlDeviceKeys", code: 4,
+                                  userInfo: [NSLocalizedDescriptionKey: raised])
+                }
+            } else if DeviceKeys.available() {
+                try onMain { try DeviceKeys.sendPage(0x0C, usage: 0x30, duration: duration) }
+            } else {
+                XCUIDevice.shared.pressLockButton()
+            }
+        } catch {
+            return (nil, JSONRPCError(code: -32603, message:
+                "Power button press failed: \(error.localizedDescription)", data: [
+                    "outcome": .string("not_sent"), "retry_safe": .bool(true),
+                ]))
+        }
+        return ([
+            "message": .string(duration >= 0.5
+                ? "Held power button for \(String(format: "%.2g", duration))s"
+                : "Pressed power button"),
+            "duration": .double(duration),
+            "locked": .bool(LockStateMonitor.shared().isLocked),
+            "outcome": .string("applied"),
+        ], nil)
+    }
+
+    /// `action_button {duration?}`: press the iPhone 15 Pro+ Action button
+    /// (`kHIDPage_Telephony` 0x0B, `kHIDUsage_Tfon_RingEnable` 0x2D). A 0.5 s
+    /// hold (the default, matching `XCUIDevice.shared.press(.action)`) triggers
+    /// the user's bound action; a short press (e.g. 0.05 s) peeks the Dynamic
+    /// Island hint.
+    private func actionButton(_ cmd: ActionCommand) -> ([String: JSONValue]?, JSONRPCError?) {
+        #if targetEnvironment(simulator)
+        return (nil, JSONRPCError(code: -32603, message:
+            "The Simulator has no Action button.", data: [
+                "outcome": .string("not_sent"), "retry_safe": .bool(true),
+            ]))
+        #else
+        let duration = min(max(cmd.duration ?? 0.5, 0.05), 5.0)
+        do {
+            // A normal tap is the public XCTest press — the same fast path as
+            // the volume keys (~0.3 s). DeviceKeys is only needed for a custom
+            // short peek or a hold longer than the public press supports.
+            if duration >= 0.3 && duration <= 0.6 {
+                if let raised = ObjCException.catching({ XCUIDevice.shared.press(.action) }) {
+                    throw NSError(domain: "LoopCtrlDeviceKeys", code: 4,
+                                  userInfo: [NSLocalizedDescriptionKey: raised])
+                }
+            } else if DeviceKeys.available() {
+                try DeviceKeys.sendPage(0x0B, usage: 0x2D, duration: duration)
+            } else if let raised = ObjCException.catching({ XCUIDevice.shared.press(.action) }) {
+                throw NSError(domain: "LoopCtrlDeviceKeys", code: 4,
+                              userInfo: [NSLocalizedDescriptionKey: raised])
+            }
+        } catch {
+            return (nil, JSONRPCError(code: -32603, message:
+                "Action button press failed: \(error.localizedDescription)", data: [
+                    "outcome": .string("not_sent"), "retry_safe": .bool(true),
+                ]))
+        }
+        return ([
+            "message": .string("Pressed Action button (\(String(format: "%.2g", duration))s)"),
+            "duration": .double(duration),
+            "outcome": .string("applied"),
+        ], nil)
+        #endif
     }
 
     // MARK: - Hardware keys, clipboard, keep-awake
@@ -2988,7 +3079,7 @@ class ActionHandler {
                 ]))
         }
         do {
-            try onMain { try DeviceKeys.sendPage(0x0C, usage: 0x65, duration: 0.005) }
+            try DeviceKeys.sendPage(0x0C, usage: 0x65, duration: 0.005)
         } catch {
             return (nil, JSONRPCError(code: -32603, message:
                 "System screenshot failed: \(error.localizedDescription)", data: [
